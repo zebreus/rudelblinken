@@ -33,6 +33,9 @@ embassy = [
 [dependencies]
 log = { version = "0.4", default-features = false }
 esp-idf-svc = { version = "0.49", default-features = false }
+wasmi = "0.38.0"
+anyhow = "1.0.89"
+wat = "1.219.1"
 
 [build-dependencies]
 embuild = "0.32.0"
