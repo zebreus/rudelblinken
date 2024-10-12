@@ -1,4 +1,0 @@
-[toolchain]
-channel = "nightly"
-components = ["rust-src", "cargo", "rust-analyzer", "rustfmt"]
-targets = ["riscv32imc-unknown-none-elf"]

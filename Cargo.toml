@@ -4,11 +4,11 @@ version = "0.1.0"
 authors = ["Leon Marcy Vack <dev@lgcl.de>"]
 edition = "2021"
 resolver = "2"
-rust-version = "1.77"
+rust-version = "1.82"
 
 [[bin]]
 name = "rudelblinken-rs"
-harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
+harness = false          # do not use the built in cargo test harness -> resolve rust-analyzer errors
 
 [profile.release]
 opt-level = "s"
@@ -25,7 +25,11 @@ std = ["alloc", "esp-idf-svc/binstart", "esp-idf-svc/std"]
 alloc = ["esp-idf-svc/alloc"]
 nightly = ["esp-idf-svc/nightly"]
 experimental = ["esp-idf-svc/experimental"]
-embassy = ["esp-idf-svc/embassy-sync", "esp-idf-svc/critical-section", "esp-idf-svc/embassy-time-driver"]
+embassy = [
+    "esp-idf-svc/embassy-sync",
+    "esp-idf-svc/critical-section",
+    "esp-idf-svc/embassy-time-driver",
+]
 
 [dependencies]
 log = { version = "0.4", default-features = false }
