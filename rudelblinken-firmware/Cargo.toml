@@ -1,0 +1,44 @@
+[package]
+name = "rudelblinken-firmware"
+version = "0.1.0"
+authors = ["Leon Marcy Vack <dev@lgcl.de>", "Zebreus <zebreus@zebre.us>"]
+edition = "2021"
+rust-version = "1.82"
+
+[[bin]]
+name = "rudelblinken-firmware"
+harness = false                # do not use the built in cargo test harness -> resolve rust-analyzer errors
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true    # Symbols are nice and they don't increase the size on Flash
+opt-level = "z"
+
+[features]
+default = ["std", "embassy", "esp-idf-svc/native"]
+
+pio = ["esp-idf-svc/pio"]
+std = ["alloc", "esp-idf-svc/binstart", "esp-idf-svc/std"]
+alloc = ["esp-idf-svc/alloc"]
+nightly = ["esp-idf-svc/nightly"]
+experimental = ["esp-idf-svc/experimental"]
+embassy = [
+    "esp-idf-svc/embassy-sync",
+    "esp-idf-svc/critical-section",
+    "esp-idf-svc/embassy-time-driver",
+]
+
+[dependencies]
+log = { version = "0.4", default-features = false }
+esp-idf-svc = { version = "0.49", default-features = false }
+wasmi = "0.38.0"
+anyhow = "1.0.89"
+wat = "1.219.1"
+esp32-nimble = "=0.8.0"
+esp-idf-sys = "0.35.0"
+esp-idf-hal = "0.44.1"
+
+[build-dependencies]
+embuild = "0.32.0"
