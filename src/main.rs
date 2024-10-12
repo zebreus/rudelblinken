@@ -1,7 +1,11 @@
-use anyhow::{anyhow, Result};
-use wasmi::*;
+use esp32_nimble::{
+    enums::{ConnMode, DiscMode},
+    BLEAdvertisementData, BLEDevice,
+};
+use esp_idf_hal::delay::FreeRtos;
+use esp_idf_sys as _;
 
-fn main() -> Result<()> {
+fn main() {
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
     esp_idf_svc::sys::link_patches();
@@ -9,46 +13,26 @@ fn main() -> Result<()> {
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    // First step is to create the Wasm execution engine with some config.
-    // In this example we are using the default configuration.
-    let engine = Engine::default();
-    let watt = r#"
-        (module
-            (import "host" "hello" (func $host_hello (param i32)))
-            (func (export "hello")
-                (call $host_hello (i32.const 3))
-            )
-        )
-    "#;
-    // Wasmi does not yet support parsing `.wat` so we have to convert
-    // out `.wat` into `.wasm` before we compile and validate it.
-    let wasm = wat::parse_str(&watt)?;
-    let module = Module::new(&engine, &mut &wasm[..])?;
+    let ble_device = BLEDevice::take();
+    let ble_advertiser = ble_device.get_advertising();
 
-    // All Wasm objects operate within the context of a `Store`.
-    // Each `Store` has a type parameter to store host-specific data,
-    // which in this case we are using `42` for.
-    type HostState = u32;
-    let mut store = Store::new(&engine, 42);
-    let host_hello = Func::wrap(&mut store, |caller: Caller<'_, HostState>, param: i32| {
-        println!("Got {param} from WebAssembly");
-        println!("My host state is: {}", caller.data());
-    });
+    let mut ad_data = BLEAdvertisementData::new();
+    ad_data.name("ESP32-C3 Peripheral");
 
-    // In order to create Wasm module instances and link their imports
-    // and exports we require a `Linker`.
-    let mut linker = <Linker<HostState>>::new(&engine);
-    // Instantiation of a Wasm module requires defining its imports and then
-    // afterwards we can fetch exports by name, as well as asserting the
-    // type signature of the function with `get_typed_func`.
-    //
-    // Also before using an instance created this way we need to start it.
-    linker.define("host", "hello", host_hello)?;
-    let instance = linker.instantiate(&mut store, &module)?.start(&mut store)?;
-    let hello = instance.get_typed_func::<(), ()>(&store, "hello")?;
+    // Configure Advertiser with Specified Data
+    ble_advertiser.lock().set_data(&mut ad_data).unwrap();
 
-    // And finally we can call the wasm!
-    hello.call(&mut store, ())?;
+    ble_advertiser
+        .lock()
+        .advertisement_type(ConnMode::Non)
+        .disc_mode(DiscMode::Gen)
+        .scan_response(false);
 
-    Ok(())
+    ble_advertiser.lock().start().unwrap();
+    println!("Advertisement Started");
+    loop {
+        // Keep Advertising
+        // Add delay to prevent watchdog from triggering
+        FreeRtos::delay_ms(10);
+    }
 }
