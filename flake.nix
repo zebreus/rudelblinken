@@ -55,23 +55,26 @@
         # };
 
         fakeGit = pkgs.writeShellScriptBin "git" ''
-          if test "$1" = "rev-parse" && test "$2" = "--show-toplevel" ; then
-            pwd
-            exit 0
+
+          if test "$(pwd)" = "$IDF_PATH" ; then
+            if test "$1" = "rev-parse" && test "$2" = "--show-toplevel" ; then
+              pwd
+              exit 0
+            fi
+            if test "$1" = "rev-parse" && test "$2" = "--git-dir" ; then
+              pwd
+              exit 0
+            fi
+            if test "$1" = "rev-parse" && test "$2" = "--short" && test "$3" = "HEAD" ; then
+              echo "v5.3"
+              exit 0
+            fi
+            if test "$1" = "rev-parse" && test "$2" = "HEAD" ; then
+              echo "v5.3"
+              exit 0
+            fi
           fi
-          if test "$1" = "rev-parse" && test "$2" = "--git-dir" ; then
-            pwd
-            exit 0
-          fi
-          if test "$5" = "describe" && test "$6" = "--all" ; then
-            echo "v5.3"
-            exit 0
-          fi
-          if test "$1" = "rev-parse" && test "$2" = "--short" && test "$3" = "HEAD" ; then
-            echo "v5.3"
-            exit 0
-          fi
-          if test "$1" = "rev-parse" && test "$2" = "HEAD" ; then
+          if test "$5" = "describe" && test "$6" = "--all" && test "$7" = "--exact-match" ; then
             echo "v5.3"
             exit 0
           fi
