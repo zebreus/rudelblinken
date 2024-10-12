@@ -92,6 +92,7 @@
           ESP_IDF_TOOLS_INSTALL_DIR = "fromenv";
           ESP_IDF_VERSION = "v5.2.2";
           MCU = "esp32c3";
+          LD_LIBRARY_PATH = "${pkgs.dbus.lib}/lib";
 
           buildInputs = [
             fakeGit
@@ -101,6 +102,9 @@
             pkgs.cargo-generate
             pkgs.cargo-espflash
             pkgs.ldproxy
+
+            # For the cli:
+            pkgs.dbus
           ];
         };
 
