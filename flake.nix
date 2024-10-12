@@ -28,12 +28,25 @@
 
         pkgs = import nixpkgs {
           inherit system;
+          overlays = [
+            (final: prev: {
+              esp-idf-esp32c3 = nixpkgs-esp-dev.packages.${system}.esp-idf-esp32c3;
+            })
+            fenix.overlays.default
+          ];
         };
         esp-idf-esp32c3 = nixpkgs-esp-dev.packages.${system}.esp-idf-esp32c3;
         fenixPkgs = fenix.packages.${system};
         rustToolchain = fenixPkgs.combine [
           fenixPkgs.complete.toolchain
           fenixPkgs.targets.riscv32imc-unknown-none-elf.stable.completeToolchain
+          (fenixPkgs.complete.withComponents [
+            "cargo"
+            "clippy"
+            "rust-src"
+            "rustc"
+            "rustfmt"
+          ])
         ];
 
         # rustToolchain = fenix.packages.${system}.fromToolchainFile {
@@ -80,6 +93,7 @@
             fakeGit
             esp-idf-esp32c3
             rustToolchain
+            pkgs.rust-analyzer-nightly
             pkgs.cargo-generate
             pkgs.cargo-espflash
             pkgs.ldproxy
