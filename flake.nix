@@ -5,7 +5,7 @@
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.url = "github:nixos/nixpkgs";
     nixpkgs-esp-dev = {
-      url = "github:mirrexagon/nixpkgs-esp-dev";
+      url = "github:mirrexagon/nixpkgs-esp-dev/c25c658e2648bf71316c0389752ae9fc155e8b83";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     fenix = {
@@ -66,16 +66,16 @@
               exit 0
             fi
             if test "$1" = "rev-parse" && test "$2" = "--short" && test "$3" = "HEAD" ; then
-              echo "v5.3"
+              echo "v5.2.2"
               exit 0
             fi
             if test "$1" = "rev-parse" && test "$2" = "HEAD" ; then
-              echo "v5.3"
+              echo "v5.2.2"
               exit 0
             fi
           fi
           if test "$5" = "describe" && test "$6" = "--all" && test "$7" = "--exact-match" ; then
-            echo "v5.3"
+            echo "v5.2.2"
             exit 0
           fi
 
@@ -90,6 +90,7 @@
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           ESP_IDF_TOOLS_INSTALL_DIR = "fromenv";
+          ESP_IDF_VERSION = "v5.2.2";
           MCU = "esp32c3";
 
           buildInputs = [
