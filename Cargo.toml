@@ -1,9 +1,8 @@
 [package]
 name = "rudelblinken-rs"
 version = "0.1.0"
-authors = ["Leon Marcy Vack <dev@lgcl.de>"]
+authors = ["Leon Marcy Vack <dev@lgcl.de>", "Zebreus <zebreus@zebre.us>"]
 edition = "2021"
-resolver = "2"
 rust-version = "1.82"
 
 [[bin]]
