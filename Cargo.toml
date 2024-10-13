@@ -2,3 +2,13 @@
 resolver = "2"
 
 members = ["rudelblinken-firmware", "rudelblinken-cli", "rudelblinken-wasm"]
+
+[profile.release]
+lto = true
+
+[profile.release.package.rudelblinken-firmware]
+opt-level = "s"
+
+[profile.dev.package.rudelblinken-firmware]
+debug = true    # Symbols are nice and they don't increase the size on Flash
+opt-level = "z"
