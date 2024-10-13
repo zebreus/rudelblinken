@@ -1,0 +1,11 @@
+[build]
+target = "wasm32-unknown-unknown"
+# tiny stack, otherwise allocation during wasm runtime init fails
+# 131072 (128 KiB) fails
+#  98304  (96 KiB) fails (with an 128KiB alloc)
+#  65536  (64 KiB) works
+#   1024   (1 KiB) works
+rustflags = "-C link-arg=-zstack-size=65536"
+
+[unstable]
+build-std = ["std", "panic_abort"]

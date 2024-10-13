@@ -1,4 +1,4 @@
 [workspace]
 resolver = "2"
 
-members = ["rudelblinken-firmware", "rudelblinken-cli"]
+members = ["rudelblinken-firmware", "rudelblinken-cli", "rudelblinken-wasm"]
