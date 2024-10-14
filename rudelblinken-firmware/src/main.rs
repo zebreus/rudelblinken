@@ -1,11 +1,15 @@
 use anyhow::Result;
 use esp32_nimble::{
     enums::{ConnMode, DiscMode},
-    BLEAdvertisementData, BLEDevice,
+    utilities::BleUuid,
+    uuid128, BLEAdvertisementData, BLEDevice, NimbleProperties,
 };
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_sys as _;
 use wasmi::{Caller, Engine, Func, Linker, Module, Store};
+
+const UPDATE_SERVICE_UUID: BleUuid = BleUuid::from_uuid16(29342);
+const UPDATE_SERVICE_RECEIVE_DATA_UUID: BleUuid = BleUuid::from_uuid16(13443);
 
 fn main() {
     // It is necessary to call this function once. Otherwise some patches to the runtime
@@ -16,35 +20,64 @@ fn main() {
     esp_idf_svc::log::EspLogger::initialize_default();
 
     let ble_device = BLEDevice::take();
-    let ble_advertiser = ble_device.get_advertising();
+    let ble_advertising = ble_device.get_advertising();
+    ble_advertising.lock().reset();
 
-    let mut ad_data = BLEAdvertisementData::new();
-    let val = match wasm_poc() {
-        Ok(v) => v,
-        Err(err) => {
-            println!("wasm_poc err={:?}", err);
-            0
+    let server = ble_device.get_server();
+    server.on_connect(|server, desc| {
+        ::log::info!("Client connected: {:?}", desc);
+
+        server
+            .update_conn_params(desc.conn_handle(), 24, 48, 0, 60)
+            .unwrap();
+
+        if server.connected_count() < (esp_idf_svc::sys::CONFIG_BT_NIMBLE_MAX_CONNECTIONS as _) {
+            ::log::info!("Multi-connect support: start advertising");
+            ble_advertising.lock().start().unwrap();
         }
-    };
-    let name = format!("ESP32-C3 {}", val);
-    println!("Using name {}", name);
-    ad_data.name(&name);
+    });
+
+    server.on_disconnect(|desc, idk| {
+        ::log::info!("Client disconnected: {:?}", desc);
+    });
+
+    let update_service = server.create_service(UPDATE_SERVICE_UUID);
+    let receive_data_characteristic = update_service.lock().create_characteristic(
+        UPDATE_SERVICE_RECEIVE_DATA_UUID,
+        NimbleProperties::READ | NimbleProperties::WRITE,
+    );
+    receive_data_characteristic
+        .lock()
+        .on_read(move |_, _| {
+            ::log::info!("Read from writable characteristic.");
+        })
+        .on_write(|args| {
+            ::log::info!(
+                "Wrote to writable characteristic: {:?} -> {:?}",
+                args.current_data(),
+                args.recv_data()
+            );
+        });
 
     // Configure Advertiser with Specified Data
-    ble_advertiser.lock().set_data(&mut ad_data).unwrap();
-
-    ble_advertiser
+    ble_advertising
         .lock()
-        .advertisement_type(ConnMode::Non)
+        .set_data(
+            BLEAdvertisementData::new()
+                .name("ESP32-GATT-Server")
+                // .add_service_uuid(uuid128!("fafafafa-fafa-fafa-fafa-fafafafafafa"))
+                .add_service_uuid(UPDATE_SERVICE_UUID),
+        )
+        .advertisement_type(ConnMode::Und)
         .disc_mode(DiscMode::Gen)
-        .scan_response(false);
+        .scan_response(true)
+        .start()
+        .unwrap();
 
-    ble_advertiser.lock().start().unwrap();
-    println!("Advertisement Started");
+    server.ble_gatts_show_local();
+
     loop {
-        // Keep Advertising
-        // Add delay to prevent watchdog from triggering
-        FreeRtos::delay_ms(10);
+        esp_idf_svc::hal::delay::FreeRtos::delay_ms(1000);
     }
 }
 
