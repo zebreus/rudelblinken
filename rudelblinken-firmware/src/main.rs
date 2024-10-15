@@ -59,7 +59,6 @@ fn main() {
             );
         });
 
-    // Configure Advertiser with Specified Data
     ble_advertising
         .lock()
         .set_data(
@@ -68,6 +67,10 @@ fn main() {
                 // .add_service_uuid(uuid128!("fafafafa-fafa-fafa-fafa-fafafafafafa"))
                 .add_service_uuid(UPDATE_SERVICE_UUID),
         )
+        .unwrap();
+    // Configure Advertiser with Specified Data
+    ble_advertising
+        .lock()
         .advertisement_type(ConnMode::Und)
         .disc_mode(DiscMode::Gen)
         .scan_response(true)
