@@ -1,9 +1,12 @@
+cargo-features = ["per-package-target"]
+
 [package]
 name = "rudelblinken-firmware"
 version = "0.1.0"
 authors = ["Leon Marcy Vack <dev@lgcl.de>", "Zebreus <zebreus@zebre.us>"]
 edition = "2021"
 rust-version = "1.82"
+forced-target = "riscv32imc-esp-espidf"
 
 [[bin]]
 name = "rudelblinken-firmware"
