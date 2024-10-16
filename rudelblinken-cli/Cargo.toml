@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bluer = { version = "0.17.3", features = ["full"] }
 btleplug = "0.11.6"
+env_logger = "0.11.5"
+futures = "0.3.31"
 rand = "0.8.5"
 thiserror = "1.0.64"
 tokio = { version = "1", features = ["full"] }
