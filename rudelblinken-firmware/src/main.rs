@@ -1,8 +1,9 @@
 use anyhow::Result;
+use cat_management_service::CatManagementService;
 use esp32_nimble::{
-    enums::{ConnMode, DiscMode},
+    enums::{ConnMode, DiscMode, PowerLevel, PowerType},
     utilities::BleUuid,
-    uuid128, BLEAdvertisementData, BLEDevice, BLEScan, NimbleProperties,
+    uuid128, BLEAdvertisementData, BLEDevice, BLEScan, BLEServer, NimbleProperties,
 };
 use esp_idf_hal::{
     delay::FreeRtos,
@@ -10,10 +11,92 @@ use esp_idf_hal::{
     task,
 };
 use esp_idf_sys as _;
+use file_upload_service::FileUploadService;
 use wasmi::{Caller, Engine, Func, Linker, Module, Store};
 
 const UPDATE_SERVICE_UUID: BleUuid = BleUuid::from_uuid16(29342);
 const UPDATE_SERVICE_RECEIVE_DATA_UUID: BleUuid = BleUuid::from_uuid16(13443);
+
+mod cat_management_service;
+mod file_upload_service;
+
+/// Changes the OUI of the base mac address to 24:ec:4b which is not assigned
+///
+/// We can find our devices based on this OUI
+fn fix_mac_address() {
+    unsafe {
+        let mut mac = [0u8; 6];
+        esp_idf_sys::esp_base_mac_addr_get(mac.as_mut_ptr());
+        if matches!(mac, [0x24, 0xec, 0x4b, ..]) {
+            return;
+        }
+        let new_mac = [0x24, 0xec, 0x4b, mac[3], mac[4], mac[5]];
+        esp_idf_sys::esp_iface_mac_addr_set(
+            new_mac.as_ptr(),
+            esp_idf_sys::esp_mac_type_t_ESP_MAC_BASE,
+        );
+    };
+}
+
+fn setup_ble_server() -> &'static mut BLEServer {
+    let ble_device = BLEDevice::take();
+    BLEDevice::take();
+    // Set PHY to 2M for all connections
+    unsafe {
+        esp_idf_sys::ble_gap_set_prefered_default_le_phy(
+            esp_idf_sys::BLE_GAP_LE_PHY_2M_MASK as u8,
+            esp_idf_sys::BLE_GAP_LE_PHY_2M_MASK as u8,
+        );
+    }
+    ble_device
+        .set_preferred_mtu(esp_idf_sys::BLE_ATT_MTU_MAX as u16)
+        .unwrap();
+    ble_device
+        .set_power(PowerType::Default, PowerLevel::P9)
+        .unwrap();
+    ble_device
+        .set_power(PowerType::Advertising, PowerLevel::P9)
+        .unwrap();
+    ble_device
+        .set_power(PowerType::Scan, PowerLevel::P9)
+        .unwrap();
+
+    // ble_advertising.lock().reset();
+
+    let mut server = ble_device.get_server();
+    server.on_connect(|server, desc| {
+        ::log::info!("Client connected: {:?}", desc);
+
+        // Black magic
+        //
+        // https://github.com/espressif/esp-idf/issues/12789
+        server
+            .update_conn_params(desc.conn_handle(), 6, 6, 0, 10)
+            .unwrap();
+        unsafe {
+            esp_idf_sys::ble_gap_set_data_len(desc.conn_handle(), 0x00FB, 0x0148);
+            // Set PHY to 2M for this connection
+            esp_idf_sys::ble_gap_set_prefered_le_phy(
+                desc.conn_handle(),
+                esp_idf_sys::BLE_GAP_LE_PHY_2M_MASK as u8,
+                esp_idf_sys::BLE_GAP_LE_PHY_2M_MASK as u8,
+                esp_idf_sys::BLE_GAP_LE_PHY_CODED_ANY as u16, // We are not coding, so this does not matter,
+            );
+        }
+        // if server.connected_count() < (esp_idf_svc::sys::CONFIG_BT_NIMBLE_MAX_CONNECTIONS as _) {
+        //     ::log::info!("Multi-connect support: start advertising");
+        //     ble_advertising.lock().start().unwrap();
+        // }
+    });
+
+    server.on_disconnect(|desc, idk| {
+        ::log::info!("Client disconnected: {:?}", desc);
+    });
+
+    server.ble_gatts_show_local();
+
+    return server;
+}
 
 fn main() {
     // It is necessary to call this function once. Otherwise some patches to the runtime
@@ -22,54 +105,25 @@ fn main() {
 
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
+    fix_mac_address();
+
+    setup_ble_server();
 
     let ble_device = BLEDevice::take();
+    let mut ble_server = ble_device.get_server();
     let ble_advertising = ble_device.get_advertising();
-    ble_advertising.lock().reset();
 
-    let server = ble_device.get_server();
-    server.on_connect(|server, desc| {
-        ::log::info!("Client connected: {:?}", desc);
-
-        server
-            .update_conn_params(desc.conn_handle(), 24, 48, 0, 60)
-            .unwrap();
-
-        if server.connected_count() < (esp_idf_svc::sys::CONFIG_BT_NIMBLE_MAX_CONNECTIONS as _) {
-            ::log::info!("Multi-connect support: start advertising");
-            ble_advertising.lock().start().unwrap();
-        }
-    });
-
-    server.on_disconnect(|desc, idk| {
-        ::log::info!("Client disconnected: {:?}", desc);
-    });
-
-    let update_service = server.create_service(UPDATE_SERVICE_UUID);
-    let receive_data_characteristic = update_service.lock().create_characteristic(
-        UPDATE_SERVICE_RECEIVE_DATA_UUID,
-        NimbleProperties::READ | NimbleProperties::WRITE,
-    );
-    receive_data_characteristic
-        .lock()
-        .on_read(move |_, _| {
-            ::log::info!("Read from writable characteristic.");
-        })
-        .on_write(|args| {
-            ::log::info!(
-                "Wrote to writable characteristic: {:?} -> {:?}",
-                args.current_data(),
-                args.recv_data()
-            );
-        });
+    let file_upload_service = FileUploadService::new(&mut ble_server);
+    let cat_management_service =
+        CatManagementService::new(&mut ble_server, file_upload_service.clone());
 
     ble_advertising
         .lock()
         .set_data(
             BLEAdvertisementData::new()
-                .name("ESP32-Pulse-Server")
+                .name("Rudelblinken")
                 // .add_service_uuid(uuid128!("fafafafa-fafa-fafa-fafa-fafafafafafa"))
-                // .add_service_uuid(UPDATE_SERVICE_UUID)
+                .add_service_uuid(FileUploadService::uuid())
                 .manufacturer_data(&[0, 0]),
         )
         .unwrap();
@@ -79,12 +133,10 @@ fn main() {
         .advertisement_type(ConnMode::Und)
         .disc_mode(DiscMode::Gen)
         .scan_response(true)
-        .min_interval(1000)
-        .max_interval(2500)
+        .min_interval(100)
+        .max_interval(250)
         .start()
         .unwrap();
-
-    server.ble_gatts_show_local();
 
     let mut pin = PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed");
 
@@ -98,7 +150,8 @@ fn main() {
             .lock()
             .set_data(
                 BLEAdvertisementData::new()
-                    .name("ESP32-Pulse-Server")
+                    .name("Rudelblinken")
+                    .add_service_uuid(FileUploadService::uuid())
                     .manufacturer_data(&[0x00, 0x00, 0xca, 0x7e, 0xa2, c]),
             )
             .expect("failed to update adv data");

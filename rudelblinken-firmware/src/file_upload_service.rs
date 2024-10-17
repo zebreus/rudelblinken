@@ -213,7 +213,7 @@ impl FileUploadService {
     /// Starts an upload if there is no active upload
     ///
     /// If this returns Ok, self.currently_receiving is always set to Some
-    pub fn ensure_upload(&mut self) -> Result<(), StartUploadError> {
+    fn ensure_upload(&mut self) -> Result<(), StartUploadError> {
         if self.currently_receiving.is_some() {
             return Ok(());
         }
@@ -221,7 +221,7 @@ impl FileUploadService {
         return Ok(());
     }
 
-    pub fn log_error(&mut self, error: FileUploadError) {
+    fn log_error(&mut self, error: FileUploadError) {
         ::log::error!(target: "file-upload", "{}", error);
         self.last_error = Some(error);
     }
