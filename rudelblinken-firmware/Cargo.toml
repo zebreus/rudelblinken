@@ -45,6 +45,9 @@ esp32-nimble = "=0.8.0"
 esp-idf-sys = "0.35.0"
 esp-idf-hal = "0.44.1"
 itertools = "0.13.0"
+sha3 = "0.10.8"
+crc = "3.2.1"
+thiserror = "1.0.64"
 
 [build-dependencies]
 embuild = "0.32.0"
