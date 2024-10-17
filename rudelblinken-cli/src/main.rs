@@ -1,11 +1,18 @@
 //! Connects to our Bluetooth GATT service and exercises the characteristic.
 
+use async_recursion::async_recursion;
 use bluer::{
-    gatt::remote::Characteristic, gatt::remote::Service, gatt::CharacteristicWriter, AdapterEvent,
-    Device, UuidExt,
+    gatt::{
+        remote::{Characteristic, CharacteristicWriteRequest, Service},
+        CharacteristicWriter,
+    },
+    AdapterEvent, Device, UuidExt,
 };
+use core::hash;
 use futures::{future, pin_mut, StreamExt};
+use sha3::{Digest, Sha3_256};
 use std::{
+    mem,
     ops::Rem,
     os::fd::FromRawFd,
     time::{Duration, Instant},
@@ -27,9 +34,16 @@ use tokio::{
 
 const LIGHT_CHARACTERISTIC_UUID: uuid::Uuid = uuid::Uuid::from_u128(0xFFE9);
 
-const UPDATE_SERVICE_UUID: u16 = 0x729e;
-// const UPDATE_SERVICE_UUID: bluer::Uuid = ;
-const UPDATE_SERVICE_RECEIVE_DATA_UUID: u16 = 13443;
+const FILE_UPLOAD_SERVICE: u16 = 0x7892;
+const FILE_UPLOAD_SERVICE_DATA: u16 = 0x7893;
+const FILE_UPLOAD_SERVICE_HASH: u16 = 0x7894;
+const FILE_UPLOAD_SERVICE_CHECKSUMS: u16 = 0x7895;
+const FILE_UPLOAD_SERVICE_LENGTH: u16 = 0x7896;
+const FILE_UPLOAD_SERVICE_CHUNK_LENGTH: u16 = 0x7897;
+
+// const UPDATE_SERVICE_UUID: u16 = 0x729e;
+// // const UPDATE_SERVICE_UUID: bluer::Uuid = ;
+// const UPDATE_SERVICE_RECEIVE_DATA_UUID: u16 = 13443;
 
 async fn find_our_characteristic(device: Device) -> Result<UpdateTarget, UpdateTargetError> {
     // let addr: bluer::Address = device.address();
@@ -203,7 +217,7 @@ pub enum FindUpdateServiceError {
 
 pub async fn find_update_service(device: &Device) -> Result<Service, FindUpdateServiceError> {
     for service in device.services().await? {
-        if service.uuid().await? == uuid::Uuid::from_u16(UPDATE_SERVICE_UUID) {
+        if service.uuid().await? == uuid::Uuid::from_u16(FILE_UPLOAD_SERVICE) {
             return Ok(service);
         }
     }
@@ -221,9 +235,10 @@ pub enum FindCharacteristicError {
 
 pub async fn find_characteristic(
     service: &Service,
+    uuid: u16,
 ) -> Result<Characteristic, FindCharacteristicError> {
     for characteristic in service.characteristics().await? {
-        if characteristic.uuid().await? == uuid::Uuid::from_u16(UPDATE_SERVICE_RECEIVE_DATA_UUID) {
+        if characteristic.uuid().await? == uuid::Uuid::from_u16(uuid) {
             return Ok(characteristic);
         }
     }
@@ -239,11 +254,11 @@ struct UpdateTarget {
 impl UpdateTarget {
     async fn new_from_peripheral(device: Device) -> Result<UpdateTarget, UpdateTargetError> {
         let address = device.address();
-        println!("Checking {}", address);
+        // println!("Checking {}", address);
         if !(address.0.starts_with(&[0x24, 0xec, 0x4b])) {
             return Err(UpdateTargetError::MacDoesNotLookLikeAnUpdateTarget);
         }
-        println!("Checked MAC for {}", address);
+        println!("Found MAC {}", address);
 
         if !device.is_connected().await? {
             println!("Connecting...");
@@ -276,30 +291,108 @@ impl UpdateTarget {
         });
     }
 
-    async fn program(&self, code: &[u8]) -> Result<(), UpdateTargetError> {
-        let characteristic = find_characteristic(&self.update_service).await?;
+    #[async_recursion]
+    async fn write_file(&self, data: &[u8]) -> Result<[u8; 32], UpdateTargetError> {
+        // const FILE_UPLOAD_SERVICE_DATA: u16 = 0x7893;
+        // const FILE_UPLOAD_SERVICE_HASH: u16 = 0x7894;
+        // const FILE_UPLOAD_SERVICE_CHECKSUMS: u16 = 0x7895;
+        // const FILE_UPLOAD_SERVICE_LENGTH: u16 = 0x7896;
+        // const FILE_UPLOAD_SERVICE_CHUNK_LENGTH: u16 = 0x7897;
 
-        let mut write_io = characteristic.write_io().await?;
-        let mut ten_kilo = [0u8; 1024 * 10];
-        for num in 0..(1024 * 10) {
-            ten_kilo[num] = num.to_le_bytes()[0];
+        let data_characteristic =
+            find_characteristic(&self.update_service, FILE_UPLOAD_SERVICE_DATA).await?;
+        let hash_characteristic =
+            find_characteristic(&self.update_service, FILE_UPLOAD_SERVICE_HASH).await?;
+        let checksums_characteristic =
+            find_characteristic(&self.update_service, FILE_UPLOAD_SERVICE_CHECKSUMS).await?;
+        let length_characteristic =
+            find_characteristic(&self.update_service, FILE_UPLOAD_SERVICE_LENGTH).await?;
+        let chunk_length_characteristic =
+            find_characteristic(&self.update_service, FILE_UPLOAD_SERVICE_CHUNK_LENGTH).await?;
+
+        let mut hasher = Sha3_256::new();
+        hasher.update(&data);
+        // TODO: I am sure there is a better way to convert this into an array but I didnt find it after 10 minutes.
+        let mut hash: [u8; 32] = [0; 32];
+        hash.copy_from_slice(hasher.finalize().as_slice());
+
+        // -2 for the length
+        // -28 was found to be good by empirical methods
+        let chunk_size: u16 = (data_characteristic.mtu().await? as u16) - 28 - 2;
+        // println!("{chunk_size}");
+        // chunk_size = 493;
+
+        let crc8_generator = crc::Crc::<u8>::new(&crc::CRC_8_LTE);
+        let checksums: Vec<u8> = data
+            .chunks(chunk_size as usize)
+            .map(|chunk| crc8_generator.checksum(chunk))
+            .collect();
+
+        let chunks: Vec<Vec<u8>> = data
+            .chunks(chunk_size as usize)
+            .enumerate()
+            .map(|(index, data)| {
+                let mut new_chunk = vec![0; data.len() + 2];
+                new_chunk[0..2].copy_from_slice(&(index as u16).to_le_bytes());
+                new_chunk[2..(2 + data.len())].copy_from_slice(data);
+                return new_chunk;
+            })
+            .collect();
+
+        let checksums_data = checksums.as_slice();
+        if checksums_data.len() < 32 {
+            checksums_characteristic.write(checksums_data).await?;
+        } else {
+            let checksums_file_hash = self.write_file(checksums_data).await?;
+            checksums_characteristic.write(&checksums_file_hash).await?;
         }
 
-        let now = Instant::now();
-        for chunk in ten_kilo.chunks(write_io.mtu()) {
-            write_io.send(chunk).await.unwrap();
+        length_characteristic
+            .write(&(data.len() as u32).to_le_bytes())
+            .await?;
+        chunk_length_characteristic
+            .write(&(chunk_size as u16).to_le_bytes())
+            .await?;
+        hash_characteristic.write(&hash).await?;
+
+        let mut write_io = data_characteristic.write_io().await?;
+
+        for chunk in chunks {
+            write_io.send(chunk.as_slice()).await.unwrap();
+            // data_characteristic.write(chunk.as_slice()).await?;
+            // data_characteristic
+            //     .write_ext(
+            //         chunk.as_slice(),
+            //         &CharacteristicWriteRequest {
+            //             offset: 0,
+            //             op_type: bluer::gatt::WriteOp::Reliable,
+            //             prepare_authorize: false,
+            //             _non_exhaustive: (),
+            //         },
+            //     )
+            //     .await?;
         }
         write_io.flush().await.unwrap();
         write_io.shutdown().await.unwrap();
-        write_io.closed().await.unwrap();
+        // write_io.closed().await.unwrap();
+        length_characteristic
+            .write_ext(
+                &[0],
+                &CharacteristicWriteRequest {
+                    offset: 0,
+                    op_type: bluer::gatt::WriteOp::Reliable,
+                    prepare_authorize: false,
+                    _non_exhaustive: (),
+                },
+            )
+            .await?;
         // let mut asyncfd = AsyncFd::new(write_io);
         // unsafe {
         //     let mut file = tokio::fs::File::from_raw_fd(write_io.into_raw_fd().unwrap());
         //     // file.sync_all().await.unwrap();
         //     // file.sync_data().await.unwrap();
         //     file.flush().await.unwrap();
-        let duration = now.elapsed();
-        println!("Sending 10k took {} millis", duration.as_millis());
+
         // }
 
         // let Some(characteristic) = self
@@ -322,7 +415,7 @@ impl UpdateTarget {
         //         .await?;
         // }
 
-        return Ok(());
+        return Ok(hash);
     }
 }
 
@@ -345,13 +438,32 @@ async fn main() -> bluer::Result<()> {
         while let Some(evt) = discover.next().await {
             match evt {
                 AdapterEvent::DeviceAdded(addr) => {
-                    println!("Found {}", addr);
+                    // println!("Found {}", addr);
 
                     let device = adapter.device(addr)?;
                     let Ok(update_target) = UpdateTarget::new_from_peripheral(device).await else {
                         continue;
                     };
-                    update_target.program(&[3]).await.unwrap();
+
+                    const filesize: usize = 1024 * 50;
+                    let mut ten_kilo = [0u8; filesize];
+                    for num in 0..(filesize) {
+                        ten_kilo[num] = num.to_le_bytes()[0];
+                    }
+
+                    let now = Instant::now();
+                    update_target.write_file(&ten_kilo).await.unwrap();
+                    let duration = now.elapsed();
+                    println!(
+                        "Sending {}k took {} millis",
+                        filesize / 1024,
+                        duration.as_millis()
+                    );
+                    println!(
+                        "Thats {}kb/s",
+                        (filesize as f64 / duration.as_millis() as f64)
+                    );
+                    update_target.device.disconnect().await.unwrap();
 
                     // match find_our_characteristic(&device).await {
                     //     Ok(Some(char)) => match exercise_characteristic(&char).await {
@@ -375,7 +487,7 @@ async fn main() -> bluer::Result<()> {
                     // }
                 }
                 AdapterEvent::DeviceRemoved(addr) => {
-                    println!("Device removed {addr}");
+                    // println!("Device removed {addr}");
                 }
                 _ => (),
             }
