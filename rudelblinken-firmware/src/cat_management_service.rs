@@ -5,12 +5,10 @@ use esp32_nimble::{
     BLEServer, NimbleProperties,
 };
 use esp_idf_sys as _;
-use sha3::{Digest, Sha3_256};
-use thiserror::Error;
 
 use wasmi::{Caller, Engine, Func, Linker, Module, Store};
 
-use crate::file_upload_service::{self, FileUploadService};
+use crate::file_upload_service::FileUploadService;
 
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
@@ -280,7 +278,7 @@ const NAMES: [&str; 256] = [
 ];
 
 fn get_device_name() -> String {
-    let mut name = String::new();
+    let name;
     unsafe {
         let mut mac = [0u8; 6];
         esp_idf_sys::esp_base_mac_addr_get(mac.as_mut_ptr());
@@ -332,8 +330,8 @@ impl CatManagementService {
             if service.program_hash == Some(hash) {
                 return;
             }
-            let mut wasm_module = Vec::new();
 
+            let wasm_module;
             {
                 let file_upload_service = service.file_upload_service.lock();
                 let Some(file) = file_upload_service.get_file(&hash) else {
@@ -364,11 +362,11 @@ impl CatManagementService {
         name_characteristic.lock().on_write(move |args| {
             let mut service = cat_management_service_clone.lock();
             let data = args.recv_data();
-            if (data.len() <= 3) {
+            if data.len() <= 3 {
                 ::log::error!("Name too short");
                 return;
             }
-            if (data.len() > 32) {
+            if data.len() > 32 {
                 ::log::error!("Name too long");
                 return;
             }

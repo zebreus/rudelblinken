@@ -10,7 +10,6 @@ path = "src/main.rs"
 [dependencies]
 async-recursion = "1.1.1"
 bluer = { version = "0.17.3", features = ["full"] }
-btleplug = "0.11.6"
 clap = { version = "4.5.20", features = ["derive"] }
 crc = "3.2.1"
 env_logger = "0.11.5"

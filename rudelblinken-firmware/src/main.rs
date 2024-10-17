@@ -1,21 +1,14 @@
-use anyhow::Result;
 use cat_management_service::CatManagementService;
 use esp32_nimble::{
     enums::{ConnMode, DiscMode, PowerLevel, PowerType},
-    utilities::BleUuid,
-    uuid128, BLEAdvertisementData, BLEDevice, BLEScan, BLEServer, NimbleProperties,
+    BLEAdvertisementData, BLEDevice, BLEScan, BLEServer,
 };
 use esp_idf_hal::{
-    delay::FreeRtos,
     gpio::{self, PinDriver},
     task,
 };
 use esp_idf_sys as _;
 use file_upload_service::FileUploadService;
-use wasmi::{Caller, Engine, Func, Linker, Module, Store};
-
-const UPDATE_SERVICE_UUID: BleUuid = BleUuid::from_uuid16(29342);
-const UPDATE_SERVICE_RECEIVE_DATA_UUID: BleUuid = BleUuid::from_uuid16(13443);
 
 mod cat_management_service;
 mod file_upload_service;
@@ -61,9 +54,7 @@ fn setup_ble_server() -> &'static mut BLEServer {
         .set_power(PowerType::Scan, PowerLevel::P9)
         .unwrap();
 
-    // ble_advertising.lock().reset();
-
-    let mut server = ble_device.get_server();
+    let server = ble_device.get_server();
     server.on_connect(|server, desc| {
         ::log::info!("Client connected: {:?}", desc);
 
@@ -89,7 +80,7 @@ fn setup_ble_server() -> &'static mut BLEServer {
         // }
     });
 
-    server.on_disconnect(|desc, idk| {
+    server.on_disconnect(|desc, _| {
         ::log::info!("Client disconnected: {:?}", desc);
     });
 
@@ -114,7 +105,7 @@ fn main() {
     let ble_advertising = ble_device.get_advertising();
 
     let file_upload_service = FileUploadService::new(&mut ble_server);
-    let cat_management_service =
+    let _cat_management_service =
         CatManagementService::new(&mut ble_server, file_upload_service.clone());
 
     ble_advertising
@@ -156,13 +147,13 @@ fn main() {
             )
             .expect("failed to update adv data");
     };
-    let mut rem = 0.0;
+    let rem = 0.0;
     loop {
         let mut offset_sum = 0i32;
         let mut offset_num = 0u32;
         task::block_on(async {
             ble_scan
-                .start(ble_device, 10, |device, data| {
+                .start(ble_device, 10, |_, data| {
                     if let Some(md) = data.manufacture_data() {
                         let md = md.payload;
                         if md.len() == 4 && md[0] == 0x0ca && md[1] == 0x7e && md[2] == 0xa2 {
@@ -210,29 +201,4 @@ fn main() {
             pin.set_low().expect("set_low failed");
         }
     }
-}
-
-const WASM_MOD: &[u8] =
-    include_bytes!("../../target/wasm32-unknown-unknown/release/rudelblinken_wasm.wasm");
-
-fn wasm_poc() -> Result<u64> {
-    let engine = Engine::default();
-
-    let module = Module::new(&engine, WASM_MOD)?;
-
-    type HostState = ();
-    let mut store = Store::new(&engine, ());
-    let host_ping = Func::wrap(&mut store, |_caller: Caller<'_, HostState>, param: i32| {
-        println!("Got {param} from WebAssembly");
-    });
-
-    let mut linker = <Linker<HostState>>::new(&engine);
-
-    linker.define("env", "ping", host_ping)?;
-    let pre_instance = linker.instantiate(&mut store, &module)?;
-    let instance = pre_instance.start(&mut store)?;
-    let add = instance.get_typed_func::<(u64, u64), u64>(&store, "add")?;
-
-    // And finally we can call the wasm!
-    Ok(add.call(&mut store, (1, 3))?)
 }
