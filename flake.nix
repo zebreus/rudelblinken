@@ -85,7 +85,7 @@
         '';
 
       in
-      {
+      rec {
         name = "rudelblinken-rs";
 
         devShell = pkgs.mkShell {
@@ -109,6 +109,37 @@
             pkgs.dbus
           ];
         };
+
+        packages.rudelblinken-cli =
+          (pkgs.makeRustPlatform {
+            cargo = rustToolchain;
+            rustc = rustToolchain;
+          }).buildRustPackage
+            {
+              pname = "rudel";
+              version = "0.1.0";
+
+              src = ./rudelblinken-cli;
+
+              cargoLock = {
+                lockFile = ./rudelblinken-cli/Cargo.lock;
+              };
+
+              nativeBuildInputs = [
+                pkgs.pkg-config
+              ];
+              buildInputs = [
+                pkgs.dbus
+              ];
+
+              meta = {
+                description = "Rudelblinken cli utility";
+                homepage = "https://github.com/zebreus/rudelblinken";
+                license = pkgs.lib.licenses.agpl3Plus;
+              };
+            };
+        packages.rudel = packages.rudelblinken-cli;
+        packages.default = packages.rudelblinken-cli;
 
         formatter = pkgs.nixfmt-rfc-style;
       }
