@@ -327,10 +327,6 @@ impl CatManagementService {
                 return;
             };
 
-            if service.program_hash == Some(hash) {
-                return;
-            }
-
             let wasm_module;
             {
                 let file_upload_service = service.file_upload_service.lock();
@@ -344,8 +340,6 @@ impl CatManagementService {
             service.program_hash = Some(hash);
 
             ::log::error!("WASM result: {}", run_wasm_module(&wasm_module).unwrap());
-
-            ::log::error!("Loading the program is not yet implemented");
         });
 
         let name_characteristic = service.lock().create_characteristic(
