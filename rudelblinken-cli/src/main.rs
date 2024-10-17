@@ -65,7 +65,7 @@ where
     return Ok(());
 }
 
-/// Tool to control rudelblinken devices
+/// Rudelblinken cli utility
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Cli {
@@ -127,7 +127,7 @@ async fn main() -> bluer::Result<()> {
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
-                &async |device| -> Result<(), UpdateTargetError> {
+                &async |device: Device| -> Result<(), UpdateTargetError> {
                     let update_target = UpdateTarget::new_from_peripheral(&device).await?;
 
                     let data = &file_content;
@@ -163,15 +163,13 @@ async fn main() -> bluer::Result<()> {
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
-                &async |device| -> Result<(), UpdateTargetError> {
+                &async |device: Device| -> Result<(), UpdateTargetError> {
                     let update_target = UpdateTarget::new_from_peripheral(&device).await?;
 
                     let data = &file_content;
 
-                    let now = Instant::now();
                     update_target.run_program(&data).await?;
                     return Ok(());
-                    // update_target.device.disconnect().await.unwrap();
                 },
             )
             .await
@@ -182,7 +180,7 @@ async fn main() -> bluer::Result<()> {
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
                 999,
-                &async |device| -> Result<(), UpdateTargetError> {
+                &async |device: Device| -> Result<(), UpdateTargetError> {
                     let address = device.address();
                     let update_target = UpdateTarget::new_from_peripheral(&device).await?;
                     let rssi = device.rssi().await?;

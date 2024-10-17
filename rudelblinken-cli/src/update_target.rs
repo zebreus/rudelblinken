@@ -156,22 +156,22 @@ impl UpdateTarget {
         return Ok(name.to_string());
     }
 
-    pub async fn set_name(&self, name: String) -> Result<String, UpdateTargetError> {
-        let name_bytes = self.name_characteristic.read().await?;
-        if name_bytes.len() < 3 || name_bytes.len() > 32 {
-            todo!();
-        }
-        let name = String::from_utf8_lossy(&name_bytes);
-        return Ok(name.to_string());
-    }
+    // pub async fn set_name(&self, name: String) -> Result<String, UpdateTargetError> {
+    //     let name_bytes = self.name_characteristic.read().await?;
+    //     if name_bytes.len() < 3 || name_bytes.len() > 32 {
+    //         todo!();
+    //     }
+    //     let name = String::from_utf8_lossy(&name_bytes);
+    //     return Ok(name.to_string());
+    // }
 
-    pub async fn get_program_hash(&self) -> Result<[u8; 32], UpdateTargetError> {
-        let program_hash = self.program_hash_characteristic.read().await?;
-        let Ok(program_hash): Result<[u8; 32], _> = program_hash.try_into() else {
-            todo!();
-        };
-        return Ok(program_hash);
-    }
+    // pub async fn get_program_hash(&self) -> Result<[u8; 32], UpdateTargetError> {
+    //     let program_hash = self.program_hash_characteristic.read().await?;
+    //     let Ok(program_hash): Result<[u8; 32], _> = program_hash.try_into() else {
+    //         todo!();
+    //     };
+    //     return Ok(program_hash);
+    // }
 
     pub async fn run_program(&self, data: &[u8]) -> Result<(), UpdateTargetError> {
         let program_hash = self.upload_file(data).await?;
