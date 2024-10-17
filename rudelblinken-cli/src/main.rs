@@ -4,6 +4,7 @@
 mod update_target;
 
 use bluer::{AdapterEvent, Device};
+use clap::{Parser, Subcommand};
 use futures::{
     pin_mut,
     stream::{AbortHandle, Abortable},
@@ -11,7 +12,7 @@ use futures::{
 };
 use futures_time::stream::StreamExt;
 use futures_time::time::Duration;
-use std::{future::Future, time::Instant};
+use std::{future::Future, path::PathBuf, time::Instant};
 use update_target::{UpdateTarget, UpdateTargetError};
 
 async fn scan_for<Fut, Err>(
@@ -66,32 +67,74 @@ where
     return Ok(());
 }
 
+/// Tool to control rudelblinken devices
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Run a WASM binary
+    Run {
+        /// Stop scanning after this many seconds
+        #[arg(short, long, default_value = "5")]
+        timeout: f32,
+
+        /// Maximum number of devices to program
+        #[arg(short, long, default_value = "1")]
+        devices: u32,
+
+        /// WASM file that will get flashed to the devices
+        file: PathBuf,
+    },
+    /// Scan for cats
+    Scan {
+        /// Stop scanning after this many seconds
+        #[arg(short, long, default_value = "5")]
+        timeout: f32,
+    },
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> bluer::Result<()> {
     env_logger::init();
+    let cli = Cli::parse();
+
+    let Commands::Run {
+        timeout,
+        devices,
+        file,
+    } = cli.command
+    else {
+        todo!();
+    };
+
+    let file_content = tokio::fs::read(file)
+        .await
+        .expect("Failed to read the WASM file");
+
     scan_for(
-        Duration::from_millis(2000000),
-        1,
+        Duration::from_millis((timeout * 1000.0) as u64),
+        devices,
         &async |device| -> Result<(), UpdateTargetError> {
             let update_target = UpdateTarget::new_from_peripheral(device).await?;
 
-            const FILESIZE: usize = 1024 * 50;
-            let mut ten_kilo = [0u8; FILESIZE];
-            for num in 0..(FILESIZE) {
-                ten_kilo[num] = num.to_le_bytes()[0];
-            }
+            let data = &file_content;
 
             let now = Instant::now();
-            update_target.write_file(&ten_kilo).await?;
+            update_target.write_file(&data).await?;
             let duration = now.elapsed();
             println!(
                 "Sending {}k took {} millis",
-                FILESIZE / 1024,
+                data.len() / 1024,
                 duration.as_millis()
             );
             println!(
                 "Thats {}kb/s",
-                (FILESIZE as f64 / duration.as_millis() as f64)
+                (data.len() as f64 / duration.as_millis() as f64)
             );
             return Ok(());
             // update_target.device.disconnect().await.unwrap();

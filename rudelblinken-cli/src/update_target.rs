@@ -23,14 +23,9 @@ pub enum UpdateTargetError {
     #[error("io error")]
     IoError(#[from] std::io::Error),
     #[error("Not an update target")]
-    NotAnUpdateTarget,
-    #[error("Not an update target")]
     MacDoesNotLookLikeAnUpdateTarget,
     #[error("Failed to connect to device")]
     FailedToConnect(bluer::Error),
-    // TODO: Write better message
-    #[error("Something weird happened")]
-    WeirdError,
     #[error(transparent)]
     DoesNotProvideUpdateService(#[from] FindUpdateServiceError),
     #[error(transparent)]
@@ -77,8 +72,6 @@ pub async fn find_characteristic(
 }
 
 pub struct UpdateTarget {
-    device: Device,
-    update_service: Service,
     data_characteristic: Characteristic,
     hash_characteristic: Characteristic,
     checksums_characteristic: Characteristic,
@@ -132,8 +125,6 @@ impl UpdateTarget {
             find_characteristic(&update_service, FILE_UPLOAD_SERVICE_CHUNK_LENGTH).await?;
 
         return Ok(UpdateTarget {
-            device,
-            update_service,
             data_characteristic,
             hash_characteristic,
             checksums_characteristic,
