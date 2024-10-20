@@ -2,29 +2,29 @@ mod host_raw {
     use crate::common::Region;
 
     extern "C" {
-        // fn host_log(args: usize);
-        // fn get_name() -> usize;
-        // fn set_led_brightness(rgb: usize);
-        // fn configure_ble_adv(settings: usize);
-        // fn configure_ble_data(data: usize);
+        // () -> bool
+        pub(super) fn has_host_base() -> bool;
+        // Log -> ()
+        pub(super) fn host_log(log_args: usize);
+        // () -> String
+        pub(super) fn get_name() -> usize;
+
+        // () -> bool
+        pub(super) fn has_led_brightness() -> bool;
+        // LEDBrightnessSettings -> ()
+        pub(super) fn set_led_brightness(settings: usize);
+
+        // () -> bool
+        pub(super) fn has_ble_adv() -> bool;
+        // BLEAdvSettings -> ()
+        pub(super) fn configure_ble_adv(settings: usize);
+        // BLEAdvData -> ()
+        pub(super) fn configure_ble_data(data: usize);
         // fn configure_adv_recv_callbacl(cb: usize);
-        pub(super) fn test(arg: usize) -> usize;
     }
 
     #[no_mangle]
     extern "C" fn alloc_mem(len: usize) -> usize {
-        /*
-        // FIXME(lmv): can offsetting everything by 4 bytes for the length
-        // prefix cause any alignment issues? for now I am sticking with 8, just
-        // in case
-        let full_len = len + 8;
-        let mut mem_vec = vec![0; full_len];
-        let cap = mem_vec.capacity();
-        mem_vec.copy_from_slice(&full_len.to_le_bytes());
-        mem_vec.copy_from_slice(&cap.to_le_bytes());
-        let ptr = mem_vec.as_ptr() as usize;
-        std::mem::forget(mem_vec);
-        ptr + 8 */
         leak_vec(vec![0; len]) as usize
     }
 
@@ -46,29 +46,69 @@ mod host_raw {
     #[no_mangle]
     extern "C" fn dealloc_mem(ptr: usize) {
         drop(recover_vec(ptr as *mut Region))
-        /* let base_ptr = ptr - 8;
-        let len_mem = unsafe { std::slice::from_raw_parts(base_ptr as *mut u8, 8) };
-        let len = u32::from_le_bytes(len_mem[..4].try_into().unwrap()) as usize;
-        let cap = u32::from_le_bytes(len_mem[4..8].try_into().unwrap()) as usize;
-        let mem = unsafe { Vec::<u8>::from_raw_parts(base_ptr as *mut u8, len, cap) };
-        drop(mem); */
-        /* std::mem::forget(len_mem);
-        let mem =
-            unsafe { std::slice::from_raw_parts(base_ptr as *mut MaybeUninit<u8>, len as usize) };
-        drop(mem); */
     }
 }
 
 pub mod host {
     use super::host_raw;
-    use crate::common::{Region, TestArgument, TestResult};
+    use crate::common::{BLEAdvData, BLEAdvSettings, LEDBrightnessSettings, Log, Region};
 
-    pub fn test(arg: &TestArgument) -> TestResult {
-        let b = rkyv::to_bytes::<rkyv::rancor::Error>(arg).expect("failed to serialize");
+    // TODO(lmv): maybe generate these wrappers this with a proc macro?
+
+    pub fn has_host_base() -> bool {
+        unsafe { host_raw::has_host_base() }
+    }
+
+    // FIXME(lmv): return (de)serialization errors properly
+
+    // FIXME(lmv): provide a tracing-compatible abstraction for logging from wasm
+    pub fn host_log(log: &Log) {
+        let b = rkyv::to_bytes::<rkyv::rancor::Error>(log).expect("failed to serialize");
         let ptr_arg = host_raw::leak_vec(b.into_vec()) as usize;
-        let res_ptr = unsafe { host_raw::test(ptr_arg) };
+        unsafe { host_raw::host_log(ptr_arg) };
+    }
+
+    pub fn get_name() -> String {
+        let res_ptr = unsafe { host_raw::get_name() };
 
         let res_buf = super::host_raw::recover_vec(res_ptr as *mut Region);
         rkyv::from_bytes::<_, rkyv::rancor::Error>(&res_buf).expect("failed to deserialize")
     }
+
+    pub fn has_led_brightness() -> bool {
+        unsafe { host_raw::has_led_brightness() }
+    }
+
+    pub fn set_led_brightness(settings: &LEDBrightnessSettings) {
+        let b = rkyv::to_bytes::<rkyv::rancor::Error>(settings).expect("failed to serialize");
+        let ptr_arg = host_raw::leak_vec(b.into_vec()) as usize;
+        unsafe { host_raw::set_led_brightness(ptr_arg) };
+    }
+
+    pub fn has_ble_adv() -> bool {
+        unsafe { host_raw::has_ble_adv() }
+    }
+
+    pub fn configure_ble_adv(settings: &BLEAdvSettings) {
+        let b = rkyv::to_bytes::<rkyv::rancor::Error>(settings).expect("failed to serialize");
+        let ptr_arg = host_raw::leak_vec(b.into_vec()) as usize;
+        unsafe { host_raw::configure_ble_adv(ptr_arg) };
+    }
+
+    pub fn configure_ble_data(data: &BLEAdvData) {
+        let b = rkyv::to_bytes::<rkyv::rancor::Error>(data).expect("failed to serialize");
+        let ptr_arg = host_raw::leak_vec(b.into_vec()) as usize;
+        unsafe { host_raw::configure_ble_data(ptr_arg) };
+    }
 }
+
+// TODO(lmv): provide a way to nicely implement callbacks (e.g. bluetooth
+// advertisement received) from wasm; not sure how to implement this
+//
+// ideas:
+//
+// - somehow (not sure if it's possible) pass the actual function reference to
+//   the host and have it call it properly
+//
+// - export constant callback functions in here, which are called from the host
+//   and then use a mutable global to call to registered callbacks
