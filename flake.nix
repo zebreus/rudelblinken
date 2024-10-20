@@ -105,6 +105,7 @@
             pkgs.cargo-espflash
             pkgs.ldproxy
 
+            pkgs.wasm-tools
             # For the cli:
             pkgs.dbus
           ];

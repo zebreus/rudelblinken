@@ -1,0 +1,12 @@
+[package]
+name = "rudelblinken-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasmi = "0.38.0"
+anyhow = "1.0.39"
+tracing = "0.1.40"
+rkyv = "0.8.8"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+rudelblinken-sdk = { path = "../rudelblinken-sdk", features = ["host"] }

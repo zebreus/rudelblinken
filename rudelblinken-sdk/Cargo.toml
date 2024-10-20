@@ -1,0 +1,15 @@
+[package]
+name = "rudelblinken-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+host = ["dep:wasmi" ]
+guest = []
+
+[dependencies]
+rkyv = "0.8.8"
+thiserror = "1.0.64"
+tracing = "0.1.40"
+
+wasmi = { version = "0.38.0", optional = true }
