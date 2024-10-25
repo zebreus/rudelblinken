@@ -51,13 +51,14 @@ main args:
       firefly.receive-pulse it
   last-time := Time.monotonic-us --since-wakeup=true
   while true:
-    time := Time.monotonic-us --since-wakeup=true
-    delta := time - last-time
-    last-time = time
+    catch --trace:
+      time := Time.monotonic-us --since-wakeup=true
+      delta := time - last-time
+      last-time = time
 
-    firefly.tick delta
-    brightness := firefly.brightness
-    // print brightness
-    set-brightness (1 + ( math.sin ((brightness * 6.14159) / 255.0)))/2.0
+      firefly.tick delta
+      brightness := firefly.brightness
+      // print brightness
+      set-brightness (1 + ( math.sin ((brightness * 6.14159) / 255.0)))/2.0
 
-    sleep INTERVAL
+      sleep INTERVAL
