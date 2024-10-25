@@ -4,7 +4,11 @@ Synced blinking catears
 
 ## Notes
 
-Less of a Readme, more a unstructured braindump
+Less of a Readme, more a unstructured braindump. All commands should be executed in a `nix develop` shell
+
+## Prepare a new pair of cat ears
+
+Connect your ESP32-C3 via USB, choose a unique name and run `make flash-NAME` to flash them. This runs `jag flash` with a prebuilt image and the correct WiFi settings. After flashing you should get some debug output when running `jag monitor`. You can now proceed with the next section.
 
 ## Updating all cat ears nearby
 
@@ -26,7 +30,7 @@ I usually use a second laptop for that.
 
 4. Make sure UDP port 1990 is open on your machine
 
-5. Turn on your own cat ears and run `jag scan` to verify you can find them and figure out their name. Then try `jag container install rudelblinken main.toit -d NAME_OF_YOUR_CATEARS` to verify that everything works on your device.
+5. Turn on your own cat ears and run `jag scan` to verify you can find them and figure out their name. It can take up to two minutes after booting for the cat ears to connect to the AP. Then try `jag container install rudelblinken main.toit -d NAME_OF_YOUR_CATEARS` to verify that everything works on your device.
 
 6. Run around with your devices like a mad cat and run `make install-all` repeatedly to update all cat ears in range
 
