@@ -4,7 +4,7 @@ import .ambient-light
 import math
 
 // How many ws2812 LEDs are connected
-PIXELS ::= 30
+PIXELS ::= 70
 // To which pin the LEDs are connected
 PIN ::= gpio.Pin 7
 // Size until the rainbow repeats. Lower is bigger
@@ -34,9 +34,10 @@ set-brightness new-brightness/float:
   progress := current.to-float / RAINBOW-SPEED.to-float
   
   PIXELS.repeat:
-    r[it] = ((math.pow (((math.sin (math.PI * progress * 2) + RAINBOW-SIZE * it + (math.PI * 0.33 * 2)) + 1) / 2) 1.5) * brightness).to-int;
-    g[it] = ((math.pow (((math.sin (math.PI * progress * 2) + RAINBOW-SIZE * it + (math.PI * 0.33 * 4)) + 1) / 2) 1.5) * brightness).to-int;
-    b[it] = ((math.pow (((math.sin (math.PI * progress * 2) + RAINBOW-SIZE * it) + 1) / 2) 1.5) * brightness).to-int;
+    part-of-that-calculation := (math.PI * progress * 2) + RAINBOW-SIZE * it
+    r[it] = ((math.pow (((math.sin part-of-that-calculation + (math.PI * 0.33 * 2)) + 1) / 2) 2) * brightness).to-int;
+    g[it] = ((math.pow (((math.sin part-of-that-calculation + (math.PI * 0.33 * 4)) + 1) / 2) 2) * brightness).to-int;
+    b[it] = ((math.pow (((math.sin part-of-that-calculation) + 1) / 2) 2) * brightness).to-int;
   // Show the current configuration.
   strip.output r g b
   // Prepare for the next round.
