@@ -17,7 +17,7 @@ import encoding.tison
 import .sync
 import .firefly
 import .communication
-import .led
+import .ws2812
 import .ambient-light
 
 INTERVAL ::= Duration --us=100
@@ -42,7 +42,7 @@ main args:
   init-communication
   print "Hey, my name is $device-name"
 
-  firefly := Firefly device-name 1000000
+  firefly := Firefly device-name 1600000
   firefly.dampening = 0.95
   task::
     ambient-light-task
@@ -57,8 +57,8 @@ main args:
       last-time = time
 
       firefly.tick delta
-      brightness := firefly.brightness
+      my-brightness := firefly.brightness
       // print brightness
-      set-brightness (1 + ( math.sin ((brightness * 6.14159) / 255.0)))/2.0
+      set-brightness (1 + ( math.sin ((my-brightness * 6.14159) / 255.0)))/2.0
 
       sleep INTERVAL
