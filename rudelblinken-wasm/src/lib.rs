@@ -1,5 +1,7 @@
 use rudelblinken_sdk::{
-    common::{BLEAdvData, BLEAdvSettings, LEDBrightnessSettings, Log, LogLevel},
+    common::{
+        BLEAdvData, BLEAdvNotification, BLEAdvSettings, LEDBrightnessSettings, Log, LogLevel,
+    },
     guest::host,
 };
 
@@ -33,4 +35,14 @@ extern "C" fn main() {
     host::configure_ble_data(&BLEAdvData {
         data: vec![0, 1, 2, 3],
     });
+
+    let mut last = None;
+
+    host::set_on_ble_adv_recv_callback(Some(move |info: BLEAdvNotification| {
+        host::host_log(&Log {
+            level: LogLevel::Info,
+            message: format!("callback_recv'ed: {:?}, last: {:?}", info, last).to_owned(),
+        });
+        last.replace(info.data.clone());
+    }));
 }

@@ -1,7 +1,13 @@
 use anyhow::Result;
 use rudelblinken_sdk::{
-    common,
-    host::{BLEAdv, Host, HostBase, LEDBrightness},
+    common::{self, BLEAdvNotification},
+    host::{
+        helper::{
+            prepare_link_ble_adv, prepare_link_host_base, prepare_link_led_brightness,
+            prepare_link_stubs,
+        },
+        BLEAdv, Host, HostBase, InstanceWithContext, LEDBrightness,
+    },
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 use wasmi::{Engine, Linker, Module, Store};
@@ -47,6 +53,21 @@ impl BLEAdv for HostState {
 }
 
 fn main() -> Result<()> {
+    // TODO (next steps):
+    // - add a cli interface for specifying (multiple) wasm binaries to run
+    // - build a sync-able simulation;
+    //  - impl ble advertisment propergation, triggering sends at a random time
+    //    respecting the configured delays (initially always deliver instantly
+    //    to everyone, package delay and loss can be implemented later)
+    //  - implement led brightness info (log when passing thresholds or actually
+    //    show brightness with dots visually)
+    // - make the simulation fancy
+    //   - allow positioning nodes in space, do package loss based on distance
+    //   - implement (noisy) propagation delay
+    //   - cool visualization
+    //   - ...
+    // along the way, maybe make the sdk a bit nicer
+
     let env_filter = EnvFilter::try_from_default_env();
 
     let stdout_env_filter = env_filter.unwrap_or_else(|_| EnvFilter::new("info"));
@@ -71,20 +92,35 @@ fn main() -> Result<()> {
     let mut linker = linker;
 
     // FIXME(lmv): can we somehow call all prepare functions the host supports
-    // with the given hsot state?
-    Host::prepare_link_host_base(&mut store, &mut linker).expect("failed to link hos base");
-    Host::prepare_link_led_brightness(&mut store, &mut linker)
-        .expect("failed to link led brightness");
-    Host::prepare_link_ble_adv(&mut store, &mut linker).expect("failed to link ble adv");
-    Host::prepare_link_stubs(&mut store, &mut linker, module.imports())
-        .expect("failed to link stubs");
+    // with the given host state?
+    prepare_link_host_base(&mut store, &mut linker).expect("failed to link hos base");
+    prepare_link_led_brightness(&mut store, &mut linker).expect("failed to link led brightness");
+    prepare_link_ble_adv(&mut store, &mut linker).expect("failed to link ble adv");
+    prepare_link_stubs(&mut store, &mut linker, module.imports()).expect("failed to link stubs");
 
     let pre_instance = linker.instantiate(&mut store, &module)?;
     let instance = pre_instance.start(&mut store)?;
-    let add = instance.get_typed_func::<(), ()>(&store, "main")?;
+    let guest_main = instance.get_typed_func::<(), ()>(&store, "main")?;
 
     // And finally we can call the wasm!
-    add.call(&mut store, ())?;
+    guest_main.call(&mut store, ())?;
     println!("wasm exited");
+
+    let mut host: Host<_> = InstanceWithContext::new(&mut store, instance).into();
+    host.on_ble_adv_recv(&BLEAdvNotification {
+        mac: [0x4d, 0x61, 0x72, 0x63, 0x79, 0x00],
+        data: vec![
+            0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64, 0x21,
+        ],
+    })
+    .expect("failed to trigger callback");
+    host.on_ble_adv_recv(&BLEAdvNotification {
+        mac: [0x4d, 0x61, 0x72, 0x63, 0x79, 0x00],
+        data: vec![
+            0x21, 0x64, 0x6c, 0x72, 0x6f, 0x57, 0x20, 0x6f, 0x6c, 0x6c, 0x65, 0x48,
+        ],
+    })
+    .expect("failed to trigger callback");
+
     Ok(())
 }

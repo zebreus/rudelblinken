@@ -44,6 +44,12 @@ pub struct BLEAdvData {
 }
 
 #[derive(Debug, Archive, Deserialize, Serialize)]
+pub struct BLEAdvNotification {
+    pub mac: [u8; 6],
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Archive, Deserialize, Serialize)]
 pub struct TestResult {
     pub min_interval: u32,
     pub max_interval: u32,

@@ -1,5 +1,5 @@
 mod host_raw {
-    use crate::common::Region;
+    use crate::common::{BLEAdvNotification, Region};
 
     extern "C" {
         // () -> bool
@@ -47,11 +47,32 @@ mod host_raw {
     extern "C" fn dealloc_mem(ptr: usize) {
         drop(recover_vec(ptr as *mut Region))
     }
+
+    pub(super) static mut ON_BLE_ADV_RECV: Option<
+        Box<dyn FnMut(BLEAdvNotification) + Send + Sync>,
+    > = None;
+
+    #[no_mangle]
+    extern "C" fn on_ble_adv_recv(arg_ptr: usize) {
+        let arg_buf = super::host_raw::recover_vec(arg_ptr as *mut Region);
+        let arg =
+            rkyv::from_bytes::<_, rkyv::rancor::Error>(&arg_buf).expect("failed to deserialize");
+
+        // FIXME(lmv): this is not thread-safe
+        if let Some(ref mut cb) = unsafe {
+            #[allow(static_mut_refs)]
+            &mut ON_BLE_ADV_RECV
+        } {
+            cb(arg);
+        }
+    }
 }
 
 pub mod host {
     use super::host_raw;
-    use crate::common::{BLEAdvData, BLEAdvSettings, LEDBrightnessSettings, Log, Region};
+    use crate::common::{
+        BLEAdvData, BLEAdvNotification, BLEAdvSettings, LEDBrightnessSettings, Log, Region,
+    };
 
     // TODO(lmv): maybe generate these wrappers this with a proc macro?
 
@@ -99,6 +120,17 @@ pub mod host {
         let b = rkyv::to_bytes::<rkyv::rancor::Error>(data).expect("failed to serialize");
         let ptr_arg = host_raw::leak_vec(b.into_vec()) as usize;
         unsafe { host_raw::configure_ble_data(ptr_arg) };
+    }
+
+    pub fn set_on_ble_adv_recv_callback<F>(cb: Option<F>)
+    where
+        F: FnMut(BLEAdvNotification) + Send + Sync + 'static,
+    {
+        // FIXME(lmv): this is not thread-safe
+        unsafe {
+            host_raw::ON_BLE_ADV_RECV =
+                cb.map(|cb| -> Box<dyn FnMut(BLEAdvNotification) + Send + Sync> { Box::new(cb) })
+        }
     }
 }
 

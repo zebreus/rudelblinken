@@ -2,31 +2,88 @@ use std::cell::OnceCell;
 
 use rkyv::Archive;
 use wasmi::{
-    AsContextMut, Caller, Extern, Func, IntoFunc, Linker, Memory, TypedFunc, WasmParams,
-    WasmResults,
+    AsContext, AsContextMut, Caller, Extern, Instance, Memory, StoreContext, StoreContextMut,
+    TypedFunc, WasmParams, WasmResults,
 };
 
 use crate::common;
 
-pub struct Host<'a, HostState> {
-    caller: Caller<'a, HostState>,
+pub trait HasExports {
+    fn get_export(&self, name: &str) -> Option<Extern>;
+}
+
+impl<'a, S> HasExports for Caller<'a, S> {
+    fn get_export(&self, name: &str) -> Option<Extern> {
+        self.get_export(name)
+    }
+}
+
+pub struct InstanceWithContext<C: AsContext> {
+    context: C,
+    instance: Instance,
+}
+
+impl<C: AsContext> InstanceWithContext<C> {
+    pub fn new(context: C, instance: Instance) -> Self {
+        Self { context, instance }
+    }
+}
+
+impl<C: AsContext> HasExports for InstanceWithContext<C> {
+    fn get_export(&self, name: &str) -> Option<Extern> {
+        self.instance.get_export(&self.context, name)
+    }
+}
+
+impl<C: AsContext> AsContext for InstanceWithContext<C> {
+    type Data = C::Data;
+
+    fn as_context(&self) -> StoreContext<Self::Data> {
+        self.context.as_context()
+    }
+}
+
+impl<C: AsContextMut> AsContextMut for InstanceWithContext<C> {
+    fn as_context_mut(&mut self) -> StoreContextMut<Self::Data> {
+        self.context.as_context_mut()
+    }
+}
+
+pub struct Host<I> {
+    runtime_info: I,
     memory: OnceCell<Result<Memory, Error>>,
     alloc_fn: OnceCell<Result<TypedFunc<u32, u32>, Error>>,
     dealloc_fn: OnceCell<Result<TypedFunc<u32, ()>, Error>>,
+    on_ble_adv_recv_fn: OnceCell<Result<TypedFunc<u32, ()>, Error>>,
 }
 
-impl<'a, HostState> From<Caller<'a, HostState>> for Host<'a, HostState> {
+/* impl<'a, HostState> From<Caller<'a, HostState>> for Host<HostState, Caller<'a, HostState>> {
     fn from(caller: Caller<'a, HostState>) -> Self {
         Self {
-            caller,
+            runtime_info: caller,
             memory: OnceCell::new(),
             alloc_fn: OnceCell::new(),
             dealloc_fn: OnceCell::new(),
+            on_ble_adv_recv_fn: OnceCell::new(),
+        }
+    }
+} */
+
+impl<I: HasExports + AsContextMut> From<I> for Host<I> {
+    fn from(runtime_info: I) -> Self {
+        Self {
+            runtime_info,
+            memory: OnceCell::new(),
+            alloc_fn: OnceCell::new(),
+            dealloc_fn: OnceCell::new(),
+            on_ble_adv_recv_fn: OnceCell::new(),
         }
     }
 }
 
-impl<HostState> Host<'_, HostState> {
+impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
+    // FIXME(lmv): make sure even a malicious guest (i.e. the pointer passed as
+    // arg and dealloc are attacker controlled) cannot crash the host
     pub fn read_guest_value<V>(&mut self, reg_off: usize) -> Result<V, Error>
     where
         V: rkyv::Archive,
@@ -38,12 +95,12 @@ impl<HostState> Host<'_, HostState> {
     {
         let mem = self.memory()?;
         let reg = {
-            let base_ptr = mem.data_ptr(&self.caller) as usize;
+            let base_ptr = mem.data_ptr(&self.runtime_info) as usize;
             let reg_ptr = base_ptr + reg_off;
             unsafe { Box::from_raw(reg_ptr as *mut common::Region) }
         };
 
-        let data = self.memory()?.data_mut(&mut self.caller);
+        let data = self.memory()?.data_mut(&mut self.runtime_info);
 
         let ptr = reg.ptr as usize;
         let len = reg.len as usize;
@@ -60,6 +117,8 @@ impl<HostState> Host<'_, HostState> {
         Ok(r)
     }
 
+    // FIXME(lmv): make sure even a malicious guest (i.e. alloc is attacker
+    // controlled) cannot crash the host
     pub fn write_value_to_guest_memory<V>(&mut self, value: &V) -> Result<usize, Error>
     where
         V: for<'b> rkyv::Serialize<
@@ -81,12 +140,12 @@ impl<HostState> Host<'_, HostState> {
 
         let reg_off = self.alloc(enc.len())?;
         let reg = {
-            let base_ptr = mem.data_ptr(&self.caller) as usize;
+            let base_ptr = mem.data_ptr(&self.runtime_info) as usize;
             let reg_ptr = base_ptr + reg_off;
             unsafe { Box::from_raw(reg_ptr as *mut common::Region) }
         };
 
-        let data = mem.data_mut(&mut self.caller);
+        let data = mem.data_mut(&mut self.runtime_info);
 
         let ptr = reg.ptr as usize;
         let len = reg.len as usize;
@@ -101,7 +160,7 @@ impl<HostState> Host<'_, HostState> {
     fn memory(&self) -> Result<Memory, Error> {
         self.memory
             .get_or_init(|| {
-                self.caller
+                self.runtime_info
                     .get_export("memory")
                     .and_then(Extern::into_memory)
                     .ok_or(Error::MemoryNotFound)
@@ -113,18 +172,35 @@ impl<HostState> Host<'_, HostState> {
         &self,
         name: &str,
     ) -> Result<TypedFunc<P, R>, Error> {
-        self.caller
+        self.runtime_info
             .get_export(name)
             .and_then(Extern::into_func)
             .ok_or_else(|| Error::FunctionNotFound(name.to_owned()))?
-            .typed(&self.caller)
+            .typed(&self.runtime_info)
             .map_err(|_| Error::FunctionTypeMissmatch(name.to_owned()))
+    }
+
+    // FIXME(lmv): Again, macros for generating this?
+    pub fn on_ble_adv_recv(&mut self, arg: &common::BLEAdvNotification) -> Result<(), Error> {
+        let arg = self
+            .write_value_to_guest_memory(arg)
+            .expect("failed to write arg value") as u32;
+        self.on_ble_adv_recv_fn()?
+            .call(&mut self.runtime_info, arg)
+            .map_err(|_| Error::FunctionCallFailure)?;
+        Ok(())
+    }
+
+    fn on_ble_adv_recv_fn(&self) -> Result<TypedFunc<u32, ()>, Error> {
+        self.on_ble_adv_recv_fn
+            .get_or_init(|| self.get_typed_func("on_ble_adv_recv"))
+            .clone()
     }
 
     fn alloc(&mut self, len: usize) -> Result<usize, Error> {
         let ptr = self
             .alloc_fn()?
-            .call(&mut self.caller, len as u32)
+            .call(&mut self.runtime_info, len as u32)
             .map_err(|_| Error::AllocFailure)?;
         Ok(ptr as usize)
     }
@@ -137,7 +213,7 @@ impl<HostState> Host<'_, HostState> {
 
     fn dealloc(&mut self, ptr: usize) -> Result<(), Error> {
         self.dealloc_fn()?
-            .call(&mut self.caller, ptr as u32)
+            .call(&mut self.runtime_info, ptr as u32)
             .map_err(|_| Error::DeallocFailure)?;
         Ok(())
     }
@@ -146,84 +222,6 @@ impl<HostState> Host<'_, HostState> {
         self.dealloc_fn
             .get_or_init(|| self.get_typed_func("dealloc_mem"))
             .clone()
-    }
-
-    fn wrap_fn_arg_ret<'b, F, A, R>(
-        ifn: F,
-    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), u32>
-    where
-        F: Fn(&HostState, A) -> R + Send + Sync + 'static,
-        A: rkyv::Archive,
-        <A as Archive>::Archived:
-            rkyv::Deserialize<A, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
-        <A as Archive>::Archived: for<'c> rkyv::bytecheck::CheckBytes<
-            rkyv::api::high::HighValidator<'c, rkyv::rancor::Error>,
-        >,
-        R: for<'c> rkyv::Serialize<
-            rkyv::rancor::Strategy<
-                rkyv::ser::Serializer<
-                    rkyv::util::AlignedVec,
-                    rkyv::ser::allocator::ArenaHandle<'c>,
-                    rkyv::ser::sharing::Share,
-                >,
-                rkyv::rancor::Error,
-            >,
-        >,
-    {
-        move |caller: Caller<'_, HostState>, arg_ptr: u32| {
-            let mut host = Host::from(caller);
-            // FIXME(lmv): handle error
-            let arg = host
-                .read_guest_value::<A>(arg_ptr as usize)
-                .expect("failed to read argument value");
-            let ret = ifn(host.caller.data(), arg);
-            // FIXME(lmv): handle error
-            host.write_value_to_guest_memory(&ret)
-                .expect("failed to write return value") as u32
-        }
-    }
-
-    fn wrap_fn_arg<'b, F, A>(ifn: F) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), ()>
-    where
-        F: Fn(&HostState, A) + Send + Sync + 'static,
-        A: rkyv::Archive,
-        <A as Archive>::Archived:
-            rkyv::Deserialize<A, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
-        <A as Archive>::Archived: for<'c> rkyv::bytecheck::CheckBytes<
-            rkyv::api::high::HighValidator<'c, rkyv::rancor::Error>,
-        >,
-    {
-        move |caller: Caller<'_, HostState>, arg_ptr: u32| {
-            let mut host = Host::from(caller);
-            // FIXME(lmv): handle error
-            let arg = host
-                .read_guest_value::<A>(arg_ptr as usize)
-                .expect("failed to read argument value");
-            ifn(host.caller.data(), arg);
-        }
-    }
-
-    fn wrap_fn_ret<'b, F, R>(ifn: F) -> impl IntoFunc<HostState, (Caller<'b, HostState>,), u32>
-    where
-        F: Fn(&HostState) -> R + Send + Sync + 'static,
-        R: for<'c> rkyv::Serialize<
-            rkyv::rancor::Strategy<
-                rkyv::ser::Serializer<
-                    rkyv::util::AlignedVec,
-                    rkyv::ser::allocator::ArenaHandle<'c>,
-                    rkyv::ser::sharing::Share,
-                >,
-                rkyv::rancor::Error,
-            >,
-        >,
-    {
-        move |caller: Caller<'_, HostState>| {
-            let mut host = Host::from(caller);
-            let ret = ifn(host.caller.data());
-            // FIXME(lmv): handle error
-            host.write_value_to_guest_memory(&ret)
-                .expect("failed to write return value") as u32
-        }
     }
 }
 
@@ -254,14 +252,99 @@ pub trait BLEAdv {
     }
 }
 
-// TODO(lmv): maybe auto-generate these impl using a proc macro on the traits or
-// similar?
+pub mod helper {
+    use rkyv::Archive;
+    use wasmi::{AsContextMut, Caller, Func, IntoFunc, Linker};
 
-impl<HostState> Host<'_, HostState>
-where
-    HostState: HostBase + 'static,
-{
-    pub fn prepare_link_host_base(
+    use super::{BLEAdv, Host, HostBase, LEDBrightness};
+
+    #[allow(dead_code)]
+    fn wrap_fn_arg_ret<'b, HostState, F, A, R>(
+        ifn: F,
+    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), u32>
+    where
+        F: Fn(&HostState, A) -> R + Send + Sync + 'static,
+        A: rkyv::Archive,
+        <A as Archive>::Archived:
+            rkyv::Deserialize<A, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
+        <A as Archive>::Archived: for<'c> rkyv::bytecheck::CheckBytes<
+            rkyv::api::high::HighValidator<'c, rkyv::rancor::Error>,
+        >,
+        R: for<'c> rkyv::Serialize<
+            rkyv::rancor::Strategy<
+                rkyv::ser::Serializer<
+                    rkyv::util::AlignedVec,
+                    rkyv::ser::allocator::ArenaHandle<'c>,
+                    rkyv::ser::sharing::Share,
+                >,
+                rkyv::rancor::Error,
+            >,
+        >,
+    {
+        move |caller: Caller<'_, HostState>, arg_ptr: u32| {
+            let mut host = Host::from(caller);
+            // FIXME(lmv): handle error
+            let arg = host
+                .read_guest_value::<A>(arg_ptr as usize)
+                .expect("failed to read argument value");
+            let ret = ifn(host.runtime_info.data(), arg);
+            // FIXME(lmv): handle error
+            host.write_value_to_guest_memory(&ret)
+                .expect("failed to write return value") as u32
+        }
+    }
+
+    fn wrap_fn_arg<'b, HostState, F, A>(
+        ifn: F,
+    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), ()>
+    where
+        F: Fn(&HostState, A) + Send + Sync + 'static,
+        A: rkyv::Archive,
+        <A as Archive>::Archived:
+            rkyv::Deserialize<A, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
+        <A as Archive>::Archived: for<'c> rkyv::bytecheck::CheckBytes<
+            rkyv::api::high::HighValidator<'c, rkyv::rancor::Error>,
+        >,
+    {
+        move |caller: Caller<'_, HostState>, arg_ptr: u32| {
+            let mut host = Host::from(caller);
+            // FIXME(lmv): handle error
+            let arg = host
+                .read_guest_value::<A>(arg_ptr as usize)
+                .expect("failed to read argument value");
+            ifn(host.runtime_info.data(), arg);
+        }
+    }
+
+    fn wrap_fn_ret<'b, HostState, F, R>(
+        ifn: F,
+    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>,), u32>
+    where
+        F: Fn(&HostState) -> R + Send + Sync + 'static,
+        R: for<'c> rkyv::Serialize<
+            rkyv::rancor::Strategy<
+                rkyv::ser::Serializer<
+                    rkyv::util::AlignedVec,
+                    rkyv::ser::allocator::ArenaHandle<'c>,
+                    rkyv::ser::sharing::Share,
+                >,
+                rkyv::rancor::Error,
+            >,
+        >,
+    {
+        move |caller: Caller<'_, HostState>| {
+            let mut host = Host::from(caller);
+            let ret = ifn(host.runtime_info.data());
+            // FIXME(lmv): handle error
+            host.write_value_to_guest_memory(&ret)
+                .expect("failed to write return value") as u32
+        }
+    }
+
+    // TODO(lmv): maybe auto-generate these impl using a proc macro on the traits or
+    // similar?
+
+    pub fn prepare_link_host_base<HostState: HostBase + 'static>(
         mut ctx: impl AsContextMut<Data = HostState>,
         linker: &mut Linker<HostState>,
     ) -> Result<(), wasmi::errors::LinkerError> {
@@ -273,22 +356,17 @@ where
         linker.define(
             "env",
             "host_log",
-            Func::wrap(&mut ctx, Self::wrap_fn_arg(HostState::host_log)),
+            Func::wrap(&mut ctx, wrap_fn_arg(HostState::host_log)),
         )?;
         linker.define(
             "env",
             "get_name",
-            Func::wrap(&mut ctx, Self::wrap_fn_ret(HostState::get_name)),
+            Func::wrap(&mut ctx, wrap_fn_ret(HostState::get_name)),
         )?;
         Ok(())
     }
-}
 
-impl<HostState> Host<'_, HostState>
-where
-    HostState: LEDBrightness + 'static,
-{
-    pub fn prepare_link_led_brightness(
+    pub fn prepare_link_led_brightness<HostState: LEDBrightness + 'static>(
         mut ctx: impl AsContextMut<Data = HostState>,
         linker: &mut Linker<HostState>,
     ) -> Result<(), wasmi::errors::LinkerError> {
@@ -300,17 +378,12 @@ where
         linker.define(
             "env",
             "set_led_brightness",
-            Func::wrap(&mut ctx, Self::wrap_fn_arg(HostState::set_led_brightness)),
+            Func::wrap(&mut ctx, wrap_fn_arg(HostState::set_led_brightness)),
         )?;
         Ok(())
     }
-}
 
-impl<HostState> Host<'_, HostState>
-where
-    HostState: BLEAdv + 'static,
-{
-    pub fn prepare_link_ble_adv(
+    pub fn prepare_link_ble_adv<HostState: BLEAdv + 'static>(
         mut ctx: impl AsContextMut<Data = HostState>,
         linker: &mut Linker<HostState>,
     ) -> Result<(), wasmi::errors::LinkerError> {
@@ -322,19 +395,17 @@ where
         linker.define(
             "env",
             "configure_ble_adv",
-            Func::wrap(&mut ctx, Self::wrap_fn_arg(HostState::configure_ble_adv)),
+            Func::wrap(&mut ctx, wrap_fn_arg(HostState::configure_ble_adv)),
         )?;
         linker.define(
             "env",
             "configure_ble_data",
-            Func::wrap(&mut ctx, Self::wrap_fn_arg(HostState::configure_ble_data)),
+            Func::wrap(&mut ctx, wrap_fn_arg(HostState::configure_ble_data)),
         )?;
         Ok(())
     }
-}
 
-impl<HostState> Host<'_, HostState> {
-    pub fn prepare_link_stubs(
+    pub fn prepare_link_stubs<HostState>(
         mut ctx: impl AsContextMut<Data = HostState>,
         linker: &mut Linker<HostState>,
         imports: wasmi::ModuleImportsIter,
@@ -382,6 +453,9 @@ pub enum Error {
     FunctionNotFound(String),
     #[error("Function with name '{0}' has incorrect types")]
     FunctionTypeMissmatch(String),
+    // FIXME(lmv): include more info about the error?
+    #[error("Failed to call a function")]
+    FunctionCallFailure,
     // FIXME(lmv): include more info about the error?
     #[error("Failed to allocate memory")]
     AllocFailure,
