@@ -1,6 +1,7 @@
 use std::cell::OnceCell;
 
 use rkyv::Archive;
+use tracing::warn;
 use wasmi::{
     AsContext, AsContextMut, Caller, Extern, Instance, Memory, StoreContext, StoreContextMut,
     TypedFunc, WasmParams, WasmResults,
@@ -12,7 +13,7 @@ pub trait HasExports {
     fn get_export(&self, name: &str) -> Option<Extern>;
 }
 
-impl<'a, S> HasExports for Caller<'a, S> {
+impl<S> HasExports for Caller<'_, S> {
     fn get_export(&self, name: &str) -> Option<Extern> {
         self.get_export(name)
     }
@@ -82,6 +83,35 @@ impl<I: HasExports + AsContextMut> From<I> for Host<I> {
 }
 
 impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
+    // SAFETY: The actual lifetime of the pointer is until the given pointer is
+    // deallocated
+    unsafe fn recover_region(
+        &mut self,
+        reg_off: usize,
+    ) -> Result<&'static mut common::Region, Error> {
+        let mem = self.memory()?;
+        let mem_len = mem.data(&self.runtime_info).len();
+
+        if mem_len <= reg_off + size_of::<common::Region>() {
+            // should be a pointer to a region, but its not pointing correctly into the wasm-controlled memory
+            warn!(
+                reg_ptr = reg_off,
+                reg_len = size_of::<common::Region>(),
+                mem_len,
+                "region pointer leads out of bounds"
+            );
+            return Err(Error::BadRegionBox);
+        }
+
+        let base_ptr = mem.data_ptr(&self.runtime_info) as usize;
+        let reg_ptr = base_ptr + reg_off;
+        // I /think/ this cannot fail with the bounds check above, and as we
+        // never drop the box (but instead leak it), there are also no issues
+        // with deallocation of wasm-managed memory
+        let reg = unsafe { Box::from_raw(reg_ptr as *mut common::Region) };
+        Ok(Box::leak(reg))
+    }
+
     // FIXME(lmv): make sure even a malicious guest (i.e. the pointer passed as
     // arg and dealloc are attacker controlled) cannot crash the host
     pub fn read_guest_value<V>(&mut self, reg_off: usize) -> Result<V, Error>
@@ -93,23 +123,30 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
             rkyv::api::high::HighValidator<'b, rkyv::rancor::Error>,
         >,
     {
+        let reg = unsafe { self.recover_region(reg_off) }?;
+
         let mem = self.memory()?;
-        let reg = {
-            let base_ptr = mem.data_ptr(&self.runtime_info) as usize;
-            let reg_ptr = base_ptr + reg_off;
-            unsafe { Box::from_raw(reg_ptr as *mut common::Region) }
-        };
+        let mem_len = mem.data(&self.runtime_info).len();
 
-        let data = self.memory()?.data_mut(&mut self.runtime_info);
+        let data = mem.data_mut(&mut self.runtime_info);
 
-        let ptr = reg.ptr as usize;
         let len = reg.len as usize;
+        let ptr = reg.ptr as usize;
+        if mem_len <= ptr + len {
+            // should be a pointer to a buffer of length len, but its not
+            // pointing correctly into the wasm-controlled memory
+            warn!(
+                reg_ptr = ptr,
+                reg_len = len,
+                mem_len,
+                "region for reading a guest value is out of bounds"
+            );
+            return Err(Error::ReadFailure);
+        }
         // FIXME(lmv): handle error
         let r = rkyv::from_bytes::<V, rkyv::rancor::Error>(&data[ptr..ptr + len])
             .expect("failed to deserialize value from guest");
 
-        // forget the region, as we deallocate it in wasm
-        std::mem::forget(reg);
         // FIXME(lmv): can we do the de-allocation on the host side? i.e. just
         // do a Vec::from_raw_parts and then drop the region and vector objects
         // instead of calling back to wasm?
@@ -117,8 +154,8 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
         Ok(r)
     }
 
-    // FIXME(lmv): make sure even a malicious guest (i.e. alloc is attacker
-    // controlled) cannot crash the host
+    // TODO(lmv): figure out if this is now save even with a malicious guest
+    // (i.e. alloc is attacker controlled)
     pub fn write_value_to_guest_memory<V>(&mut self, value: &V) -> Result<usize, Error>
     where
         V: for<'b> rkyv::Serialize<
@@ -139,20 +176,33 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
         let mem = self.memory()?;
 
         let reg_off = self.alloc(enc.len())?;
-        let reg = {
-            let base_ptr = mem.data_ptr(&self.runtime_info) as usize;
-            let reg_ptr = base_ptr + reg_off;
-            unsafe { Box::from_raw(reg_ptr as *mut common::Region) }
-        };
+        let reg = unsafe { self.recover_region(reg_off) }?;
 
         let data = mem.data_mut(&mut self.runtime_info);
 
-        let ptr = reg.ptr as usize;
         let len = reg.len as usize;
+        if len != enc.len() {
+            // alloc didn't create a region of the correct size
+            warn!(
+                reg_len = len,
+                rkyv_len = enc.len(),
+                "allocated region has wrong size"
+            );
+            return Err(Error::AllocFailure);
+        }
+        let ptr = reg.ptr as usize;
+        if data.len() <= ptr + len {
+            // should be a pointer to a buffer of length len, but its not
+            // pointing correctly into the wasm-controlled memory
+            warn!(
+                reg_ptr = ptr,
+                reg_len = len,
+                mem_len = data.len(),
+                "region allocated for writing to the guest leads out of bounds"
+            );
+            return Err(Error::AllocFailure);
+        }
         data[ptr..(ptr + len)].clone_from_slice(&enc);
-
-        // forget the region, as we deallocate it in wasm
-        std::mem::forget(reg);
 
         Ok(reg_off)
     }
@@ -453,6 +503,11 @@ pub enum Error {
     FunctionNotFound(String),
     #[error("Function with name '{0}' has incorrect types")]
     FunctionTypeMissmatch(String),
+    #[error("Failed to construct a box from a region pointer")]
+    BadRegionBox,
+    // FIXME(lmv): include more info about the error?
+    #[error("Read from an invalid pointer")]
+    ReadFailure,
     // FIXME(lmv): include more info about the error?
     #[error("Failed to call a function")]
     FunctionCallFailure,

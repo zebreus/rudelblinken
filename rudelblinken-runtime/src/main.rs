@@ -66,7 +66,13 @@ fn main() -> Result<()> {
     //   - implement (noisy) propagation delay
     //   - cool visualization
     //   - ...
-    // along the way, maybe make the sdk a bit nicer
+    // along the way do some sdk improvements:
+    // - do not panic in the sdk, get rid of except/unwrap call that can
+    //   conceivably fail
+    // - make tracing-based logging inside the guest work, and log correctly on
+    //   the host
+    // - maybe use macros to generate all/some of the repetitive stuff
+    // - just generally go through the TODOs and FIXMEs in the code
 
     let env_filter = EnvFilter::try_from_default_env();
 
