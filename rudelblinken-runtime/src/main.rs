@@ -10,7 +10,7 @@ use rudelblinken_sdk::{
     },
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
-use wasmi::{Engine, Linker, Module, Store};
+use wasmi::{Caller, Config, Engine, Linker, Module, Store};
 
 const WASM_MOD: &[u8] = include_bytes!(
     "../../rudelblinken-wasm/target/wasm32-unknown-unknown/release/rudelblinken_wasm.wasm"
@@ -18,10 +18,11 @@ const WASM_MOD: &[u8] = include_bytes!(
 
 struct HostState {
     name: String,
+    pending_callbacks: Vec<Box<dyn Fn(&mut Host<Caller<'_, Self>>)>>,
 }
 
 impl HostBase for HostState {
-    fn host_log(&self, log: common::Log) {
+    fn host_log(&mut self, log: common::Log) {
         match log.level {
             common::LogLevel::Error => tracing::error!(msg = &log.message, "guest logged"),
             common::LogLevel::Warn => tracing::warn!(msg = &log.message, "guest logged"),
@@ -31,29 +32,45 @@ impl HostBase for HostState {
         }
     }
 
-    fn get_name(&self) -> String {
+    fn get_name(&mut self) -> String {
         self.name.clone()
+    }
+
+    fn on_yield(host: &mut Host<Caller<'_, Self>>, explicit: bool) {
+        if explicit {
+            let s = host.state_mut();
+            if s.pending_callbacks.is_empty() {
+                return;
+            }
+            let mut cbs = vec![];
+            std::mem::swap(&mut s.pending_callbacks, &mut cbs);
+
+            for cb in cbs {
+                cb(host)
+            }
+        }
     }
 }
 
 impl LEDBrightness for HostState {
-    fn set_led_brightness(&self, settings: common::LEDBrightnessSettings) {
+    fn set_led_brightness(&mut self, settings: common::LEDBrightnessSettings) {
         tracing::info!(?settings, "guest set led bightness")
     }
 }
 
 impl BLEAdv for HostState {
-    fn configure_ble_adv(&self, settings: common::BLEAdvSettings) {
+    fn configure_ble_adv(&mut self, settings: common::BLEAdvSettings) {
         tracing::info!(?settings, "guest configured ble_adv")
     }
 
-    fn configure_ble_data(&self, data: common::BLEAdvData) {
+    fn configure_ble_data(&mut self, data: common::BLEAdvData) {
         tracing::info!(?data, "guest set ble_adv data")
     }
 }
 
 fn main() -> Result<()> {
     // TODO (next steps):
+    // - manual mutli-threading to handle callbacks etc
     // - add a cli interface for specifying (multiple) wasm binaries to run
     // - build a sync-able simulation;
     //  - impl ble advertisment propergation, triggering sends at a random time
@@ -84,13 +101,33 @@ fn main() -> Result<()> {
 
     tracing_subscriber::registry().with(stdout_layer).init();
 
-    let engine = Engine::default();
+    let engine = Engine::new(Config::default().consume_fuel(true));
     let module = Module::new(&engine, WASM_MOD)?;
 
     let mut store = Store::new(
         &engine,
         HostState {
             name: "lgcl".to_owned(),
+            pending_callbacks: vec![
+                Box::new(|host| {
+                    host.on_ble_adv_recv(&BLEAdvNotification {
+                        mac: [0x4d, 0x61, 0x72, 0x63, 0x79, 0x00],
+                        data: vec![
+                            0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64, 0x21,
+                        ],
+                    })
+                    .expect("failed to trigger callback");
+                }),
+                Box::new(|host| {
+                    host.on_ble_adv_recv(&BLEAdvNotification {
+                        mac: [0x4d, 0x61, 0x72, 0x63, 0x79, 0x00],
+                        data: vec![
+                            0x21, 0x64, 0x6c, 0x72, 0x6f, 0x57, 0x20, 0x6f, 0x6c, 0x6c, 0x65, 0x48,
+                        ],
+                    })
+                    .expect("failed to trigger callback");
+                }),
+            ],
         },
     );
 
@@ -106,27 +143,11 @@ fn main() -> Result<()> {
 
     let pre_instance = linker.instantiate(&mut store, &module)?;
     let instance = pre_instance.start(&mut store)?;
-    let guest_main = instance.get_typed_func::<(), ()>(&store, "main")?;
-
-    // And finally we can call the wasm!
-    guest_main.call(&mut store, ())?;
-    println!("wasm exited");
 
     let mut host: Host<_> = InstanceWithContext::new(&mut store, instance).into();
-    host.on_ble_adv_recv(&BLEAdvNotification {
-        mac: [0x4d, 0x61, 0x72, 0x63, 0x79, 0x00],
-        data: vec![
-            0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64, 0x21,
-        ],
-    })
-    .expect("failed to trigger callback");
-    host.on_ble_adv_recv(&BLEAdvNotification {
-        mac: [0x4d, 0x61, 0x72, 0x63, 0x79, 0x00],
-        data: vec![
-            0x21, 0x64, 0x6c, 0x72, 0x6f, 0x57, 0x20, 0x6f, 0x6c, 0x6c, 0x65, 0x48,
-        ],
-    })
-    .expect("failed to trigger callback");
+
+    host.main().expect("guest main failed");
+    println!("wasm exited");
 
     Ok(())
 }

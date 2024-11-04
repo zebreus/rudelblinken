@@ -55,20 +55,11 @@ pub struct Host<I> {
     memory: OnceCell<Result<Memory, Error>>,
     alloc_fn: OnceCell<Result<TypedFunc<u32, u32>, Error>>,
     dealloc_fn: OnceCell<Result<TypedFunc<u32, ()>, Error>>,
+    main_fn: OnceCell<Result<TypedFunc<(), ()>, Error>>,
     on_ble_adv_recv_fn: OnceCell<Result<TypedFunc<u32, ()>, Error>>,
 }
 
-/* impl<'a, HostState> From<Caller<'a, HostState>> for Host<HostState, Caller<'a, HostState>> {
-    fn from(caller: Caller<'a, HostState>) -> Self {
-        Self {
-            runtime_info: caller,
-            memory: OnceCell::new(),
-            alloc_fn: OnceCell::new(),
-            dealloc_fn: OnceCell::new(),
-            on_ble_adv_recv_fn: OnceCell::new(),
-        }
-    }
-} */
+const RESET_FUEL: u64 = 1 << 14;
 
 impl<I: HasExports + AsContextMut> From<I> for Host<I> {
     fn from(runtime_info: I) -> Self {
@@ -77,6 +68,7 @@ impl<I: HasExports + AsContextMut> From<I> for Host<I> {
             memory: OnceCell::new(),
             alloc_fn: OnceCell::new(),
             dealloc_fn: OnceCell::new(),
+            main_fn: OnceCell::new(),
             on_ble_adv_recv_fn: OnceCell::new(),
         }
     }
@@ -235,6 +227,7 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
         let arg = self
             .write_value_to_guest_memory(arg)
             .expect("failed to write arg value") as u32;
+        self.reset_fuel();
         self.on_ble_adv_recv_fn()?
             .call(&mut self.runtime_info, arg)
             .map_err(|_| Error::FunctionCallFailure)?;
@@ -248,6 +241,7 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
     }
 
     fn alloc(&mut self, len: usize) -> Result<usize, Error> {
+        self.reset_fuel();
         let ptr = self
             .alloc_fn()?
             .call(&mut self.runtime_info, len as u32)
@@ -262,9 +256,10 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
     }
 
     fn dealloc(&mut self, ptr: usize) -> Result<(), Error> {
+        self.reset_fuel();
         self.dealloc_fn()?
             .call(&mut self.runtime_info, ptr as u32)
-            .map_err(|_| Error::DeallocFailure)?;
+            .map_err(|err| Error::DeallocFailure(format!("{:?}", err)))?;
         Ok(())
     }
 
@@ -273,29 +268,65 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
             .get_or_init(|| self.get_typed_func("dealloc_mem"))
             .clone()
     }
+
+    pub fn main(&mut self) -> Result<(), Error> {
+        self.reset_fuel();
+        self.main_fn()?
+            .call(&mut self.runtime_info, ())
+            .map_err(|err| Error::MainFailure(format!("{:?}", err)))?;
+        Ok(())
+    }
+
+    fn main_fn(&self) -> Result<TypedFunc<(), ()>, Error> {
+        self.main_fn
+            .get_or_init(|| self.get_typed_func("main"))
+            .clone()
+    }
+
+    pub fn reset_fuel(&mut self) {
+        // FIXME(lmv): error handling
+        let mut ctx = self.runtime_info.as_context_mut();
+        tracing::debug!(old_fuel = ?ctx.get_fuel(), "resetting fuel");
+        ctx.set_fuel(RESET_FUEL).expect("failed to reset fuel");
+    }
 }
 
-pub trait HostBase {
+impl<HostState> Host<Caller<'_, HostState>> {
+    pub fn state(&self) -> &HostState {
+        self.runtime_info.data()
+    }
+
+    pub fn state_mut(&mut self) -> &mut HostState {
+        self.runtime_info.data_mut()
+    }
+}
+
+pub trait HostBase: Sized {
     // FIXME(lmv): improve this logging interface
-    fn host_log(&self, log: common::Log);
-    fn get_name(&self) -> String;
+    fn host_log(&mut self, log: common::Log);
+    fn get_name(&mut self) -> String;
+
+    // explicit is set if it was an explicit yield (i.e. the guest called yield)
+    // and cleared if it was an implicit yield (i.e. the guest called any other
+    // host function)
+    fn on_yield(_host: &mut Host<Caller<'_, Self>>, _explicit: bool) {}
 
     fn has_host_base() -> bool {
         true
     }
 }
 
-pub trait LEDBrightness {
-    fn set_led_brightness(&self, settings: common::LEDBrightnessSettings);
+pub trait LEDBrightness: HostBase {
+    fn set_led_brightness(&mut self, settings: common::LEDBrightnessSettings);
 
     fn has_led_brightness() -> bool {
         true
     }
 }
 
-pub trait BLEAdv {
-    fn configure_ble_adv(&self, settings: common::BLEAdvSettings);
-    fn configure_ble_data(&self, data: common::BLEAdvData);
+pub trait BLEAdv: HostBase {
+    fn configure_ble_adv(&mut self, settings: common::BLEAdvSettings);
+    fn configure_ble_data(&mut self, data: common::BLEAdvData);
 
     fn has_ble_adv() -> bool {
         true
@@ -313,7 +344,8 @@ pub mod helper {
         ifn: F,
     ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), u32>
     where
-        F: Fn(&HostState, A) -> R + Send + Sync + 'static,
+        HostState: HostBase,
+        F: Fn(&mut HostState, A) -> R + Send + Sync + 'static,
         A: rkyv::Archive,
         <A as Archive>::Archived:
             rkyv::Deserialize<A, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
@@ -337,18 +369,24 @@ pub mod helper {
             let arg = host
                 .read_guest_value::<A>(arg_ptr as usize)
                 .expect("failed to read argument value");
-            let ret = ifn(host.runtime_info.data(), arg);
+            let ret = ifn(host.runtime_info.data_mut(), arg);
+
+            HostState::on_yield(&mut host, false);
+            host.reset_fuel();
+
             // FIXME(lmv): handle error
             host.write_value_to_guest_memory(&ret)
                 .expect("failed to write return value") as u32
         }
     }
 
+    #[inline]
     fn wrap_fn_arg<'b, HostState, F, A>(
         ifn: F,
     ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), ()>
     where
-        F: Fn(&HostState, A) + Send + Sync + 'static,
+        HostState: HostBase,
+        F: Fn(&mut HostState, A) + Send + Sync + 'static,
         A: rkyv::Archive,
         <A as Archive>::Archived:
             rkyv::Deserialize<A, rkyv::rancor::Strategy<rkyv::de::Pool, rkyv::rancor::Error>>,
@@ -362,15 +400,20 @@ pub mod helper {
             let arg = host
                 .read_guest_value::<A>(arg_ptr as usize)
                 .expect("failed to read argument value");
-            ifn(host.runtime_info.data(), arg);
+            ifn(host.runtime_info.data_mut(), arg);
+
+            HostState::on_yield(&mut host, false);
+            host.reset_fuel();
         }
     }
 
+    #[inline]
     fn wrap_fn_ret<'b, HostState, F, R>(
         ifn: F,
     ) -> impl IntoFunc<HostState, (Caller<'b, HostState>,), u32>
     where
-        F: Fn(&HostState) -> R + Send + Sync + 'static,
+        HostState: HostBase,
+        F: Fn(&mut HostState) -> R + Send + Sync + 'static,
         R: for<'c> rkyv::Serialize<
             rkyv::rancor::Strategy<
                 rkyv::ser::Serializer<
@@ -384,10 +427,42 @@ pub mod helper {
     {
         move |caller: Caller<'_, HostState>| {
             let mut host = Host::from(caller);
-            let ret = ifn(host.runtime_info.data());
+            let ret = ifn(host.runtime_info.data_mut());
             // FIXME(lmv): handle error
+
+            HostState::on_yield(&mut host, false);
+            host.reset_fuel();
+
             host.write_value_to_guest_memory(&ret)
                 .expect("failed to write return value") as u32
+        }
+    }
+
+    #[allow(dead_code)]
+    #[inline]
+    fn wrap_fn<'b, HostState, F>(ifn: F) -> impl IntoFunc<HostState, (Caller<'b, HostState>,), ()>
+    where
+        HostState: HostBase,
+        F: Fn(&mut HostState) + Send + Sync + 'static,
+    {
+        move |caller: Caller<'_, HostState>| {
+            let mut host = Host::from(caller);
+            ifn(host.runtime_info.data_mut());
+
+            HostState::on_yield(&mut host, false);
+            host.reset_fuel();
+        }
+    }
+
+    #[inline]
+    fn rt_yield<'b, HostState>() -> impl IntoFunc<HostState, (Caller<'b, HostState>,), ()>
+    where
+        HostState: HostBase,
+    {
+        move |caller: Caller<'_, HostState>| {
+            let mut host = Host::from(caller);
+            HostState::on_yield(&mut host, true);
+            host.reset_fuel();
         }
     }
 
@@ -398,6 +473,11 @@ pub mod helper {
         mut ctx: impl AsContextMut<Data = HostState>,
         linker: &mut Linker<HostState>,
     ) -> Result<(), wasmi::errors::LinkerError> {
+        linker.define(
+            "env",
+            "rt_yield",
+            Func::wrap(&mut ctx, rt_yield::<HostState>()),
+        )?;
         linker.define(
             "env",
             "has_host_base",
@@ -514,7 +594,8 @@ pub enum Error {
     // FIXME(lmv): include more info about the error?
     #[error("Failed to allocate memory")]
     AllocFailure,
-    // FIXME(lmv): include more info about the error?
-    #[error("Failed to deallocate memory")]
-    DeallocFailure,
+    #[error("Failed to deallocate memory: {0}")]
+    DeallocFailure(String),
+    #[error("Guest main failed: {0}")]
+    MainFailure(String),
 }

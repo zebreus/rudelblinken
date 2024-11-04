@@ -2,6 +2,9 @@ mod host_raw {
     use crate::common::{BLEAdvNotification, Region};
 
     extern "C" {
+        // () -> ()
+        pub(super) fn rt_yield();
+
         // () -> bool
         pub(super) fn has_host_base() -> bool;
         // Log -> ()
@@ -73,6 +76,11 @@ pub mod host {
     use crate::common::{
         BLEAdvData, BLEAdvNotification, BLEAdvSettings, LEDBrightnessSettings, Log, Region,
     };
+
+    // must be called regularly or the guest might run out of fuel
+    pub fn rt_yield() {
+        unsafe { host_raw::rt_yield() }
+    }
 
     // TODO(lmv): maybe generate these wrappers this with a proc macro?
 

@@ -34,8 +34,8 @@ pub struct LEDBrightnessSettings {
 
 #[derive(Debug, Archive, Deserialize, Serialize)]
 pub struct BLEAdvSettings {
-    pub min_interval: u32,
-    pub max_interval: u32,
+    pub min_interval: u16,
+    pub max_interval: u16,
 }
 
 #[derive(Debug, Archive, Deserialize, Serialize)]

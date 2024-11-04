@@ -45,4 +45,8 @@ extern "C" fn main() {
         });
         last.replace(info.data.clone());
     }));
+
+    loop {
+        host::rt_yield();
+    }
 }
