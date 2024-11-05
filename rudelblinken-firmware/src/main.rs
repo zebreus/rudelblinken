@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use cat_management_service::{CatManagementService, WasmHostMessage};
 use esp32_nimble::{
     enums::{ConnMode, DiscMode, PowerLevel, PowerType},
@@ -104,7 +106,7 @@ fn main() {
 
     setup_ble_server();
 
-    let peripherals = Peripherals::take().unwrap();
+    /* let peripherals = Peripherals::take().unwrap();
     let timer_driver = LedcTimerDriver::new(
         peripherals.ledc.timer0,
         &TimerConfig::default().frequency(25.kHz().into()),
@@ -117,60 +119,43 @@ fn main() {
             peripherals.pins.gpio8,
         )
         .unwrap(),
-    );
+    ); */
 
     let ble_device = BLEDevice::take();
-    let ble_server = ble_device.get_server();
-    let ble_advertising = ble_device.get_advertising();
 
-    let file_upload_service = FileUploadService::new(ble_server);
+    let file_upload_service = FileUploadService::new(ble_device.get_server());
     let cat_management_service = CatManagementService::new(
-        ble_server,
-        file_upload_service.clone(),
-        ble_advertising,
-        led_driver,
+        ble_device,
+        file_upload_service.clone(), /*, led_driver */
     );
 
-    ble_advertising
-        .lock()
-        .set_data(
-            BLEAdvertisementData::new()
-                .name("Rudelblinken")
-                // .add_service_uuid(uuid128!("fafafafa-fafa-fafa-fafa-fafafafafafa"))
-                .add_service_uuid(FileUploadService::uuid())
-                .manufacturer_data(&[0, 0]),
-        )
-        .unwrap();
-    // Configure Advertiser with Specified Data
-    ble_advertising
-        .lock()
-        .advertisement_type(ConnMode::Und)
-        .disc_mode(DiscMode::Gen)
-        .scan_response(true)
-        .min_interval(100)
-        .max_interval(250)
-        .start()
-        .unwrap();
-
-    let mut ble_scan = BLEScan::new();
-    ble_scan.active_scan(false).interval(100).window(99);
-
-    /* let mut pin = PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed");
-
-    let) mut c = 0i32;
-
-    let sync_data = |c: u8| {
+    {
+        let ble_advertising = ble_device.get_advertising();
         ble_advertising
             .lock()
             .set_data(
                 BLEAdvertisementData::new()
                     .name("Rudelblinken")
+                    // .add_service_uuid(uuid128!("fafafafa-fafa-fafa-fafa-fafafafafafa"))
                     .add_service_uuid(FileUploadService::uuid())
-                    .manufacturer_data(&[0x00, 0x00, 0xca, 0x7e, 0xa2, c]),
+                    .manufacturer_data(&[0, 0]),
             )
-            .expect("failed to update adv data");
-    };
-    let rem = 0.0; */
+            .unwrap();
+        // Configure Advertiser with Specified Data
+        ble_advertising
+            .lock()
+            .advertisement_type(ConnMode::Und)
+            .disc_mode(DiscMode::Gen)
+            .scan_response(true)
+            .min_interval(100)
+            .max_interval(250)
+            .start()
+            .unwrap();
+    }
+
+    let mut ble_scan = BLEScan::new();
+    ble_scan.active_scan(false).interval(100).window(99);
+
     loop {
         task::block_on(async {
             ble_scan
@@ -185,51 +170,10 @@ fn main() {
                             }))
                             .expect("failed to send ble adv callback");
                     }
-                    /* if let Some(md) = data.manufacture_data() {
-                        let md = md.payload;
-                        if md.len() == 4 && md[0] == 0x0ca && md[1] == 0x7e && md[2] == 0xa2 {
-                            offset_num += 1;
-                            let mut delta = md[3] as i32 - c as i32;
-                            if delta < -128 {
-                                delta += 0x100;
-                            } else if 128 < delta {
-                                delta -= 0x100;
-                            }
-                            offset_sum += delta;
-                            /* let mut delta = md[3] as f32 - c as f32;
-                            delta *= 0.05;
-                            delta += nudge;
-                            nudge = delta - delta.floor();
-                            let delta = delta.floor() as u32;
-                            ::log::info!("nudging with delta = {}", delta);
-                            c = (c + delta as u32) & 0xff; */
-                        }
-                    } */
                     None::<()>
                 })
                 .await
                 .expect("scan failed");
         });
-        /* sync_data(c as u8);
-
-        let nudge = if 0 < offset_num {
-            let err = (offset_sum as f32 * 0.05 / (offset_num as f32)) + rem;
-            let rem = err - err.floor();
-            let v = err.floor() as i32;
-            ::log::info!("nudging with nudge = {} ({}, {})", v, offset_num, rem);
-            v
-        } else {
-            0
-        };
-        c += 2 + nudge;
-        while c < 0 {
-            c += 256;
-        }
-        c &= 0xff;
-        if 192 < c {
-            pin.set_high().expect("set_high failed");
-        } else {
-            pin.set_low().expect("set_low failed");
-        } */
     }
 }

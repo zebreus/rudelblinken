@@ -5,7 +5,7 @@ use std::{
 
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
-    BLEAdvertisementData, BLEAdvertising, BLEServer, NimbleProperties,
+    BLEAdvertisementData, BLEAdvertising, BLEDevice, BLEServer, NimbleProperties,
 };
 use esp_idf_hal::ledc::LedcDriver;
 use esp_idf_sys as _;
@@ -309,86 +309,119 @@ pub enum WasmHostMessage {
     BLEAdvRecv(BLEAdvNotification),
 }
 
+const WASM_MOD: &[u8] = include_bytes!(
+    "../../rudelblinken-wasm/target/wasm32-unknown-unknown/release/rudelblinken_wasm.wasm"
+);
+
 fn wasm_runner(mut state: HostState) {
-    // FIXME: no more  tail calls
-    let engine = Engine::new(wasmi::Config::default().consume_fuel(true));
+    'run_loop: loop {
+        let engine = Engine::new(
+            wasmi::Config::default()
+                .consume_fuel(true)
+                // parsing custom sections trigers a ~20kb memory allocation during Module::new))
+                .ignore_custom_sections(true),
+        );
 
-    let mut linker = <Linker<HostState>>::new(&engine);
+        let mut linker = <Linker<HostState>>::new(&engine);
 
-    while state.next_wasm.is_none() {
-        match state.recv.recv() {
-            Ok(WasmHostMessage::StartModule(hash)) => state.next_wasm = Some(hash),
-            Ok(_) => {}
-            Err(err) => ::log::error!("wasm runner failed to recv: {:?}", err),
+        while state.next_wasm.is_none() {
+            match state.recv.recv() {
+                Ok(WasmHostMessage::StartModule(hash)) => state.next_wasm = Some(hash),
+                Ok(_) => {}
+                Err(err) => ::log::error!("wasm runner failed to recv: {:?}", err),
+            }
         }
-    }
 
-    let module = {
-        // avoid cloning the wasm binary
-        let files = state.files.lock();
-        let wasm_file = match files.get_file(state.next_wasm.as_ref().unwrap()) {
-            Some(f) => f,
-            None => {
-                drop(files);
-                state.next_wasm = None;
-                return wasm_runner(state);
+        let module = {
+            // avoid cloning the wasm binary
+            /* let files = state.files.lock();
+            let wasm_file = match files.get_file(state.next_wasm.as_ref().unwrap()) {
+                Some(f) => f,
+                None => {
+                    drop(files);
+                    state.next_wasm = None;
+                    continue 'run_loop;
+                }
+            }; */
+
+            // let wasm_bin = &wasm_file.content;
+            let wasm_bin = WASM_MOD;
+
+            ::log::info!("creating new wasm module (size={}b)", wasm_bin.len());
+            match Module::new(&engine, wasm_bin) {
+                Ok(m) => m,
+                Err(err) => {
+                    ::log::error!("failed to create module: {:?}", err);
+                    continue 'run_loop;
+                }
             }
         };
 
-        Module::new(&engine, &wasm_file.content).expect("failed to create module")
-    };
+        ::log::info!("preparing store and linker for wasm runtime");
+        state.start = Instant::now();
+        let mut store = Store::new(&engine, state);
 
-    state.start = Instant::now();
-    let mut store = Store::new(&engine, state);
+        host::helper::prepare_link_host_base(&mut store, &mut linker)
+            .expect("failed to link host base");
+        host::helper::prepare_link_led_brightness(&mut store, &mut linker)
+            .expect("failed to link led brightness");
+        host::helper::prepare_link_ble_adv(&mut store, &mut linker)
+            .expect("failed to link ble adv");
+        host::helper::prepare_link_stubs(&mut store, &mut linker, module.imports())
+            .expect("failed to link stubs");
 
-    host::helper::prepare_link_host_base(&mut store, &mut linker).expect("failed to link hos base");
-    host::helper::prepare_link_led_brightness(&mut store, &mut linker)
-        .expect("failed to link led brightness");
-    host::helper::prepare_link_ble_adv(&mut store, &mut linker).expect("failed to link ble adv");
-    host::helper::prepare_link_stubs(&mut store, &mut linker, module.imports())
-        .expect("failed to link stubs");
+        ::log::info!("instantiating wasm module");
+        let pre_instance = linker
+            .instantiate(&mut store, &module)
+            .expect("failed to instanciate module");
+        ::log::info!("starting wasm module");
+        let instance = pre_instance
+            .start(&mut store)
+            .expect("failed to start instance");
 
-    let pre_instance = linker
-        .instantiate(&mut store, &module)
-        .expect("failed to instanciate module");
-    let instance = pre_instance
-        .start(&mut store)
-        .expect("failed to start instance");
+        let mut host: Host<_> = InstanceWithContext::new(store, instance).into();
 
-    let mut host: Host<_> = InstanceWithContext::new(store, instance).into();
+        ::log::info!("invoking wasm main");
+        match host.main() {
+            Ok(()) => ::log::info!("wasm guest exited"),
+            Err(err) => ::log::info!("wasm guest failed: {:?}", err),
+        }
 
-    match host.main() {
-        Ok(()) => ::log::info!("wasm guest exited"),
-        Err(err) => ::log::info!("wasm guest failed: {:?}", err),
+        state = host.get_runtime_info().context.into_data();
     }
-
-    wasm_runner(host.get_runtime_info().context.into_data())
 }
 
 impl CatManagementService {
     pub fn new(
-        server: &mut BLEServer,
+        ble_device: &'static BLEDevice,
         files: Arc<Mutex<FileUploadService>>,
-        ble_adv: &'static Mutex<BLEAdvertising>,
-        led_driver: Mutex<LedcDriver<'static>>,
+        // led_driver: Mutex<LedcDriver<'static>>,
     ) -> Arc<Mutex<CatManagementService>> {
         let name = get_device_name();
 
         let wasm_send = {
             let (send, recv) = mpsc::channel();
-            let wasm_host = HostState {
-                files: files.clone(),
-                name: name.clone(),
-                recv,
-                start: Instant::now(),
-                next_wasm: None,
-                ble_adv,
-                led_driver,
-            };
 
-            std::thread::spawn(move || {
-                wasm_runner(wasm_host);
-            });
+            let files = files.clone();
+            let name = name.clone();
+
+            std::thread::Builder::new()
+                .name("wasm-runner".to_owned())
+                .stack_size(0x2000)
+                .spawn(move || {
+                    let wasm_host = HostState {
+                        files,
+                        name,
+                        recv,
+                        start: Instant::now(),
+                        next_wasm: Some([0u8; 32]),
+                        // ble_device,
+                        // led_driver,
+                    };
+
+                    wasm_runner(wasm_host);
+                })
+                .expect("failed to spawn wasm runner thread");
 
             send
         };
@@ -399,7 +432,9 @@ impl CatManagementService {
             wasm_runner: wasm_send,
         }));
 
-        let service = server.create_service(CAT_MANAGEMENT_SERVICE_UUID);
+        let service = ble_device
+            .get_server()
+            .create_service(CAT_MANAGEMENT_SERVICE_UUID);
 
         let program_hash_characteristic = service.lock().create_characteristic(
             CAT_MANAGEMENT_SERVICE_PROGRAM_HASH_UUID,
@@ -513,8 +548,8 @@ struct HostState {
     start: Instant,
     recv: mpsc::Receiver<WasmHostMessage>,
     next_wasm: Option<[u8; 32]>,
-    ble_adv: &'static Mutex<BLEAdvertising>,
-    led_driver: Mutex<LedcDriver<'static>>,
+    // ble_device: &'static BLEDevice,
+    // led_driver: Mutex<LedcDriver<'static>>,
 }
 
 impl HostState {
@@ -596,11 +631,11 @@ impl HostBase for HostState {
 impl LEDBrightness for HostState {
     fn set_led_brightness(&mut self, settings: common::LEDBrightnessSettings) {
         let b = settings.rgb[0] as u16 + settings.rgb[1] as u16 + settings.rgb[2] as u16;
-        let mut led_pin = self.led_driver.lock();
+        /* let mut led_pin = self.led_driver.lock();
         let duty = (led_pin.get_max_duty() as u64) * (b as u64) / (3 * 255);
         if let Err(err) = led_pin.set_duty(duty as u32) {
             ::log::error!("set_duty({}) failed: {:?}", duty, err)
-        };
+        }; */
         ::log::info!("guest set led bightness");
     }
 }
@@ -609,21 +644,22 @@ impl BLEAdv for HostState {
     fn configure_ble_adv(&mut self, settings: common::BLEAdvSettings) {
         let min_interval = settings.min_interval.clamp(400, 1000);
         let max_interval = settings.min_interval.clamp(min_interval, 1500);
-        self.ble_adv
-            .lock()
-            .min_interval(min_interval)
-            .max_interval(max_interval);
+        /* self.ble_device
+        .get_advertising()
+        .lock()
+        .min_interval(min_interval)
+        .max_interval(max_interval); */
         ::log::info!("guest configured ble_adv");
     }
 
     fn configure_ble_data(&mut self, data: common::BLEAdvData) {
-        if let Err(err) = self.ble_adv.lock().set_data(
+        /* if let Err(err) = self.ble_device.get_advertising().lock().set_data(
             BLEAdvertisementData::new()
                 .name(&self.name)
                 .manufacturer_data(&data.data),
         ) {
             ::log::error!("set manufacturer data ({:?}) failed: {:?}", data.data, err)
-        };
+        }; */
         ::log::info!("guest set ble_adv data");
     }
 }

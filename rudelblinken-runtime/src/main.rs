@@ -36,11 +36,11 @@ impl HostBase for HostState {
         self.name.clone()
     }
 
-    fn on_yield(host: &mut Host<Caller<'_, Self>>, explicit: bool) {
-        if explicit {
+    fn on_yield(host: &mut Host<Caller<'_, Self>>, timeout: u32) -> bool {
+        if timeout != 0 {
             let s = host.state_mut();
             if s.pending_callbacks.is_empty() {
-                return;
+                return true;
             }
             let mut cbs = vec![];
             std::mem::swap(&mut s.pending_callbacks, &mut cbs);
@@ -49,6 +49,11 @@ impl HostBase for HostState {
                 cb(host)
             }
         }
+        true
+    }
+
+    fn get_time_millis(&mut self) -> u32 {
+        todo!()
     }
 }
 
@@ -101,7 +106,11 @@ fn main() -> Result<()> {
 
     tracing_subscriber::registry().with(stdout_layer).init();
 
-    let engine = Engine::new(Config::default().consume_fuel(true));
+    let engine = Engine::new(
+        Config::default()
+            .consume_fuel(true)
+            .ignore_custom_sections(true),
+    );
     let module = Module::new(&engine, WASM_MOD)?;
 
     let mut store = Store::new(
