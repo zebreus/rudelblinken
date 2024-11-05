@@ -1,14 +1,18 @@
-use cat_management_service::CatManagementService;
+use cat_management_service::{CatManagementService, WasmHostMessage};
 use esp32_nimble::{
     enums::{ConnMode, DiscMode, PowerLevel, PowerType},
+    utilities::mutex::Mutex,
     BLEAdvertisementData, BLEDevice, BLEScan, BLEServer,
 };
 use esp_idf_hal::{
-    gpio::{self, PinDriver},
+    ledc::{config::TimerConfig, LedcDriver, LedcTimerDriver},
+    prelude::Peripherals,
     task,
+    units::FromValueType,
 };
 use esp_idf_sys as _;
 use file_upload_service::FileUploadService;
+use rudelblinken_sdk::common::BLEAdvNotification;
 
 mod cat_management_service;
 mod file_upload_service;
@@ -86,7 +90,7 @@ fn setup_ble_server() -> &'static mut BLEServer {
 
     server.ble_gatts_show_local();
 
-    return server;
+    server
 }
 
 fn main() {
@@ -100,13 +104,32 @@ fn main() {
 
     setup_ble_server();
 
+    let peripherals = Peripherals::take().unwrap();
+    let timer_driver = LedcTimerDriver::new(
+        peripherals.ledc.timer0,
+        &TimerConfig::default().frequency(25.kHz().into()),
+    )
+    .unwrap();
+    let led_driver = Mutex::new(
+        LedcDriver::new(
+            peripherals.ledc.channel0,
+            timer_driver,
+            peripherals.pins.gpio8,
+        )
+        .unwrap(),
+    );
+
     let ble_device = BLEDevice::take();
-    let mut ble_server = ble_device.get_server();
+    let ble_server = ble_device.get_server();
     let ble_advertising = ble_device.get_advertising();
 
-    let file_upload_service = FileUploadService::new(&mut ble_server);
-    let _cat_management_service =
-        CatManagementService::new(&mut ble_server, file_upload_service.clone());
+    let file_upload_service = FileUploadService::new(ble_server);
+    let cat_management_service = CatManagementService::new(
+        ble_server,
+        file_upload_service.clone(),
+        ble_advertising,
+        led_driver,
+    );
 
     ble_advertising
         .lock()
@@ -129,12 +152,12 @@ fn main() {
         .start()
         .unwrap();
 
-    let mut pin = PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed");
-
     let mut ble_scan = BLEScan::new();
     ble_scan.active_scan(false).interval(100).window(99);
 
-    let mut c = 0i32;
+    /* let mut pin = PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed");
+
+    let) mut c = 0i32;
 
     let sync_data = |c: u8| {
         ble_advertising
@@ -147,14 +170,22 @@ fn main() {
             )
             .expect("failed to update adv data");
     };
-    let rem = 0.0;
+    let rem = 0.0; */
     loop {
-        let mut offset_sum = 0i32;
-        let mut offset_num = 0u32;
         task::block_on(async {
             ble_scan
-                .start(ble_device, 10, |_, data| {
+                .start(ble_device, 1000, |dev, data| {
                     if let Some(md) = data.manufacture_data() {
+                        cat_management_service
+                            .lock()
+                            .wasm_runner
+                            .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
+                                mac: dev.addr().as_be_bytes(),
+                                data: md.payload.into(),
+                            }))
+                            .expect("failed to send ble adv callback");
+                    }
+                    /* if let Some(md) = data.manufacture_data() {
                         let md = md.payload;
                         if md.len() == 4 && md[0] == 0x0ca && md[1] == 0x7e && md[2] == 0xa2 {
                             offset_num += 1;
@@ -173,13 +204,13 @@ fn main() {
                             ::log::info!("nudging with delta = {}", delta);
                             c = (c + delta as u32) & 0xff; */
                         }
-                    }
+                    } */
                     None::<()>
                 })
                 .await
                 .expect("scan failed");
         });
-        sync_data(c as u8);
+        /* sync_data(c as u8);
 
         let nudge = if 0 < offset_num {
             let err = (offset_sum as f32 * 0.05 / (offset_num as f32)) + rem;
@@ -199,6 +230,6 @@ fn main() {
             pin.set_high().expect("set_high failed");
         } else {
             pin.set_low().expect("set_low failed");
-        }
+        } */
     }
 }

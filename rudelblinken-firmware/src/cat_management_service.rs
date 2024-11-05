@@ -1,12 +1,20 @@
-use std::sync::Arc;
+use std::{
+    sync::{mpsc, Arc},
+    time::{Duration, Instant},
+};
 
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
-    BLEServer, NimbleProperties,
+    BLEAdvertisementData, BLEAdvertising, BLEServer, NimbleProperties,
 };
+use esp_idf_hal::ledc::LedcDriver;
 use esp_idf_sys as _;
 
-use wasmi::{Caller, Engine, Func, Linker, Module, Store};
+use rudelblinken_sdk::{
+    common::{self, BLEAdvNotification},
+    host::{self, BLEAdv, Host, HostBase, InstanceWithContext, LEDBrightness},
+};
+use wasmi::{Caller, Engine, Linker, Module, Store};
 
 use crate::file_upload_service::FileUploadService;
 
@@ -287,24 +295,108 @@ fn get_device_name() -> String {
             NAMES[mac[3] as usize], NAMES[mac[4] as usize], NAMES[mac[5] as usize]
         );
     };
-    return name;
+    name
 }
 
 pub struct CatManagementService {
     program_hash: Option<[u8; 32]>,
     name: String,
-    file_upload_service: Arc<Mutex<FileUploadService>>,
+    pub wasm_runner: mpsc::Sender<WasmHostMessage>,
+}
+
+pub enum WasmHostMessage {
+    StartModule([u8; 32]),
+    BLEAdvRecv(BLEAdvNotification),
+}
+
+fn wasm_runner(mut state: HostState) {
+    // FIXME: no more  tail calls
+    let engine = Engine::new(wasmi::Config::default().consume_fuel(true));
+
+    let mut linker = <Linker<HostState>>::new(&engine);
+
+    while state.next_wasm.is_none() {
+        match state.recv.recv() {
+            Ok(WasmHostMessage::StartModule(hash)) => state.next_wasm = Some(hash),
+            Ok(_) => {}
+            Err(err) => ::log::error!("wasm runner failed to recv: {:?}", err),
+        }
+    }
+
+    let module = {
+        // avoid cloning the wasm binary
+        let files = state.files.lock();
+        let wasm_file = match files.get_file(state.next_wasm.as_ref().unwrap()) {
+            Some(f) => f,
+            None => {
+                drop(files);
+                state.next_wasm = None;
+                return wasm_runner(state);
+            }
+        };
+
+        Module::new(&engine, &wasm_file.content).expect("failed to create module")
+    };
+
+    state.start = Instant::now();
+    let mut store = Store::new(&engine, state);
+
+    host::helper::prepare_link_host_base(&mut store, &mut linker).expect("failed to link hos base");
+    host::helper::prepare_link_led_brightness(&mut store, &mut linker)
+        .expect("failed to link led brightness");
+    host::helper::prepare_link_ble_adv(&mut store, &mut linker).expect("failed to link ble adv");
+    host::helper::prepare_link_stubs(&mut store, &mut linker, module.imports())
+        .expect("failed to link stubs");
+
+    let pre_instance = linker
+        .instantiate(&mut store, &module)
+        .expect("failed to instanciate module");
+    let instance = pre_instance
+        .start(&mut store)
+        .expect("failed to start instance");
+
+    let mut host: Host<_> = InstanceWithContext::new(store, instance).into();
+
+    match host.main() {
+        Ok(()) => ::log::info!("wasm guest exited"),
+        Err(err) => ::log::info!("wasm guest failed: {:?}", err),
+    }
+
+    wasm_runner(host.get_runtime_info().context.into_data())
 }
 
 impl CatManagementService {
     pub fn new(
         server: &mut BLEServer,
         files: Arc<Mutex<FileUploadService>>,
+        ble_adv: &'static Mutex<BLEAdvertising>,
+        led_driver: Mutex<LedcDriver<'static>>,
     ) -> Arc<Mutex<CatManagementService>> {
+        let name = get_device_name();
+
+        let wasm_send = {
+            let (send, recv) = mpsc::channel();
+            let wasm_host = HostState {
+                files: files.clone(),
+                name: name.clone(),
+                recv,
+                start: Instant::now(),
+                next_wasm: None,
+                ble_adv,
+                led_driver,
+            };
+
+            std::thread::spawn(move || {
+                wasm_runner(wasm_host);
+            });
+
+            send
+        };
+
         let cat_management_service = Arc::new(Mutex::new(CatManagementService {
-            name: get_device_name(),
+            name,
             program_hash: None,
-            file_upload_service: files,
+            wasm_runner: wasm_send,
         }));
 
         let service = server.create_service(CAT_MANAGEMENT_SERVICE_UUID);
@@ -327,19 +419,12 @@ impl CatManagementService {
                 return;
             };
 
-            let wasm_module;
-            {
-                let file_upload_service = service.file_upload_service.lock();
-                let Some(file) = file_upload_service.get_file(&hash) else {
-                    ::log::error!("No file with that hash");
-                    return;
-                };
-                wasm_module = file.content.clone();
-            }
-
             service.program_hash = Some(hash);
 
-            ::log::error!("WASM result: {}", run_wasm_module(&wasm_module).unwrap());
+            service
+                .wasm_runner
+                .send(WasmHostMessage::StartModule(hash))
+                .expect("failed to send new wasm module to runner");
         });
 
         let name_characteristic = service.lock().create_characteristic(
@@ -350,7 +435,7 @@ impl CatManagementService {
         name_characteristic.lock().on_read(move |value, _| {
             let service = cat_management_service_clone.lock();
             let hash = service.name.as_bytes();
-            value.set_value(&hash);
+            value.set_value(hash);
         });
         let cat_management_service_clone = cat_management_service.clone();
         name_characteristic.lock().on_write(move |args| {
@@ -373,28 +458,172 @@ impl CatManagementService {
             service.name = new_name;
         });
 
-        return cat_management_service;
+        cat_management_service
+    }
+
+    /* fn run_wasm_module(&mut self, wasm_module: &[u8]) -> anyhow::Result<()> {
+        let module = Module::new(&self.wasm_engine, wasm_module)?;
+
+        match self.wasm_host {
+            WasmHost::Uninitialized(store) => {
+                let mut linker = <Linker<HostState>>::new(&self.wasm_engine);
+
+                host::helper::prepare_link_host_base(&mut store, &mut linker)
+                    .expect("failed to link hos base");
+                host::helper::prepare_link_led_brightness(&mut store, &mut linker)
+                    .expect("failed to link led brightness");
+                host::helper::prepare_link_ble_adv(&mut store, &mut linker)
+                    .expect("failed to link ble adv");
+                host::helper::prepare_link_stubs(&mut store, &mut linker, module.imports())
+                    .expect("failed to link stubs");
+
+                let pre_instance = linker.instantiate(&mut store, &module)?;
+                let instance = pre_instance.start(&mut store)?;
+
+                self.wasm_host =
+                    WasmHost::Initialized(linker, InstanceWithContext::new(store, instance).into());
+            }
+            WasmHost::Initialized(linker, host) => {
+                let info = host.get_runtime_info();
+                info.context
+                    .data_mut()
+                    .callbacks
+                    .lock()
+                    .termination_callback = Some(Box::new(move |store| {
+                    let pre_instance = linker
+                        .instantiate(&mut store, &module)
+                        .expect("failed to init");
+                    let instance = pre_instance.start(&mut store).expect("failed to start");
+
+                    self.wasm_host = WasmHost::Initialized(
+                        linker,
+                        InstanceWithContext::new(store, instance).into(),
+                    );
+                }))
+            }
+        };
+
+        Ok(())
+    } */
+}
+
+struct HostState {
+    files: Arc<Mutex<FileUploadService>>,
+    name: String,
+    start: Instant,
+    recv: mpsc::Receiver<WasmHostMessage>,
+    next_wasm: Option<[u8; 32]>,
+    ble_adv: &'static Mutex<BLEAdvertising>,
+    led_driver: Mutex<LedcDriver<'static>>,
+}
+
+impl HostState {
+    fn handle_msg(host: &mut Host<Caller<'_, HostState>>, msg: WasmHostMessage) -> bool {
+        match msg {
+            WasmHostMessage::StartModule(hash) => {
+                host.state_mut().next_wasm = Some(hash);
+                return false;
+            }
+            WasmHostMessage::BLEAdvRecv(msg) => {
+                host.on_ble_adv_recv(&msg)
+                    .expect("failed to trigger ble adv callback");
+            }
+        }
+
+        true
     }
 }
 
-fn run_wasm_module(wasm_module: &[u8]) -> anyhow::Result<u64> {
-    let engine = Engine::default();
+impl HostBase for HostState {
+    fn host_log(&mut self, log: common::Log) {
+        match log.level {
+            common::LogLevel::Error => ::log::error!("guest logged: {}", &log.message),
+            common::LogLevel::Warn => ::log::warn!("guest logged: {}", &log.message),
+            common::LogLevel::Info => ::log::info!("guest logged: {}", &log.message),
+            common::LogLevel::Debug => ::log::debug!("guest logged: {}", &log.message),
+            common::LogLevel::Trace => ::log::trace!("guest logged: {}", &log.message),
+        }
+    }
 
-    let module = Module::new(&engine, wasm_module)?;
+    fn get_name(&mut self) -> String {
+        self.name.clone()
+    }
 
-    type HostState = ();
-    let mut store = Store::new(&engine, ());
-    let host_ping = Func::wrap(&mut store, |_caller: Caller<'_, HostState>, param: i32| {
-        println!("Got {param} from WebAssembly");
-    });
+    fn get_time_millis(&mut self) -> u32 {
+        self.start.elapsed().as_millis() as u32
+    }
 
-    let mut linker = <Linker<HostState>>::new(&engine);
+    fn on_yield(host: &mut Host<Caller<'_, Self>>, timeout: u32) -> bool {
+        if 0 < timeout {
+            let mut now = Instant::now();
+            let deadline = now + Duration::from_micros(timeout as u64);
+            while now < deadline {
+                match host.state_mut().recv.recv_timeout(deadline - now) {
+                    Ok(msg) => {
+                        if !Self::handle_msg(host, msg) {
+                            return false;
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(err) => {
+                        ::log::error!("recv on_yield failed: {:?}", err);
+                        break;
+                    }
+                }
+                now = Instant::now();
+            }
+        }
 
-    linker.define("env", "ping", host_ping)?;
-    let pre_instance = linker.instantiate(&mut store, &module)?;
-    let instance = pre_instance.start(&mut store)?;
-    let add = instance.get_typed_func::<(u64, u64), u64>(&store, "add")?;
+        loop {
+            match host.state_mut().recv.try_recv() {
+                Ok(msg) => {
+                    if !Self::handle_msg(host, msg) {
+                        return false;
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(err) => {
+                    ::log::error!("recv on_yield failed: {:?}", err);
+                    break;
+                }
+            }
+        }
 
-    // And finally we can call the wasm!
-    Ok(add.call(&mut store, (1, 3))?)
+        true
+    }
+}
+
+impl LEDBrightness for HostState {
+    fn set_led_brightness(&mut self, settings: common::LEDBrightnessSettings) {
+        let b = settings.rgb[0] as u16 + settings.rgb[1] as u16 + settings.rgb[2] as u16;
+        let mut led_pin = self.led_driver.lock();
+        let duty = (led_pin.get_max_duty() as u64) * (b as u64) / (3 * 255);
+        if let Err(err) = led_pin.set_duty(duty as u32) {
+            ::log::error!("set_duty({}) failed: {:?}", duty, err)
+        };
+        ::log::info!("guest set led bightness");
+    }
+}
+
+impl BLEAdv for HostState {
+    fn configure_ble_adv(&mut self, settings: common::BLEAdvSettings) {
+        let min_interval = settings.min_interval.clamp(400, 1000);
+        let max_interval = settings.min_interval.clamp(min_interval, 1500);
+        self.ble_adv
+            .lock()
+            .min_interval(min_interval)
+            .max_interval(max_interval);
+        ::log::info!("guest configured ble_adv");
+    }
+
+    fn configure_ble_data(&mut self, data: common::BLEAdvData) {
+        if let Err(err) = self.ble_adv.lock().set_data(
+            BLEAdvertisementData::new()
+                .name(&self.name)
+                .manufacturer_data(&data.data),
+        ) {
+            ::log::error!("set manufacturer data ({:?}) failed: {:?}", data.data, err)
+        };
+        ::log::info!("guest set ble_adv data");
+    }
 }

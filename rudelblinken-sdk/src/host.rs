@@ -20,7 +20,7 @@ impl<S> HasExports for Caller<'_, S> {
 }
 
 pub struct InstanceWithContext<C: AsContext> {
-    context: C,
+    pub context: C,
     instance: Instance,
 }
 
@@ -289,6 +289,10 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
         tracing::debug!(old_fuel = ?ctx.get_fuel(), "resetting fuel");
         ctx.set_fuel(RESET_FUEL).expect("failed to reset fuel");
     }
+
+    pub fn get_runtime_info(self) -> I {
+        self.runtime_info
+    }
 }
 
 impl<HostState> Host<Caller<'_, HostState>> {
@@ -306,10 +310,16 @@ pub trait HostBase: Sized {
     fn host_log(&mut self, log: common::Log);
     fn get_name(&mut self) -> String;
 
+    fn get_time_millis(&mut self) -> u32;
+
     // explicit is set if it was an explicit yield (i.e. the guest called yield)
     // and cleared if it was an implicit yield (i.e. the guest called any other
     // host function)
-    fn on_yield(_host: &mut Host<Caller<'_, Self>>, _explicit: bool) {}
+    //
+    // host is terminated if the function returns false
+    fn on_yield(host: &mut Host<Caller<'_, Self>>, timeout: u32) -> bool {
+        true
+    }
 
     fn has_host_base() -> bool {
         true
@@ -342,7 +352,7 @@ pub mod helper {
     #[allow(dead_code)]
     fn wrap_fn_arg_ret<'b, HostState, F, A, R>(
         ifn: F,
-    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), u32>
+    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), Result<u32, wasmi::Error>>
     where
         HostState: HostBase,
         F: Fn(&mut HostState, A) -> R + Send + Sync + 'static,
@@ -371,19 +381,22 @@ pub mod helper {
                 .expect("failed to read argument value");
             let ret = ifn(host.runtime_info.data_mut(), arg);
 
-            HostState::on_yield(&mut host, false);
+            if !HostState::on_yield(&mut host, 0) {
+                return Err(wasmi::Error::host(super::Error::YieldTermination));
+            }
             host.reset_fuel();
 
             // FIXME(lmv): handle error
-            host.write_value_to_guest_memory(&ret)
-                .expect("failed to write return value") as u32
+            Ok(host
+                .write_value_to_guest_memory(&ret)
+                .expect("failed to write return value") as u32)
         }
     }
 
     #[inline]
     fn wrap_fn_arg<'b, HostState, F, A>(
         ifn: F,
-    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), ()>
+    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), Result<(), wasmi::Error>>
     where
         HostState: HostBase,
         F: Fn(&mut HostState, A) + Send + Sync + 'static,
@@ -402,15 +415,18 @@ pub mod helper {
                 .expect("failed to read argument value");
             ifn(host.runtime_info.data_mut(), arg);
 
-            HostState::on_yield(&mut host, false);
+            if !HostState::on_yield(&mut host, 0) {
+                return Err(wasmi::Error::host(super::Error::YieldTermination));
+            }
             host.reset_fuel();
+            Ok(())
         }
     }
 
     #[inline]
     fn wrap_fn_ret<'b, HostState, F, R>(
         ifn: F,
-    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>,), u32>
+    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>,), Result<u32, wasmi::Error>>
     where
         HostState: HostBase,
         F: Fn(&mut HostState) -> R + Send + Sync + 'static,
@@ -430,17 +446,21 @@ pub mod helper {
             let ret = ifn(host.runtime_info.data_mut());
             // FIXME(lmv): handle error
 
-            HostState::on_yield(&mut host, false);
+            if !HostState::on_yield(&mut host, 0) {
+                return Err(wasmi::Error::host(super::Error::YieldTermination));
+            }
             host.reset_fuel();
-
-            host.write_value_to_guest_memory(&ret)
-                .expect("failed to write return value") as u32
+            Ok(host
+                .write_value_to_guest_memory(&ret)
+                .expect("failed to write return value") as u32)
         }
     }
 
     #[allow(dead_code)]
     #[inline]
-    fn wrap_fn<'b, HostState, F>(ifn: F) -> impl IntoFunc<HostState, (Caller<'b, HostState>,), ()>
+    fn wrap_fn<'b, HostState, F>(
+        ifn: F,
+    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>,), Result<(), wasmi::Error>>
     where
         HostState: HostBase,
         F: Fn(&mut HostState) + Send + Sync + 'static,
@@ -449,20 +469,47 @@ pub mod helper {
             let mut host = Host::from(caller);
             ifn(host.runtime_info.data_mut());
 
-            HostState::on_yield(&mut host, false);
+            if !HostState::on_yield(&mut host, 0) {
+                return Err(wasmi::Error::host(super::Error::YieldTermination));
+            }
             host.reset_fuel();
+            Ok(())
         }
     }
 
     #[inline]
-    fn rt_yield<'b, HostState>() -> impl IntoFunc<HostState, (Caller<'b, HostState>,), ()>
+    fn rt_yield<'b, HostState>(
+    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>, u32), Result<(), wasmi::Error>>
     where
         HostState: HostBase,
     {
+        move |caller: Caller<'_, HostState>, timeout: u32| {
+            let mut host = Host::from(caller);
+            if !HostState::on_yield(&mut host, timeout) {
+                return Err(wasmi::Error::host(super::Error::YieldTermination));
+            }
+            host.reset_fuel();
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn wrap_fn_ret_plain<'b, HostState, F>(
+        ifn: F,
+    ) -> impl IntoFunc<HostState, (Caller<'b, HostState>,), Result<u32, wasmi::Error>>
+    where
+        HostState: HostBase,
+        F: Fn(&mut HostState) -> u32 + Send + Sync + 'static,
+    {
         move |caller: Caller<'_, HostState>| {
             let mut host = Host::from(caller);
-            HostState::on_yield(&mut host, true);
+            let ret = ifn(host.runtime_info.data_mut());
+
+            if !HostState::on_yield(&mut host, 0) {
+                return Err(wasmi::Error::host(super::Error::YieldTermination));
+            }
             host.reset_fuel();
+            Ok(ret)
         }
     }
 
@@ -480,8 +527,16 @@ pub mod helper {
         )?;
         linker.define(
             "env",
+            "get_time_millis",
+            Func::wrap(&mut ctx, wrap_fn_ret_plain(HostState::get_time_millis)),
+        )?;
+        linker.define(
+            "env",
             "has_host_base",
-            Func::wrap(&mut ctx, || HostState::has_host_base() as u32),
+            Func::wrap(
+                &mut ctx,
+                wrap_fn_ret_plain(|_| HostState::has_host_base() as u32),
+            ),
         )?;
         linker.define(
             "env",
@@ -503,7 +558,10 @@ pub mod helper {
         linker.define(
             "env",
             "has_led_brightness",
-            Func::wrap(&mut ctx, || HostState::has_led_brightness() as u32),
+            Func::wrap(
+                &mut ctx,
+                wrap_fn_ret_plain(|_| HostState::has_led_brightness() as u32),
+            ),
         )?;
         linker.define(
             "env",
@@ -598,4 +656,8 @@ pub enum Error {
     DeallocFailure(String),
     #[error("Guest main failed: {0}")]
     MainFailure(String),
+    #[error("Guest terminated because on_yield returned false")]
+    YieldTermination,
 }
+
+impl wasmi::core::HostError for Error {}

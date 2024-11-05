@@ -2,8 +2,10 @@ mod host_raw {
     use crate::common::{BLEAdvNotification, Region};
 
     extern "C" {
-        // () -> ()
-        pub(super) fn rt_yield();
+        // u32 -> ()
+        pub(super) fn rt_yield(timeout: usize);
+        // () -> u32
+        pub(super) fn get_time_millis() -> usize;
 
         // () -> bool
         pub(super) fn has_host_base() -> bool;
@@ -78,8 +80,13 @@ pub mod host {
     };
 
     // must be called regularly or the guest might run out of fuel
-    pub fn rt_yield() {
-        unsafe { host_raw::rt_yield() }
+    // timeout is in microseconds, 0 to tell the host to not block
+    pub fn rt_yield(timeout: usize) {
+        unsafe { host_raw::rt_yield(timeout) }
+    }
+
+    pub fn get_time_millis() -> u32 {
+        (unsafe { host_raw::get_time_millis() }) as u32
     }
 
     // TODO(lmv): maybe generate these wrappers this with a proc macro?

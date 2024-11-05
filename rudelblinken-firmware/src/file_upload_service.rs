@@ -56,17 +56,17 @@ pub enum VerifyFileError {
 }
 
 impl IncompleteFile {
-    pub fn new(hash: [u8; 32], checksums: Vec<u8>, chunk_size: u16, length: u32) -> Self {
-        return IncompleteFile {
+    pub fn new(hash: [u8; 32], checksums: Vec<u8>, chunk_length: u16, length: u32) -> Self {
+        Self {
             incomplete_file: File {
                 hash,
                 content: vec![0; length as usize],
             },
             received_chunks: vec![false; checksums.len()],
-            checksums: checksums,
-            chunk_length: chunk_size,
+            checksums,
+            chunk_length,
             length,
-        };
+        }
     }
     pub fn receive_chunk(&mut self, data: &[u8], index: u16) -> Result<(), ReceiveChunkError> {
         // Verify length for all but the last chunk
@@ -95,7 +95,7 @@ impl IncompleteFile {
         self.incomplete_file.content[offset..(data.len() + offset)].copy_from_slice(data);
         self.received_chunks[index as usize] = true;
 
-        return Ok(());
+        Ok(())
     }
     // /// Get the ID of the next missing chunk. Returns [None], if all chunks were already received.
     // pub fn get_next_missing_chunk(&self) -> Option<usize> {
@@ -127,12 +127,12 @@ impl IncompleteFile {
         }
         ::log::info!(target: "file-upload", "Hashes match");
 
-        return Ok(());
+        Ok(())
     }
     /// Get the uploaded file, if the upload is finished, otherwise this return None and you just destroyed your incomplete file for no reason
     pub fn into_file(self) -> Result<File, VerifyFileError> {
         self.verify_hash()?;
-        return Ok(self.incomplete_file);
+        Ok(self.incomplete_file)
     }
 }
 
@@ -201,13 +201,13 @@ impl FileUploadService {
         }
 
         self.currently_receiving = Some(IncompleteFile::new(
-            hash.clone(),
+            *hash,
             checksums.clone(),
             chunk_length,
             length,
         ));
 
-        return Ok(());
+        Ok(())
     }
 
     /// Starts an upload if there is no active upload
@@ -218,7 +218,7 @@ impl FileUploadService {
             return Ok(());
         }
         self.start_upload()?;
-        return Ok(());
+        Ok(())
     }
 
     fn log_error(&mut self, error: FileUploadError) {
@@ -228,7 +228,7 @@ impl FileUploadService {
 
     /// Get the UUID of the file upload service
     pub const fn uuid() -> BleUuid {
-        return FILE_UPLOAD_SERVICE_UUID;
+        FILE_UPLOAD_SERVICE_UUID
     }
 
     /// This will be called on writes to the data characteristic
@@ -262,7 +262,7 @@ impl FileUploadService {
                 .into_file()?;
             self.files.push(file);
         }
-        return Ok(());
+        Ok(())
     }
 
     /// This will be called on writes to the hash characteristic
@@ -284,7 +284,7 @@ impl FileUploadService {
         }
         self.latest_hash = Some(new_hash);
         self.currently_receiving = None;
-        return Ok(());
+        Ok(())
     }
 
     pub fn get_file(&self, hash: &[u8; 32]) -> Option<&File> {
@@ -317,7 +317,7 @@ impl FileUploadService {
             let Some(file) = self.get_file(hash) else {
                 return Err(FileUploadError::ChecksumFileDoesNotExist);
             };
-            let new_checksums: Vec<u8> = file.content.iter().cloned().collect();
+            let new_checksums: Vec<u8> = file.content.to_vec();
             if self.latest_checksums.as_ref() == Some(&new_checksums) {
                 return Ok(());
             }
@@ -327,7 +327,7 @@ impl FileUploadService {
             return Ok(());
         }
 
-        return Err(FileUploadError::ReceivedChunkWayTooShort);
+        Err(FileUploadError::ReceivedChunkWayTooShort)
     }
 
     /// This will be called on writes to the length characteristic
@@ -361,7 +361,7 @@ impl FileUploadService {
         self.latest_length = Some(new_length);
         self.currently_receiving = None;
 
-        return Ok(());
+        Ok(())
     }
 
     /// This will be called on writes to the chunk length characteristic
@@ -389,7 +389,7 @@ impl FileUploadService {
         self.latest_chunk_length = Some(new_chunk_length);
         self.currently_receiving = None;
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn new(server: &mut BLEServer) -> Arc<Mutex<FileUploadService>> {
@@ -414,9 +414,8 @@ impl FileUploadService {
         let file_upload_service_clone = file_upload_service.clone();
         data_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
-            match service.data_write(args) {
-                Err(e) => service.log_error(e),
-                _ => (),
+            if let Err(e) = service.data_write(args) {
+                service.log_error(e);
             }
         });
 
@@ -427,9 +426,8 @@ impl FileUploadService {
         let file_upload_service_clone = file_upload_service.clone();
         hash_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
-            match service.hash_write(args) {
-                Err(e) => service.log_error(e),
-                _ => (),
+            if let Err(e) = service.hash_write(args) {
+                service.log_error(e);
             }
         });
         let file_upload_service_clone = file_upload_service.clone();
@@ -445,9 +443,8 @@ impl FileUploadService {
         let file_upload_service_clone = file_upload_service.clone();
         checksums_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
-            match service.checksums_write(args) {
-                Err(e) => service.log_error(e),
-                _ => (),
+            if let Err(e) = service.checksums_write(args) {
+                service.log_error(e);
             }
         });
 
@@ -458,9 +455,8 @@ impl FileUploadService {
         let file_upload_service_clone = file_upload_service.clone();
         length_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
-            match service.length_write(args) {
-                Err(e) => service.log_error(e),
-                _ => (),
+            if let Err(e) = service.length_write(args) {
+                service.log_error(e);
             }
         });
         let file_upload_service_clone = file_upload_service.clone();
@@ -477,9 +473,8 @@ impl FileUploadService {
         let file_upload_service_clone = file_upload_service.clone();
         chunk_length_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
-            match service.chunk_length_write(args) {
-                Err(e) => service.log_error(e),
-                _ => (),
+            if let Err(e) = service.chunk_length_write(args) {
+                service.log_error(e);
             }
         });
         let file_upload_service_clone = file_upload_service.clone();
@@ -489,6 +484,6 @@ impl FileUploadService {
             value.set_value(&chunk_length);
         });
 
-        return file_upload_service;
+        file_upload_service
     }
 }
