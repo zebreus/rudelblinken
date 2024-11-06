@@ -143,6 +143,22 @@ fn main() {
     setup_ble_server();
 
     print_memory_info();
+    // print_partitions();
+
+    // let mut storage = FlashStorage::new().unwrap();
+    // let mut storage2 = FlashStorage::new().unwrap();
+
+    // let test_string = String::from("Hallo Wolt!");
+    // let test_vec: Vec<u8> = test_string.clone().into();
+
+    // // storage.write(&test_vec).unwrap_or_default();
+    // // let new_vec = storage.read(test_vec.len());
+    // // let new_vec2 = storage2.read(test_vec.len());
+
+    // // let new_string = String::from_utf8_lossy(&new_vec);
+    // // let new_string2 = String::from_utf8_lossy(&new_vec2);
+
+    // // ::log::error!(target: "test-fs", "Print {} Pront {} Prant {}", test_string, new_string, new_string2);
 
     /* let peripherals = Peripherals::take().unwrap();
     let timer_driver = LedcTimerDriver::new(
