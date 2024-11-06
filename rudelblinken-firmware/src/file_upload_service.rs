@@ -5,7 +5,6 @@ use esp32_nimble::{
     BLEServer, NimbleProperties,
 };
 use esp_idf_sys as _;
-use sha3::{Digest, Sha3_256};
 use thiserror::Error;
 
 const FILE_UPLOAD_SERVICE: u16 = 0x7892;
@@ -114,12 +113,12 @@ impl IncompleteFile {
         if !self.is_complete() {
             return Err(VerifyFileError::NotComplete);
         }
-        let mut hasher = Sha3_256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(&self.incomplete_file.content);
 
         // TODO: I am sure there is a better way to convert this into an array but I didnt find it after 10 minutes.
         let mut hash: [u8; 32] = [0; 32];
-        hash.copy_from_slice(hasher.finalize().as_slice());
+        hash.copy_from_slice(hasher.finalize().as_bytes());
 
         if hash != self.incomplete_file.hash {
             ::log::warn!(target: "file-upload", "Hashes dont match.\nExpected: {:?}\nGot     : {:?}", self.incomplete_file.hash, hash);
