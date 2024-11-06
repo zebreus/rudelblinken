@@ -313,6 +313,20 @@ const WASM_MOD: &[u8] = include_bytes!(
     "../../rudelblinken-wasm/target/wasm32-unknown-unknown/release/rudelblinken_wasm.wasm"
 );
 
+fn log_heap_stats() {
+    ::log::info!(
+        "free = {}, largest = {}",
+        unsafe { esp_idf_sys::esp_get_free_heap_size() },
+        unsafe {
+            esp_idf_sys::heap_caps_get_largest_free_block(
+                esp_idf_sys::MALLOC_CAP_DMA
+                    | esp_idf_sys::MALLOC_CAP_32BIT
+                    | esp_idf_sys::MALLOC_CAP_DEFAULT,
+            )
+        }
+    )
+}
+
 fn wasm_runner(mut state: HostState) {
     'run_loop: loop {
         let engine = Engine::new(
@@ -348,7 +362,8 @@ fn wasm_runner(mut state: HostState) {
             let wasm_bin = WASM_MOD;
 
             ::log::info!("creating new wasm module (size={}b)", wasm_bin.len());
-            match Module::new(&engine, wasm_bin) {
+            log_heap_stats();
+            match unsafe { Module::new_unchecked(&engine, wasm_bin) } {
                 Ok(m) => m,
                 Err(err) => {
                     ::log::error!("failed to create module: {:?}", err);
@@ -358,6 +373,7 @@ fn wasm_runner(mut state: HostState) {
         };
 
         ::log::info!("preparing store and linker for wasm runtime");
+        log_heap_stats();
         state.start = Instant::now();
         let mut store = Store::new(&engine, state);
 
@@ -371,10 +387,12 @@ fn wasm_runner(mut state: HostState) {
             .expect("failed to link stubs");
 
         ::log::info!("instantiating wasm module");
+        log_heap_stats();
         let pre_instance = linker
             .instantiate(&mut store, &module)
             .expect("failed to instanciate module");
         ::log::info!("starting wasm module");
+        log_heap_stats();
         let instance = pre_instance
             .start(&mut store)
             .expect("failed to start instance");
@@ -382,6 +400,7 @@ fn wasm_runner(mut state: HostState) {
         let mut host: Host<_> = InstanceWithContext::new(store, instance).into();
 
         ::log::info!("invoking wasm main");
+        log_heap_stats();
         match host.main() {
             Ok(()) => ::log::info!("wasm guest exited"),
             Err(err) => ::log::info!("wasm guest failed: {:?}", err),

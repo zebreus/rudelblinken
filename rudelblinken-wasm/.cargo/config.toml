@@ -6,8 +6,9 @@ target = "wasm32-unknown-unknown"
 #  65536  (64 KiB) works
 #  32768  (32 KiB) works
 #  16384  (16 KiB) works
+#   8192  (16 KiB) works
 #   1024   (1 KiB) works
-rustflags = "-C link-arg=-zstack-size=32768"
+rustflags = "-C link-arg=-zstack-size=16384"
 
 [unstable]
 build-std = ["std", "panic_abort"]
