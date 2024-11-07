@@ -95,6 +95,10 @@ impl FileContent {
         }
     }
 
+    pub fn strong_count<const STRONG: bool>(this: &FileContent<STRONG>) -> usize {
+        return this.ref_count.borrow().strong_count;
+    }
+
     // /// Creates a new weak pointer to this data
     // pub fn downgrade(this: &FileContent) -> FileContent<false> {
     //     this.ref_count.borrow_mut().weak_count += 1;
@@ -173,7 +177,7 @@ impl<const STRONG: bool> Drop for FileContent<STRONG> {
         let mut metadata = self.ref_count.deref().borrow_mut();
         metadata.strong_count = metadata.strong_count.saturating_sub(1);
         let previous_destructor: &mut Box<dyn FnOnce(bool) -> ()> = &mut metadata.destructor;
-        let mut empty_destructor: Box<dyn FnOnce(bool) -> ()> = Box::new(|_| ());
+        let empty_destructor: Box<dyn FnOnce(bool) -> ()> = Box::new(|_| ());
         let destructor = std::mem::replace(previous_destructor, empty_destructor);
         if metadata.strong_count == 0 {
             (destructor)(metadata.marked_for_deletion);

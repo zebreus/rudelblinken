@@ -140,10 +140,11 @@ struct FileInformation {
     length: usize,
     /// Name of the file
     name: String,
-    /// Block number
-    // TODO: The lifetime of this is definitely not static
-    content: FileContent<true>,
-    /// metadata
+    /// Content of the file
+    /// Will be None if the file has been deleted
+    content: Option<FileContent<true>>,
+    /// Weak pointer of
+    weak_content: FileContent<false>,
     metadata: &'static BlockMetadata,
 }
 
@@ -183,44 +184,41 @@ impl FileInformation {
 
         let full_file_length = metadata.length() as usize + size_of::<BlockMetadata>();
 
+        let strong_content = FileContent::new(
+            static_content.as_ptr(),
+            static_content.len(),
+            move |marked_for_deletion| {
+                if marked_for_deletion {
+                    let length = full_file_length.div_ceil(T::BLOCK_SIZE) * T::BLOCK_SIZE;
+
+                    storage
+                        .write()
+                        .unwrap()
+                        .erase(location_in_storage, length)
+                        .unwrap();
+                }
+            },
+        );
+
         let information = FileInformation {
             location_in_storage: location_in_storage,
             length: metadata.length() as usize,
             name: metadata.name().into(),
             metadata: metadata,
-            content: unsafe {
-                FileContent::new(
-                    static_content.as_ptr(),
-                    static_content.len(),
-                    move |marked_for_deletion| {
-                        if marked_for_deletion {
-                            let length = full_file_length.div_ceil(T::BLOCK_SIZE) * T::BLOCK_SIZE;
-
-                            storage
-                                .write()
-                                .unwrap()
-                                .erase(location_in_storage, length)
-                                .unwrap();
-                        }
-                    },
-                )
-            },
+            weak_content: strong_content.downgrade(),
+            content: Some(strong_content),
         };
         return Ok(information);
     }
 
     /// Check if there are no other references to the file left
-    pub fn can_be_dropped(&self) -> Result<(), ()> {
-        let is_last = FileContent::is_last(&self.content);
-        if is_last {
-            return Err(());
-        }
-        return Ok(());
+    pub fn no_strong_references_left(&self) -> bool {
+        return FileContent::strong_count(&self.weak_content) == 0;
     }
 
     pub fn into_file(&self) -> File {
         return File {
-            content: self.content.downgrade(),
+            content: self.weak_content.clone(),
             name: self.name.clone(),
         };
     }
@@ -309,7 +307,10 @@ impl<T: Storage + 'static> Filesystem<T> {
     }
 
     pub fn read_file(&self, name: &str) -> Option<File> {
-        let file = self.files.iter().find(|file| file.name == name)?;
+        let file = self
+            .files
+            .iter()
+            .find(|file| file.name == name && file.content.is_some())?;
         return Some(file.into_file());
     }
 
@@ -404,6 +405,7 @@ impl<T: Storage + 'static> Filesystem<T> {
         content: &[u8],
         hash: &[u8; 32],
     ) -> Result<(), WriteFileError> {
+        self.cleanup_files();
         let mut name_array = [0u8; 16];
         let name_bytes = name.as_bytes();
         if name_bytes.len() > 16 {
@@ -436,9 +438,6 @@ impl<T: Storage + 'static> Filesystem<T> {
         if file_data.name != name {
             return Err(WriteFileError::ReadFileDoesNotMatch);
         }
-        if file_data.content.as_ref() != content {
-            return Err(WriteFileError::ReadFileDoesNotMatch);
-        }
 
         self.files.push(file_data);
         return Ok(());
@@ -456,9 +455,28 @@ impl<T: Storage + 'static> Filesystem<T> {
         else {
             return Err(DeleteFileError::FileNotFound);
         };
-        let file = self.files.remove(index);
-        FileContent::mark_for_deletion(&file.content);
+        let file = &mut self.files[index];
+        if let Some(content) = &file.content {
+            FileContent::mark_for_deletion(content);
+        }
+        file.content = None;
+        if file.no_strong_references_left() {
+            self.files.swap_remove(index);
+        }
         return Ok(());
+    }
+
+    /// Remove all files with no remaining strong pointers
+    fn cleanup_files(&mut self) {
+        let mut remove_indices: Vec<usize> = Vec::new();
+        for index in 0..self.files.len() {
+            if self.files[index].no_strong_references_left() {
+                remove_indices.push(index);
+            }
+        }
+        for index in remove_indices.into_iter().rev() {
+            self.files.swap_remove(index);
+        }
     }
 }
 
