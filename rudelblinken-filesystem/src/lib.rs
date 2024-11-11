@@ -1,16 +1,22 @@
+use file::File;
+use file::FileHandle;
 use file_content::FileContent;
+use file_metadata::FileMetadata;
 use std::collections::BTreeMap;
 use std::ops::Bound::Included;
 use std::sync::Arc;
 use std::sync::RwLock;
 use storage::EraseStorageError;
-use storage::ReadStorageError;
 use storage::Storage;
-use storage::WriteStorageError;
+use storage::StorageError;
+use storage::StorageError;
 use thiserror::Error;
 use zerocopy::IntoBytes;
 use zerocopy::{FromBytes, Immutable, KnownLayout};
+pub mod file;
 pub mod file_content;
+pub mod file_metadata;
+pub mod file_writer;
 pub mod storage;
 
 #[derive(Error, Debug, Clone)]
@@ -32,7 +38,7 @@ pub enum WriteFileError {
     #[error(transparent)]
     CreateFileInformationError(#[from] CreateFileInformationError),
     #[error(transparent)]
-    WriteStorageError(#[from] WriteStorageError),
+    WriteStorageError(#[from] StorageError),
     #[error("The read file does not match the written file")]
     ReadFileDoesNotMatch,
     #[error(transparent)]
@@ -45,27 +51,6 @@ pub enum DeleteFileError {
     EraseStorageError(#[from] EraseStorageError),
     #[error("The file does not exist")]
     FileNotFound,
-}
-
-#[derive(Error, Debug)]
-pub enum CreateFileInformationError {
-    #[error(transparent)]
-    ReadFileError(#[from] std::io::Error),
-    #[error(transparent)]
-    StorageLockError(#[from] StorageLockError),
-    #[error(transparent)]
-    ReadStorageError(#[from] ReadStorageError),
-    #[error("Failed to read block metadata")]
-    FailedToReadBlockMetadata(
-        #[from]
-        zerocopy::ConvertError<
-            zerocopy::AlignmentError<&'static [u8], BlockMetadata>,
-            zerocopy::SizeError<&'static [u8], BlockMetadata>,
-            std::convert::Infallible,
-        >,
-    ),
-    #[error("No metadata found because the block is empty")]
-    NoMetadata,
 }
 
 #[derive(Error, Debug)]
@@ -84,173 +69,10 @@ pub enum MetadataAccessError {
     StorageLockError(#[from] StorageLockError),
 }
 
-#[enumflags2::bitflags]
-#[repr(u16)]
-#[derive(Copy, Clone, Debug, PartialEq, KnownLayout)]
-pub enum BlockType {
-    /// If this is a wasm binary
-    WASM,
-    /// This file has been deleted
-    DELETED,
-}
-
-#[derive(KnownLayout, FromBytes, IntoBytes, Immutable)]
-#[repr(C)]
-struct BlockMetadata {
-    /// Type of this block
-    /// Access only via the supplied functions
-    block_type: u16,
-    /// Length in bits
-    length: u16,
-    /// SHA3-256 hash of the file
-    hash: [u8; 32],
-    /// Name of the file, null terminated or 16 chars
-    name: [u8; 16],
-    /// Reserved space to fill the metadata to 64 byte
-    _reserved: [u8; 12],
-}
-
-impl BlockMetadata {
-    fn is_empty(&self) -> bool {
-        return self.block_type == 0;
-    }
-    fn length(&self) -> u16 {
-        return self.length;
-    }
-    fn hash(&self) -> [u8; 32] {
-        return self.hash;
-    }
-    fn name(&self) -> &str {
-        let nul_range_end = self.name.iter().position(|&c| c == b'\0').unwrap_or(16);
-        return std::str::from_utf8(&self.name[0..nul_range_end]).unwrap_or_default();
-    }
-}
-
-pub struct File {
-    // Content
-    pub content: FileContent<false>,
-    // Name
-    pub name: String,
-}
-
-struct FileInformation {
-    /// Block number
-    location_in_storage: usize,
-    /// Length in bytes
-    length: usize,
-    /// Name of the file
-    name: String,
-    /// Content of the file
-    /// Will be None if the file has been deleted
-    content: Option<FileContent<true>>,
-    /// Weak pointer of
-    weak_content: FileContent<false>,
-    metadata: &'static BlockMetadata,
-}
-
-impl FileInformation {
-    /// Return information about a new file
-    ///
-    /// None means that there is definitely no file starting there.
-    /// If a file information is returned, there is no guarantee, that it is actually a real file.
-    pub fn new<T: Storage + 'static>(
-        storage: Arc<RwLock<T>>,
-        location_in_storage: usize,
-    ) -> Result<FileInformation, CreateFileInformationError> {
-        let static_metadata_slice: &'static [u8];
-        let static_content: &'static [u8];
-        let metadata: &BlockMetadata;
-
-        {
-            let binding = storage
-                .read()
-                .map_err(|_| StorageLockError::FailedToAquireReadLock)?;
-            let metadata_slice = binding.read(location_in_storage, size_of::<BlockMetadata>())?;
-            // TODO: This is unsafe AF
-            static_metadata_slice =
-                unsafe { std::mem::transmute::<&[u8], &'static [u8]>(metadata_slice) };
-
-            metadata = BlockMetadata::ref_from_bytes(static_metadata_slice)?;
-            if metadata.is_empty() {
-                return Err(CreateFileInformationError::NoMetadata);
-            }
-
-            let content = binding.read(
-                location_in_storage + size_of::<BlockMetadata>(),
-                metadata.length() as usize,
-            )?;
-            static_content = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(content) };
-        }
-
-        let full_file_length = metadata.length() as usize + size_of::<BlockMetadata>();
-
-        let strong_content = FileContent::new(
-            static_content.as_ptr(),
-            static_content.len(),
-            move |marked_for_deletion| {
-                if marked_for_deletion {
-                    let length = full_file_length.div_ceil(T::BLOCK_SIZE) * T::BLOCK_SIZE;
-
-                    storage
-                        .write()
-                        .unwrap()
-                        .erase(location_in_storage, length)
-                        .unwrap();
-                }
-            },
-        );
-
-        let information = FileInformation {
-            location_in_storage: location_in_storage,
-            length: metadata.length() as usize,
-            name: metadata.name().into(),
-            metadata: metadata,
-            weak_content: strong_content.downgrade(),
-            content: Some(strong_content),
-        };
-        return Ok(information);
-    }
-
-    /// Check if there are no other references to the file left
-    pub fn no_strong_references_left(&self) -> bool {
-        return FileContent::strong_count(&self.weak_content) == 0;
-    }
-
-    pub fn into_file(&self) -> File {
-        return File {
-            content: self.weak_content.clone(),
-            name: self.name.clone(),
-        };
-    }
-}
-
-// impl Drop for FileInformation {
-//     fn drop(&mut self) {
-//         println!("Dropping it");
-//         if self.can_be_dropped().is_err() {
-//             // TODO: Better implementation
-//             panic!(
-//                 "Can not drop FileInformation if there are still active references to its content"
-//             );
-//         }
-//         println!("Panic check survived");
-
-//         println!("Ref count before drop {}", FileContent::is_last(&content));
-//         let content = self.content.clone();
-
-//         println!("Clone survived");
-
-//         // Get back the raw pointer and destroy the last reference in the process
-//         let ptr = Rc::into_raw(old_content);
-//         // let slice = ptr as &[u8]
-//         println!("Dropped it");
-//     }
-// }
-
 /// Filesystem implementation
 pub struct Filesystem<T: Storage> {
     storage: Arc<RwLock<T>>,
-    files: Vec<FileInformation>,
+    files: Vec<File>,
 }
 
 impl<T: Storage + 'static> Filesystem<T> {
@@ -286,7 +108,7 @@ impl<T: Storage + 'static> Filesystem<T> {
         let mut block_number = 0;
         while block_number < T::BLOCKS {
             let current_block_number = (block_number + first_block as usize) % T::BLOCKS;
-            let file_information = FileInformation::new(
+            let file_information = File::from_storage(
                 filesystem.storage.clone(),
                 current_block_number * T::BLOCK_SIZE,
             );
@@ -306,11 +128,11 @@ impl<T: Storage + 'static> Filesystem<T> {
         return self.storage.clone();
     }
 
-    pub fn read_file(&self, name: &str) -> Option<File> {
+    pub fn read_file(&self, name: &str) -> Option<FileHandle> {
         let file = self
             .files
             .iter()
-            .find(|file| file.name == name && file.content.is_some())?;
+            .find(|file| file.name == name && file.valid())?;
         return Some(file.into_file());
     }
 
@@ -327,9 +149,9 @@ impl<T: Storage + 'static> Filesystem<T> {
         // let mut used_blocks = bitvec![u8, Msb0; 0; T::BLOCKS];
         // let mut used_blocks = vec![false; T::BLOCKS];
         for file in &self.files {
-            let start_block = file.location_in_storage as u16;
+            let start_block = file.address as u16;
             let length_in_blocks =
-                (file.length + size_of::<BlockMetadata>()).div_ceil(T::BLOCK_SIZE) as u16;
+                (file.length + size_of::<FileMetadata>()).div_ceil(T::BLOCK_SIZE) as u16;
             let end_block = start_block + length_in_blocks;
             let Some((&surrounding_start, &surrounding_length)) = free_ranges
                 .range((Included(0), Included(start_block)))
@@ -412,9 +234,9 @@ impl<T: Storage + 'static> Filesystem<T> {
             return Err(WriteFileError::FileNameTooLong);
         }
         name_array[0..name_bytes.len()].copy_from_slice(name_bytes);
-        let free_location = self.find_free_space(content.len() + size_of::<BlockMetadata>())?;
+        let free_location = self.find_free_space(content.len() + size_of::<FileMetadata>())?;
 
-        let metadata = BlockMetadata {
+        let metadata = FileMetadata {
             block_type: 1,
             length: content.len() as u16,
             hash: hash.clone(),
@@ -443,6 +265,10 @@ impl<T: Storage + 'static> Filesystem<T> {
         return Ok(());
     }
 
+    /// Get a writer that allows writing a file over time.
+    ///
+    /// The file can only be read after the content was finished
+    pub fn get_file_writer(&mut self, name: &str, length: usize, hash: &[u8; 32]) -> () {}
     /// Delete a file
     ///
     /// The file will only be deleted once there are no strong references to its content left. Strong references can be obtained by calling upgrade on the content of a file

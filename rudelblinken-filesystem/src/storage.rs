@@ -1,23 +1,16 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum ReadStorageError {
+pub enum StorageError {
     #[error("Failed to write to flash. Maybe the pages are not erased.")]
     IoError(#[from] std::io::Error),
     #[error("Address is bigger than the storage size")]
     AddressTooBig,
     #[error("Size is bigger than the storage size")]
     SizeTooBig,
-}
-
-#[derive(Error, Debug)]
-pub enum WriteStorageError {
-    #[error("Failed to write to flash. Maybe the pages are not erased.")]
-    IoError(#[from] std::io::Error),
-    #[error("Address is bigger than the storage size")]
-    AddressTooBig,
-    #[error("Size is bigger than the storage size")]
-    SizeTooBig,
+    /// Only returned by write_checked
+    #[error("Size is not a multiple of the page size")]
+    ReadDataDoesNotMatchWrittenData,
 }
 
 #[derive(Error, Debug, Clone)]
@@ -30,17 +23,15 @@ pub enum CreateStorageError {
 
 #[derive(Error, Debug)]
 pub enum EraseStorageError {
-    #[error("Failed to write to flash. Maybe the pages are not erased.")]
-    IoError(#[from] std::io::Error),
-    #[error("Address is bigger than the storage size")]
-    AddressTooBig,
-    #[error("Size is bigger than the storage size")]
-    SizeTooBig,
+    #[error(transparent)]
+    StorageError(#[from] StorageError),
     #[error("Size is not a multiple of the page size")]
     SizeNotAMultipleOfPageSize,
 }
 
 /// Storage with wraparound
+///
+/// Implementing write_readback is optional, but can be done for better performance in some places.
 pub trait Storage {
     /// Size of the smallest erasable block
     const BLOCK_SIZE: usize;
@@ -50,13 +41,13 @@ pub trait Storage {
     /// Read at a specific location.
     ///
     /// address must be inside the storage size. length must be lower or equal to the storage size. If address + length go over the bounds of the storage the storage needs to wrap around there. You should use an MMU for this
-    fn read(&self, address: usize, length: usize) -> Result<&[u8], ReadStorageError>;
+    fn read(&self, address: usize, length: usize) -> Result<&[u8], StorageError>;
     /// Write at a specific location
     ///
     /// address must be inside the storage size. length must be lower or equal to the storage size.
     ///
     /// This operation can only set 0 bits to 1 but not back. If you want to reset bits to 0 use the erase function.
-    fn write(&mut self, address: usize, data: &[u8]) -> Result<(), WriteStorageError>;
+    fn write(&mut self, address: usize, data: &[u8]) -> Result<(), StorageError>;
     /// Reset a block of bits to 0
     ///
     /// address must be inside the storage size. length must be lower or equal to the storage size. address must be block aligned. length must be a multiple of block size
@@ -70,6 +61,21 @@ pub trait Storage {
     fn read_metadata(&self, key: &str) -> std::io::Result<&[u8]>;
     /// Write a metadata key from persistent storage
     fn write_metadata(&mut self, key: &str, value: &[u8]) -> std::io::Result<()>;
+
+    /// Write metadata and return a memorymapped slice to the metadata
+    fn write_readback(&mut self, address: usize, data: &[u8]) -> Result<&[u8], StorageError> {
+        self.write(address, data)?;
+        let data = self.read(address, data.len())?;
+        return Ok(data);
+    }
+    /// Write metadata and verify afterwards that the read data matches the written data.
+    fn write_checked(&mut self, address: usize, data: &[u8]) -> Result<&[u8], StorageError> {
+        let read_data = self.write_readback(address, data)?;
+        if data != read_data {
+            return Err(StorageError::ReadDataDoesNotMatchWrittenData);
+        }
+        return Ok(read_data);
+    }
 }
 
 #[cfg(test)]
@@ -98,23 +104,23 @@ impl Storage for SimulatedStorage {
     const BLOCKS: usize = 16;
     const BLOCK_SIZE: usize = 4096;
 
-    fn read(&self, address: usize, length: usize) -> Result<&[u8], ReadStorageError> {
+    fn read(&self, address: usize, length: usize) -> Result<&[u8], StorageError> {
         if address >= Self::SIZE {
-            return Err(ReadStorageError::AddressTooBig);
+            return Err(StorageError::AddressTooBig);
         }
         if length >= Self::SIZE {
-            return Err(ReadStorageError::SizeTooBig);
+            return Err(StorageError::SizeTooBig);
         }
 
         return Ok(&self.pool[address..address + length]);
     }
 
-    fn write(&mut self, address: usize, data: &[u8]) -> Result<(), WriteStorageError> {
+    fn write(&mut self, address: usize, data: &[u8]) -> Result<(), StorageError> {
         if address >= Self::SIZE {
-            return Err(WriteStorageError::AddressTooBig);
+            return Err(StorageError::AddressTooBig);
         }
         if data.len() >= Self::SIZE {
-            return Err(WriteStorageError::SizeTooBig);
+            return Err(StorageError::SizeTooBig);
         }
 
         self.pool[address..address + data.len()].copy_from_slice(data);
