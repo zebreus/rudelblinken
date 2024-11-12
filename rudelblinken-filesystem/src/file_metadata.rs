@@ -43,7 +43,7 @@ pub enum FileFlags {
 /// Represents a the metadata segment of a file that is memory-mapped into storage.
 ///
 /// Read an existing metadata segment at an address with [from_storage] or place a new one with [new_from_storage]
-#[derive(PartialEq, Eq, Clone, KnownLayout, IntoBytes, Immutable, TryFromBytes)]
+#[derive(Debug, PartialEq, Eq, Clone, KnownLayout, IntoBytes, Immutable, TryFromBytes)]
 #[repr(C)]
 pub struct FileMetadata {
     /// Type of this block
@@ -105,40 +105,72 @@ impl FileMetadata {
     /// Set a flag of the metadata in storage
     ///
     /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
-    pub unsafe fn set_flag_in_storage<T: Storage>(
+    pub unsafe fn set_flag_in_storage<T: Storage, B: Into<BitFlags<FileFlags>>>(
         &self,
         storage: &mut T,
-        address: usize,
-        flag: &BitFlags<FileFlags>,
+        address: u32,
+        flag: B,
     ) -> Result<(), StorageError> {
-        storage.write(address, flag.as_bytes())
+        let flags: BitFlags<FileFlags> = self.flags | flag.into();
+        storage.write(address, flags.as_bytes())
     }
-    fn to_storage<T: Storage>(&self, storage: &mut T, address: usize) -> Result<(), StorageError> {
-        storage.write(address, self.as_bytes())
-    }
+
     /// Store the metadata to the specified storage address
-    pub fn new_to_storage<'a, T: Storage>(
-        storage: &'a mut T,
-        address: usize,
+    pub fn new_to_storage<T: Storage>(
+        storage: &mut T,
+        address: u32,
         name: &str,
         length: u32,
-    ) -> Result<&'a Self, CreateMetadataError> {
+    ) -> Result<&'static Self, CreateMetadataError> {
         let new_metadata = Self::new(name, length);
         let memory_mapped_metadata = storage.write_checked(address, new_metadata.as_bytes())?;
         Ok(FileMetadata::try_ref_from_bytes(memory_mapped_metadata)
-            .map_err(|_| CreateMetadataError::CreateMetadataError)?)
+            .map_err(|e| CreateMetadataError::CreateMetadataError)?)
     }
     /// Read a file metadata object from storage
     ///
     /// Returns a reference to memorymapped flash storage
     pub fn from_storage<T: Storage>(
         storage: &T,
-        address: usize,
-    ) -> Result<&Self, ReadMetadataError> {
+        address: u32,
+    ) -> Result<&'static Self, ReadMetadataError> {
         let data = storage
-            .read(address, size_of::<FileMetadata>())
+            .read(address, size_of::<FileMetadata>() as u32)
             .map_err(|_| ReadMetadataError::ReadStorageError)?;
         Ok(FileMetadata::try_ref_from_bytes(data)
             .map_err(|_| ReadMetadataError::ReadStorageError)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::storage::SimulatedStorage;
+
+    use super::*;
+
+    #[test]
+    fn storing_metadata_works() {
+        let mut storage = SimulatedStorage::new().unwrap();
+        let metadata = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300).unwrap();
+        assert_eq!(metadata.length, 300);
+        assert_eq!(metadata.name_str(), "toast");
+    }
+
+    #[test]
+    fn marker_gets_set_for_new_metadata() {
+        let mut storage = SimulatedStorage::new().unwrap();
+        let metadata = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300).unwrap();
+        assert!(metadata.valid_marker());
+    }
+
+    #[test]
+    fn reading_metadata_works() {
+        let mut storage = SimulatedStorage::new().unwrap();
+        let metadata = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300).unwrap();
+        let read_metadata = FileMetadata::from_storage(&storage, 0).unwrap();
+        assert_eq!(read_metadata.length, 300);
+        assert_eq!(read_metadata.name_str(), "toast");
+        assert!(read_metadata.valid_marker());
     }
 }

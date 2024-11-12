@@ -1,14 +1,15 @@
+use file::CreateFileInformationError;
 use file::File;
 use file::FileHandle;
 use file_content::FileContent;
 use file_metadata::FileMetadata;
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::ops::Bound::Included;
 use std::sync::Arc;
 use std::sync::RwLock;
 use storage::EraseStorageError;
 use storage::Storage;
-use storage::StorageError;
 use storage::StorageError;
 use thiserror::Error;
 use zerocopy::IntoBytes;
@@ -33,16 +34,10 @@ pub enum FindFreeSpaceError {
 pub enum WriteFileError {
     #[error(transparent)]
     FindFreeSpaceError(#[from] FindFreeSpaceError),
-    #[error("The filename can not be longer than 16 bytes")]
-    FileNameTooLong,
     #[error(transparent)]
-    CreateFileInformationError(#[from] CreateFileInformationError),
+    WriteFileError(#[from] file::WriteFileError),
     #[error(transparent)]
-    WriteStorageError(#[from] StorageError),
-    #[error("The read file does not match the written file")]
-    ReadFileDoesNotMatch,
-    #[error(transparent)]
-    StorageLockError(#[from] StorageLockError),
+    IoError(#[from] std::io::Error),
 }
 
 #[derive(Error, Debug)]
@@ -70,9 +65,9 @@ pub enum MetadataAccessError {
 }
 
 /// Filesystem implementation
-pub struct Filesystem<T: Storage> {
+pub struct Filesystem<T: Storage + 'static> {
     storage: Arc<RwLock<T>>,
-    files: Vec<File>,
+    files: Vec<File<T>>,
 }
 
 impl<T: Storage + 'static> Filesystem<T> {
@@ -106,8 +101,9 @@ impl<T: Storage + 'static> Filesystem<T> {
         });
 
         let mut block_number = 0;
+
         while block_number < T::BLOCKS {
-            let current_block_number = (block_number + first_block as usize) % T::BLOCKS;
+            let current_block_number = (block_number + first_block as u32) % T::BLOCKS;
             let file_information = File::from_storage(
                 filesystem.storage.clone(),
                 current_block_number * T::BLOCK_SIZE,
@@ -133,13 +129,13 @@ impl<T: Storage + 'static> Filesystem<T> {
             .files
             .iter()
             .find(|file| file.name == name && file.valid())?;
-        return Some(file.into_file());
+        return file.read();
     }
 
     /// Find a free space in storage of at least the given length.
     ///
     /// For now the space is guaranteed to start at a block boundary
-    fn find_free_space(&self, length: usize) -> Result<usize, FindFreeSpaceError> {
+    fn find_free_space(&self, length: u32) -> Result<u32, FindFreeSpaceError> {
         let mut free_ranges: BTreeMap<u16, u16> = Default::default();
         free_ranges.insert(0, T::BLOCKS as u16 * 2);
         // for file in &self.files {
@@ -149,10 +145,11 @@ impl<T: Storage + 'static> Filesystem<T> {
         // let mut used_blocks = bitvec![u8, Msb0; 0; T::BLOCKS];
         // let mut used_blocks = vec![false; T::BLOCKS];
         for file in &self.files {
-            let start_block = file.address as u16;
+            let start_block = (file.address / T::BLOCK_SIZE) as u16;
             let length_in_blocks =
-                (file.length + size_of::<FileMetadata>()).div_ceil(T::BLOCK_SIZE) as u16;
+                (file.length + size_of::<FileMetadata>() as u32).div_ceil(T::BLOCK_SIZE) as u16;
             let end_block = start_block + length_in_blocks;
+
             let Some((&surrounding_start, &surrounding_length)) = free_ranges
                 .range((Included(0), Included(start_block)))
                 .last()
@@ -188,8 +185,9 @@ impl<T: Storage + 'static> Filesystem<T> {
 
         // Fix the last entry for wraparound
         let last_free_space_start = free_ranges.last_key_value().map_or(0, |(start, _)| *start);
-        let wraparound_length = last_free_space_start.saturating_sub(T::BLOCKS as u16);
-        if wraparound_length > 0 {
+        let wraparound_length: i64 = last_free_space_start as i64 - T::BLOCKS as i64;
+        if wraparound_length >= 0 {
+            let wraparound_length = wraparound_length as u16;
             let Some((0, &first_range_length)) = free_ranges.first_key_value() else {
                 // If there is wraparound on the last file, there needs to be enough space at the start of the storage to accomodate that overlap
                 return Err(FindFreeSpaceError::FilesystemError);
@@ -208,17 +206,18 @@ impl<T: Storage + 'static> Filesystem<T> {
         let Some(longest_range) = free_ranges
             .into_iter()
             .max_by(|(_, length_a), (_, length_b)| length_a.cmp(length_b))
+            .map(|(a, b)| (a as u32, b as u32))
         else {
             return Err(FindFreeSpaceError::NoFreeSpace);
         };
 
-        if (longest_range.1 as usize * T::BLOCK_SIZE) < length {
+        if (longest_range.1 * T::BLOCK_SIZE) < length {
             return Err(FindFreeSpaceError::NotEnoughSpace);
         }
 
-        // println!("Found the longest free range at {:?}", longest_range);
+        let longest_range_start = longest_range.0 % (T::BLOCKS);
 
-        return Ok(longest_range.0 as usize * T::BLOCK_SIZE);
+        return Ok(longest_range_start * T::BLOCK_SIZE);
     }
 
     pub fn write_file(
@@ -228,40 +227,50 @@ impl<T: Storage + 'static> Filesystem<T> {
         hash: &[u8; 32],
     ) -> Result<(), WriteFileError> {
         self.cleanup_files();
-        let mut name_array = [0u8; 16];
-        let name_bytes = name.as_bytes();
-        if name_bytes.len() > 16 {
-            return Err(WriteFileError::FileNameTooLong);
-        }
-        name_array[0..name_bytes.len()].copy_from_slice(name_bytes);
-        let free_location = self.find_free_space(content.len() + size_of::<FileMetadata>())?;
+        // let mut name_array = [0u8; 16];
+        // let name_bytes = name.as_bytes();
+        // if name_bytes.len() > 16 {
+        //     return Err(WriteFileError::FileNameTooLong);
+        // }
+        // name_array[0..name_bytes.len()].copy_from_slice(name_bytes);
+        let free_location =
+            self.find_free_space(content.len() as u32 + size_of::<FileMetadata>() as u32)?;
 
-        let metadata = FileMetadata {
-            block_type: 1,
-            length: content.len() as u16,
-            hash: hash.clone(),
-            name: name_array,
-            _reserved: [0u8; 12],
-        };
-        {
-            let mut writable_storage = self
-                .storage
-                .write()
-                .map_err(|_| StorageLockError::FailedToAquireWriteLock)?;
-            writable_storage.write(free_location, metadata.as_bytes())?;
-            writable_storage.write(free_location + size_of::<BlockMetadata>(), content)?;
-        }
-        let file_data = FileInformation::new(self.storage.clone(), free_location)?;
+        let (file, mut writer) = File::to_storage(
+            self.storage.clone(),
+            free_location,
+            content.len() as u32,
+            name,
+        )?;
+        writer.write_all(content)?;
+        writer.commit();
+        self.files.push(file);
+        // let metadata = FileMetadata {
+        //     block_type: 1,
+        //     length: content.len() as u16,
+        //     hash: hash.clone(),
+        //     name: name_array,
+        //     _reserved: [0u8; 12],
+        // };
+        // {
+        //     let mut writable_storage = self
+        //         .storage
+        //         .write()
+        //         .map_err(|_| StorageLockError::FailedToAquireWriteLock)?;
+        //     writable_storage.write(free_location, metadata.as_bytes())?;
+        //     writable_storage.write(free_location + size_of::<BlockMetadata>(), content)?;
+        // }
+        // let file_data = FileInformation::new(self.storage.clone(), free_location)?;
 
-        // Verify file
-        if file_data.length != content.len() {
-            return Err(WriteFileError::ReadFileDoesNotMatch);
-        }
-        if file_data.name != name {
-            return Err(WriteFileError::ReadFileDoesNotMatch);
-        }
+        // // Verify file
+        // if file_data.length != content.len() {
+        //     return Err(WriteFileError::ReadFileDoesNotMatch);
+        // }
+        // if file_data.name != name {
+        //     return Err(WriteFileError::ReadFileDoesNotMatch);
+        // }
 
-        self.files.push(file_data);
+        // self.files.push(file_data);
         return Ok(());
     }
 
@@ -282,11 +291,10 @@ impl<T: Storage + 'static> Filesystem<T> {
             return Err(DeleteFileError::FileNotFound);
         };
         let file = &mut self.files[index];
-        if let Some(content) = &file.content {
-            FileContent::mark_for_deletion(content);
+        if !file.marked_for_deletion() {
+            file.mark_for_deletion().unwrap();
         }
-        file.content = None;
-        if file.no_strong_references_left() {
+        if file.deleted() {
             self.files.swap_remove(index);
         }
         return Ok(());
@@ -296,7 +304,7 @@ impl<T: Storage + 'static> Filesystem<T> {
     fn cleanup_files(&mut self) {
         let mut remove_indices: Vec<usize> = Vec::new();
         for index in 0..self.files.len() {
-            if self.files[index].no_strong_references_left() {
+            if self.files[index].deleted() {
                 remove_indices.push(index);
             }
         }
@@ -380,7 +388,7 @@ mod tests {
     fn file_cant_be_upgraded_if_it_has_been_deleted_and_there_are_only_weak_references() {
         let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
         let mut filesystem = Filesystem::new(storage);
-        let content = vec![0; SimulatedStorage::SIZE - size_of::<BlockMetadata>()];
+        let content = vec![0; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem
             .write_file("fancy", &content, &[0u8; 32])
             .unwrap();
@@ -399,7 +407,7 @@ mod tests {
     fn no_new_references_can_be_created_to_a_file_marked_for_deletion() {
         let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
         let mut filesystem = Filesystem::new(storage);
-        let content = vec![0; SimulatedStorage::SIZE - size_of::<BlockMetadata>()];
+        let content = vec![0; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem
             .write_file("fancy", &content, &[0u8; 32])
             .unwrap();
@@ -419,7 +427,7 @@ mod tests {
     fn writing_a_maximum_size_file_works() {
         let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
         let mut filesystem = Filesystem::new(storage);
-        let file = [0u8; SimulatedStorage::SIZE - size_of::<BlockMetadata>()];
+        let file = [0u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         let result = filesystem.read_file("fancy").unwrap();
         assert_eq!(result.content.upgrade().unwrap().as_ref(), file);
@@ -429,7 +437,7 @@ mod tests {
     fn deleting_a_file_makes_space_for_a_new_file() {
         let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
         let mut filesystem = Filesystem::new(storage);
-        let file = [0u8; SimulatedStorage::SIZE - size_of::<BlockMetadata>()];
+        let file = [0u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         filesystem.delete_file("fancy").unwrap();
         filesystem.write_file("fancy2", &file, &[0u8; 32]).unwrap();
@@ -442,7 +450,7 @@ mod tests {
     ) {
         let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
         let mut filesystem = Filesystem::new(storage);
-        let file = [0u8; SimulatedStorage::SIZE - size_of::<BlockMetadata>()];
+        let file = [0u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         let fancy_file = filesystem.read_file("fancy").unwrap();
         let strong_ref = fancy_file.content.upgrade().unwrap();
@@ -460,7 +468,7 @@ mod tests {
     fn writing_a_file_thats_too_big_fails() {
         let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
         let mut filesystem = Filesystem::new(storage);
-        let file = [0u8; SimulatedStorage::SIZE + 1];
+        let file = [0u8; SimulatedStorage::SIZE as usize + 1];
         let Err(_) = filesystem.write_file("fancy", &file, &[0u8; 32]) else {
             panic!("Should fail when there is not enough space");
         };

@@ -13,7 +13,7 @@ struct FileContentInfo {
     /// If this is set no new strong references to the file content can be created.
     marked_for_deletion: bool,
     /// Destructor that will be called when the last strong reference is dropped
-    destructor: Box<dyn FnOnce(bool) -> ()>,
+    destructor: Box<dyn FnOnce() -> ()>,
 }
 
 impl fmt::Debug for FileContentInfo {
@@ -38,7 +38,7 @@ impl FileContent<true> {
     ///
     ///
     // TODO: Make this function unsafe or the argument a &'static [u8]
-    pub fn new(data: &[u8], destructor: impl FnOnce(bool) -> () + 'static) -> Self {
+    pub fn new(data: &[u8], destructor: impl FnOnce() -> () + 'static) -> Self {
         return Self {
             content: unsafe { std::mem::transmute::<&[u8], &'static [u8]>(data) },
             ref_count: Rc::new(RefCell::new(FileContentInfo {
@@ -50,27 +50,27 @@ impl FileContent<true> {
         };
     }
 
-    pub fn new_to_storage<'a, T: Storage>(
-        storage: &'a mut T,
-        address: usize,
-        data: &[u8],
-        destructor: impl FnOnce(bool) -> () + 'static,
-    ) -> Result<Self, WriteFileError> {
-        let memory_mapped_content = storage.write_checked(address, data)?;
+    // pub fn new_to_storage<'a, T: Storage>(
+    //     storage: &'a mut T,
+    //     address: usize,
+    //     data: &[u8],
+    //     destructor: impl FnOnce(bool) -> () + 'static,
+    // ) -> Result<Self, WriteFileError> {
+    //     let memory_mapped_content = storage.write_checked(address, data)?;
 
-        return Ok(Self::new(memory_mapped_content, destructor));
-    }
+    //     return Ok(Self::new(memory_mapped_content, destructor));
+    // }
 
-    pub fn from_storage<'a, T: Storage>(
-        storage: &'a mut T,
-        address: usize,
-        length: usize,
-        destructor: impl FnOnce(bool) -> () + 'static,
-    ) -> Result<Self, StorageError> {
-        let memory_mapped_content = storage.read(address, length)?;
+    // pub fn from_storage<T: Storage>(
+    //     storage: &T,
+    //     address: usize,
+    //     length: usize,
+    //     destructor: impl FnOnce(bool) -> () + 'static,
+    // ) -> Result<Self, StorageError> {
+    //     let memory_mapped_content = storage.read(address, length)?;
 
-        return Ok(Self::new(memory_mapped_content, destructor));
-    }
+    //     return Ok(Self::new(memory_mapped_content, destructor));
+    // }
 }
 
 impl<const STRONG: bool> FileContent<STRONG> {
@@ -197,11 +197,12 @@ impl<const STRONG: bool> Drop for FileContent<STRONG> {
 
         let mut metadata = self.ref_count.deref().borrow_mut();
         metadata.strong_count = metadata.strong_count.saturating_sub(1);
-        let previous_destructor: &mut Box<dyn FnOnce(bool) -> ()> = &mut metadata.destructor;
-        let empty_destructor: Box<dyn FnOnce(bool) -> ()> = Box::new(|_| ());
-        let destructor = std::mem::replace(previous_destructor, empty_destructor);
+
         if metadata.strong_count == 0 {
-            (destructor)(metadata.marked_for_deletion);
+            let previous_destructor: &mut Box<dyn FnOnce() -> ()> = &mut metadata.destructor;
+            let empty_destructor: Box<dyn FnOnce() -> ()> = Box::new(|| ());
+            let destructor = std::mem::replace(previous_destructor, empty_destructor);
+            (destructor)();
         }
     }
 }
@@ -213,7 +214,7 @@ mod tests {
     #[test]
     fn creating_and_dropping_a_file_works() {
         let backing_array = [0u8; 100];
-        let content = FileContent::new(&backing_array, |_| ());
+        let content = FileContent::new(&backing_array, || ());
         drop(content);
     }
 
@@ -222,9 +223,9 @@ mod tests {
         let backing_array1 = [0u8; 100];
         let backing_array2 = [0u8; 100];
         let backing_array3 = [1u8; 100];
-        let content1 = FileContent::new(&backing_array1, |_| ());
-        let content2 = FileContent::new(&backing_array2, |_| ());
-        let content3 = FileContent::new(&backing_array3, |_| ());
+        let content1 = FileContent::new(&backing_array1, || ());
+        let content2 = FileContent::new(&backing_array2, || ());
+        let content3 = FileContent::new(&backing_array3, || ());
         assert_eq!(content1, content2);
         assert_ne!(content2, content3);
     }
@@ -232,7 +233,7 @@ mod tests {
     #[test]
     fn cloning_works() {
         let backing_array = [0u8; 100];
-        let content = FileContent::new(&backing_array, |_| ());
+        let content = FileContent::new(&backing_array, || ());
         let cloned_content = content.clone();
         assert_eq!(content, cloned_content);
     }
@@ -240,7 +241,7 @@ mod tests {
     #[test]
     fn is_last_works() {
         let backing_array = [0u8; 100];
-        let content = FileContent::new(&backing_array, |_| ());
+        let content = FileContent::new(&backing_array, || ());
         assert!(FileContent::is_last(&content));
         let other_content = content.clone();
         assert!(!FileContent::is_last(&content));
@@ -252,7 +253,7 @@ mod tests {
     #[test]
     fn downgrading_works() {
         let backing_array = [0u8; 100];
-        let content = FileContent::new(&backing_array, |_| ());
+        let content = FileContent::new(&backing_array, || ());
         assert!(FileContent::is_last(&content));
         let weak_content = content.downgrade();
         assert!(FileContent::is_last(&content));
@@ -263,7 +264,7 @@ mod tests {
     #[test]
     fn upgrading_works() {
         let backing_array = [0u8; 100];
-        let content = FileContent::new(&backing_array, |_| ());
+        let content = FileContent::new(&backing_array, || ());
         assert!(FileContent::is_last(&content));
         let weak_content = content.downgrade();
         assert!(FileContent::is_last(&content));
@@ -277,7 +278,7 @@ mod tests {
     #[test]
     fn upgrading_fails_when_there_are_no_strong_references() {
         let backing_array = [0u8; 100];
-        let content = FileContent::new(&backing_array, |_| ());
+        let content = FileContent::new(&backing_array, || ());
         assert!(FileContent::is_last(&content));
         let weak_content = content.downgrade();
         assert!(FileContent::is_last(&content));
@@ -290,7 +291,7 @@ mod tests {
     #[test]
     fn upgrading_fails_when_marked_for_deletion() {
         let backing_array = [0u8; 100];
-        let content = FileContent::new(&backing_array, |_| ());
+        let content = FileContent::new(&backing_array, || ());
         let weak_content = content.downgrade();
         FileContent::mark_for_deletion(&content);
         let None = content.upgrade() else {

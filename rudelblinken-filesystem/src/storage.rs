@@ -34,24 +34,24 @@ pub enum EraseStorageError {
 /// Implementing write_readback is optional, but can be done for better performance in some places.
 pub trait Storage {
     /// Size of the smallest erasable block
-    const BLOCK_SIZE: usize;
+    const BLOCK_SIZE: u32;
     /// Total number of blocks
-    const BLOCKS: usize;
+    const BLOCKS: u32;
 
     /// Read at a specific location.
     ///
     /// address must be inside the storage size. length must be lower or equal to the storage size. If address + length go over the bounds of the storage the storage needs to wrap around there. You should use an MMU for this
-    fn read(&self, address: usize, length: usize) -> Result<&[u8], StorageError>;
+    fn read(&self, address: u32, length: u32) -> Result<&'static [u8], StorageError>;
     /// Write at a specific location
     ///
     /// address must be inside the storage size. length must be lower or equal to the storage size.
     ///
     /// This operation can only set 0 bits to 1 but not back. If you want to reset bits to 0 use the erase function.
-    fn write(&mut self, address: usize, data: &[u8]) -> Result<(), StorageError>;
+    fn write(&mut self, address: u32, data: &[u8]) -> Result<(), StorageError>;
     /// Reset a block of bits to 0
     ///
     /// address must be inside the storage size. length must be lower or equal to the storage size. address must be block aligned. length must be a multiple of block size
-    fn erase(&mut self, address: usize, length: usize) -> Result<(), EraseStorageError>;
+    fn erase(&mut self, address: u32, length: u32) -> Result<(), EraseStorageError>;
 
     /// Filesystem metadata is not stored in the main storage block
     ///
@@ -63,13 +63,13 @@ pub trait Storage {
     fn write_metadata(&mut self, key: &str, value: &[u8]) -> std::io::Result<()>;
 
     /// Write metadata and return a memorymapped slice to the metadata
-    fn write_readback(&mut self, address: usize, data: &[u8]) -> Result<&[u8], StorageError> {
+    fn write_readback(&mut self, address: u32, data: &[u8]) -> Result<&'static [u8], StorageError> {
         self.write(address, data)?;
-        let data = self.read(address, data.len())?;
+        let data = self.read(address, data.len() as u32)?;
         return Ok(data);
     }
     /// Write metadata and verify afterwards that the read data matches the written data.
-    fn write_checked(&mut self, address: usize, data: &[u8]) -> Result<&[u8], StorageError> {
+    fn write_checked(&mut self, address: u32, data: &[u8]) -> Result<&'static [u8], StorageError> {
         let read_data = self.write_readback(address, data)?;
         if data != read_data {
             return Err(StorageError::ReadDataDoesNotMatchWrittenData);
@@ -83,17 +83,17 @@ use std::collections::HashMap;
 
 #[cfg(test)]
 pub struct SimulatedStorage {
-    pool: Box<[u8; Self::SIZE * 2]>,
+    pool: Box<[u8; Self::SIZE as usize * 2]>,
     key_value: HashMap<String, Vec<u8>>,
 }
 
 #[cfg(test)]
 impl SimulatedStorage {
-    pub const SIZE: usize = Self::BLOCKS * Self::BLOCK_SIZE;
+    pub const SIZE: u32 = Self::BLOCKS * Self::BLOCK_SIZE;
 
     pub fn new() -> Result<SimulatedStorage, CreateStorageError> {
         return Ok(SimulatedStorage {
-            pool: Box::new([0u8; Self::SIZE * 2]),
+            pool: Box::new([0u8; Self::SIZE as usize * 2]),
             key_value: Default::default(),
         });
     }
@@ -101,43 +101,49 @@ impl SimulatedStorage {
 
 #[cfg(test)]
 impl Storage for SimulatedStorage {
-    const BLOCKS: usize = 16;
-    const BLOCK_SIZE: usize = 4096;
+    const BLOCKS: u32 = 16;
+    const BLOCK_SIZE: u32 = 4096;
 
-    fn read(&self, address: usize, length: usize) -> Result<&[u8], StorageError> {
+    fn read(&self, address: u32, length: u32) -> Result<&'static [u8], StorageError> {
         if address >= Self::SIZE {
             return Err(StorageError::AddressTooBig);
         }
         if length >= Self::SIZE {
             return Err(StorageError::SizeTooBig);
         }
+        let static_slice = unsafe {
+            std::mem::transmute::<&[u8], &'static [u8]>(
+                &self.pool[address as usize..(address + length) as usize],
+            )
+        };
 
-        return Ok(&self.pool[address..address + length]);
+        return Ok(static_slice);
     }
 
-    fn write(&mut self, address: usize, data: &[u8]) -> Result<(), StorageError> {
+    fn write(&mut self, address: u32, data: &[u8]) -> Result<(), StorageError> {
         if address >= Self::SIZE {
             return Err(StorageError::AddressTooBig);
         }
-        if data.len() >= Self::SIZE {
+        if data.len() as u32 >= Self::SIZE {
             return Err(StorageError::SizeTooBig);
         }
 
-        self.pool[address..address + data.len()].copy_from_slice(data);
+        self.pool[address as usize..address as usize + data.len()].copy_from_slice(data);
         // The part of the data that is overlapping
-        let overlapping_length = (address + data.len()).saturating_sub(Self::SIZE);
-        let nonoverlapping_length = data.len() - overlapping_length;
+        let overlapping_length = (address + data.len() as u32).saturating_sub(Self::SIZE);
+        let nonoverlapping_length = data.len() as u32 - overlapping_length;
 
-        self.pool[Self::SIZE + address..(Self::SIZE + address) + nonoverlapping_length]
-            .copy_from_slice(&data[0..nonoverlapping_length]);
+        self.pool[(Self::SIZE + address) as usize
+            ..((Self::SIZE + address) + nonoverlapping_length) as usize]
+            .copy_from_slice(&data[0..nonoverlapping_length as usize]);
         if overlapping_length > 0 {
-            self.pool[0..overlapping_length]
-                .copy_from_slice(&data[data.len() - (overlapping_length)..data.len()]);
+            self.pool[0..overlapping_length as usize]
+                .copy_from_slice(&data[data.len() - (overlapping_length as usize)..data.len()]);
         }
         Ok(())
     }
 
-    fn erase(&mut self, address: usize, length: usize) -> Result<(), EraseStorageError> {
+    fn erase(&mut self, address: u32, length: u32) -> Result<(), EraseStorageError> {
         if address % Self::BLOCK_SIZE != 0 || length % Self::BLOCK_SIZE != 0 {
             return Err(EraseStorageError::SizeNotAMultipleOfPageSize);
         }
@@ -148,8 +154,8 @@ impl Storage for SimulatedStorage {
         let number_of_blocks = length.div_ceil(Self::BLOCK_SIZE);
         for block in 0..number_of_blocks {
             let base_address = address + block * Self::BLOCK_SIZE;
-            self.pool[base_address..(base_address + Self::BLOCK_SIZE)]
-                .copy_from_slice(&[0u8; Self::BLOCK_SIZE]);
+            self.pool[base_address as usize..(base_address + Self::BLOCK_SIZE) as usize]
+                .copy_from_slice(&[0u8; Self::BLOCK_SIZE as usize]);
         }
         return Ok(());
     }
