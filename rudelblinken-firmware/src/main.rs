@@ -12,7 +12,7 @@ use esp_idf_hal::{
     task,
     units::FromValueType,
 };
-use esp_idf_sys as _;
+use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
 use rudelblinken_sdk::common::BLEAdvNotification;
 
@@ -95,6 +95,35 @@ fn setup_ble_server() -> &'static mut BLEServer {
     server
 }
 
+/// You need to set the following options in sdkconfig to use this function
+///
+/// CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+/// CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
+pub fn print_memory_info() {
+    unsafe {
+        // let mut stats_buffer = [0u8; 1024];
+        // vTaskList(stats_buffer.as_mut_ptr() as *mut i8);
+        // let slice = String::from_utf8_lossy(&stats_buffer);
+        // println!("Tasks:\n{}", slice);
+
+        println!("");
+        heap_caps_print_heap_info(MALLOC_CAP_DEFAULT);
+
+        println!("");
+        println!(
+            "Free {} of {} ({}%)",
+            esp_idf_sys::heap_caps_get_free_size(esp_idf_sys::MALLOC_CAP_DEFAULT),
+            esp_idf_sys::heap_caps_get_total_size(esp_idf_sys::MALLOC_CAP_DEFAULT),
+            esp_idf_sys::heap_caps_get_free_size(esp_idf_sys::MALLOC_CAP_DEFAULT) as f32
+                / esp_idf_sys::heap_caps_get_total_size(esp_idf_sys::MALLOC_CAP_DEFAULT) as f32,
+        );
+        println!(
+            "Largest free block: {}",
+            esp_idf_sys::heap_caps_get_largest_free_block(esp_idf_sys::MALLOC_CAP_DEFAULT),
+        );
+    }
+}
+
 fn main() {
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
@@ -105,6 +134,8 @@ fn main() {
     fix_mac_address();
 
     setup_ble_server();
+
+    print_memory_info();
 
     /* let peripherals = Peripherals::take().unwrap();
     let timer_driver = LedcTimerDriver::new(
