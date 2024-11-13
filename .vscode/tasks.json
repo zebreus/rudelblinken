@@ -1,0 +1,40 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Flash firmware",
+            "type": "shell",
+            "command": "cargo run",
+            "group": "none",
+            "runOptions": {
+                "instanceLimit": 1
+            },
+            "isBackground": true,
+            "options": {
+                "cwd": "${workspaceFolder}/rudelblinken-firmware",
+            },
+            "problemMatcher": {
+                "owner": "custom",
+                "pattern": [
+                    {
+                        "regexp": ".",
+                        "file": 1,
+                        "location": 2,
+                        "message": 3
+                    }
+                ],
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "meow I am only active on start",
+                    "endsPattern": "Flashing has completed"
+                },
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+            }
+        }
+    ]
+}
