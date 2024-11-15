@@ -137,7 +137,7 @@ async fn main() -> bluer::Result<()> {
                     let duration = now.elapsed();
                     println!(
                         "Sending {}k took {} millis",
-                        data.len() / 1024,
+                        data.len() as f32 / 1024.0,
                         duration.as_millis()
                     );
                     println!(

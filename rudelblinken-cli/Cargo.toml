@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-recursion = "1.1.1"
+blake3 = "1.5.4"
 bluer = { version = "0.17.3", features = ["full"] }
 clap = { version = "4.5.20", features = ["derive"] }
 crc = "3.2.1"

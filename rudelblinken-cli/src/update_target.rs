@@ -5,7 +5,6 @@ use bluer::{
     gatt::remote::{Characteristic, CharacteristicWriteRequest, Service},
     Device, UuidExt,
 };
-use sha3::{Digest, Sha3_256};
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 
@@ -191,11 +190,11 @@ impl UpdateTarget {
 
     #[async_recursion]
     pub async fn upload_file(&self, data: &[u8]) -> Result<[u8; 32], UpdateTargetError> {
-        let mut hasher = Sha3_256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(&data);
         // TODO: I am sure there is a better way to convert this into an array but I didnt find it after 10 minutes.
         let mut hash: [u8; 32] = [0; 32];
-        hash.copy_from_slice(hasher.finalize().as_slice());
+        hash.copy_from_slice(hasher.finalize().as_bytes());
 
         // -2 for the length
         // -28 was found to be good by empirical methods
@@ -244,10 +243,10 @@ impl UpdateTarget {
         write_io.flush().await?;
         write_io.shutdown().await?;
 
-        // Force flushing by doing a reliable write
+        // Force flushing by doing a reliable write to any property
         self.length_characteristic
             .write_ext(
-                &[0],
+                &[0, 0, 0, 0],
                 &CharacteristicWriteRequest {
                     offset: 0,
                     op_type: bluer::gatt::WriteOp::Reliable,
