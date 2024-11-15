@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
-    BLEServer, NimbleProperties,
+    BLEServer, DescriptorProperties, NimbleProperties,
 };
 use esp_idf_sys as _;
 use thiserror::Error;
@@ -410,6 +410,91 @@ impl FileUploadService {
             FILE_UPLOAD_SERVICE_DATA_UUID,
             NimbleProperties::WRITE_NO_RSP,
         );
+        data_characteristic
+            .lock()
+            .create_2904_descriptor()
+            .format(esp32_nimble::BLE2904Format::OPAQUE)
+            .exponent(0)
+            .unit(esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS as u16)
+            .namespace(0x01)
+            .description(0x00);
+        data_characteristic
+            .lock()
+            .create_descriptor(BleUuid::Uuid16(0x2901), DescriptorProperties::READ)
+            .lock()
+            .set_value("Chunk Upload".as_bytes());
+
+        let hash_characteristic = service.lock().create_characteristic(
+            FILE_UPLOAD_SERVICE_HASH_UUID,
+            NimbleProperties::READ | NimbleProperties::WRITE,
+        );
+        hash_characteristic
+            .lock()
+            .create_2904_descriptor()
+            .format(esp32_nimble::BLE2904Format::OPAQUE)
+            .exponent(0)
+            .unit(esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS as u16)
+            .namespace(0x01)
+            .description(0x00);
+        hash_characteristic
+            .lock()
+            .create_descriptor(BleUuid::Uuid16(0x2901), DescriptorProperties::READ)
+            .lock()
+            .set_value("File Hash".as_bytes());
+
+        let checksums_characteristic = service
+            .lock()
+            .create_characteristic(FILE_UPLOAD_SERVICE_CHECKSUMS_UUID, NimbleProperties::WRITE);
+        checksums_characteristic
+            .lock()
+            .create_2904_descriptor()
+            .format(esp32_nimble::BLE2904Format::OPAQUE)
+            .exponent(0)
+            .unit(esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS as u16)
+            .namespace(0x01)
+            .description(0x00);
+        checksums_characteristic
+            .lock()
+            .create_descriptor(BleUuid::Uuid16(0x2901), DescriptorProperties::READ)
+            .lock()
+            .set_value("Chunk Checksums".as_bytes());
+
+        let length_characteristic = service.lock().create_characteristic(
+            FILE_UPLOAD_SERVICE_LENGTH_UUID,
+            NimbleProperties::READ | NimbleProperties::WRITE,
+        );
+        length_characteristic
+            .lock()
+            .create_2904_descriptor()
+            .format(esp32_nimble::BLE2904Format::UINT32)
+            .exponent(0)
+            .unit(esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS as u16)
+            .namespace(0x01)
+            .description(0x00);
+        length_characteristic
+            .lock()
+            .create_descriptor(BleUuid::Uuid16(0x2901), DescriptorProperties::READ)
+            .lock()
+            .set_value("File Length".as_bytes());
+
+        let chunk_length_characteristic = service.lock().create_characteristic(
+            FILE_UPLOAD_SERVICE_CHUNK_LENGTH_UUID,
+            NimbleProperties::READ | NimbleProperties::WRITE,
+        );
+        chunk_length_characteristic
+            .lock()
+            .create_2904_descriptor()
+            .format(esp32_nimble::BLE2904Format::UINT16)
+            .exponent(0)
+            .unit(esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS as u16)
+            .namespace(0x01)
+            .description(0x00);
+        chunk_length_characteristic
+            .lock()
+            .create_descriptor(BleUuid::Uuid16(0x2901), DescriptorProperties::READ)
+            .lock()
+            .set_value("Chunk Length".as_bytes());
+
         let file_upload_service_clone = file_upload_service.clone();
         data_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
@@ -418,10 +503,6 @@ impl FileUploadService {
             }
         });
 
-        let hash_characteristic = service.lock().create_characteristic(
-            FILE_UPLOAD_SERVICE_HASH_UUID,
-            NimbleProperties::READ | NimbleProperties::WRITE,
-        );
         let file_upload_service_clone = file_upload_service.clone();
         hash_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
@@ -436,9 +517,6 @@ impl FileUploadService {
             value.set_value(&hash);
         });
 
-        let checksums_characteristic = service
-            .lock()
-            .create_characteristic(FILE_UPLOAD_SERVICE_CHECKSUMS_UUID, NimbleProperties::WRITE);
         let file_upload_service_clone = file_upload_service.clone();
         checksums_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
@@ -447,10 +525,6 @@ impl FileUploadService {
             }
         });
 
-        let length_characteristic = service.lock().create_characteristic(
-            FILE_UPLOAD_SERVICE_LENGTH_UUID,
-            NimbleProperties::READ | NimbleProperties::WRITE,
-        );
         let file_upload_service_clone = file_upload_service.clone();
         length_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
@@ -465,10 +539,6 @@ impl FileUploadService {
             value.set_value(&length);
         });
 
-        let chunk_length_characteristic = service.lock().create_characteristic(
-            FILE_UPLOAD_SERVICE_CHUNK_LENGTH_UUID,
-            NimbleProperties::READ | NimbleProperties::WRITE,
-        );
         let file_upload_service_clone = file_upload_service.clone();
         chunk_length_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
