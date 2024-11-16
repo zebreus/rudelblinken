@@ -1,4 +1,10 @@
-use std::{cell::RefCell, fmt, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    fmt,
+    ops::Deref,
+    rc::Rc,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use crate::{
     file::WriteFileError,
@@ -13,7 +19,7 @@ struct FileContentInfo {
     /// If this is set no new strong references to the file content can be created.
     marked_for_deletion: bool,
     /// Destructor that will be called when the last strong reference is dropped
-    destructor: Box<dyn FnOnce() -> ()>,
+    destructor: Box<dyn FnOnce() -> () + 'static + Send + Sync>,
 }
 
 impl fmt::Debug for FileContentInfo {
@@ -30,18 +36,21 @@ impl fmt::Debug for FileContentInfo {
 pub struct FileContent<const STRONG: bool = true> {
     content: &'static [u8],
     // TODO: Change this to an arcmutex
-    ref_count: Rc<RefCell<FileContentInfo>>,
+    ref_count: Arc<RwLock<FileContentInfo>>,
 }
+
+// unsafe impl<const T: bool> Send for FileContent<T> {}
+// unsafe impl<const T: bool> Sync for FileContent<T> {}
 
 impl FileContent<true> {
     /// Create a new file content with the given memory area
     ///
     ///
     // TODO: Make this function unsafe or the argument a &'static [u8]
-    pub fn new(data: &[u8], destructor: impl FnOnce() -> () + 'static) -> Self {
+    pub fn new(data: &[u8], destructor: impl FnOnce() -> () + 'static + Send + Sync) -> Self {
         return Self {
             content: unsafe { std::mem::transmute::<&[u8], &'static [u8]>(data) },
-            ref_count: Rc::new(RefCell::new(FileContentInfo {
+            ref_count: Arc::new(RwLock::new(FileContentInfo {
                 strong_count: 1,
                 weak_count: 0,
                 marked_for_deletion: false,
@@ -76,7 +85,7 @@ impl FileContent<true> {
 impl<const STRONG: bool> FileContent<STRONG> {
     /// Creates a new weak pointer to this data
     pub fn downgrade(&self) -> FileContent<false> {
-        self.ref_count.borrow_mut().weak_count += 1;
+        self.ref_count.write().unwrap().weak_count += 1;
         return FileContent::<false> {
             content: self.content,
             ref_count: self.ref_count.clone(),
@@ -91,14 +100,15 @@ impl<const STRONG: bool> FileContent<STRONG> {
     ///
     /// Upgrading weak references will fail if there are no strong references left.
     pub fn upgrade(&self) -> Option<FileContent<true>> {
-        if self.ref_count.borrow().marked_for_deletion {
+        let mut info = self.ref_count.write().unwrap();
+        if info.marked_for_deletion {
             return None;
         }
-        if !STRONG && self.ref_count.borrow().strong_count == 0 {
+        if !STRONG && info.strong_count == 0 {
             return None;
         }
 
-        self.ref_count.borrow_mut().strong_count += 1;
+        info.strong_count += 1;
         return Some(FileContent::<true> {
             content: self.content,
             ref_count: self.ref_count.clone(),
@@ -110,14 +120,14 @@ impl FileContent {
     /// Check if the data will be dropped if this reference is dropped.
     pub fn is_last<const STRONG: bool>(this: &FileContent<STRONG>) -> bool {
         if STRONG {
-            return this.ref_count.borrow().strong_count == 1;
+            return this.ref_count.read().unwrap().strong_count == 1;
         } else {
             return false;
         }
     }
 
     pub fn strong_count<const STRONG: bool>(this: &FileContent<STRONG>) -> usize {
-        return this.ref_count.borrow().strong_count;
+        return this.ref_count.read().unwrap().strong_count;
     }
 
     // /// Creates a new weak pointer to this data
@@ -152,7 +162,7 @@ impl FileContent {
     ///
     /// No new strong references can be created to a file thats marked for deletion, except with clone on a strong reference.
     pub fn mark_for_deletion(this: &FileContent) {
-        this.ref_count.borrow_mut().marked_for_deletion = true;
+        this.ref_count.write().unwrap().marked_for_deletion = true;
     }
 }
 
@@ -176,10 +186,11 @@ impl PartialEq<Self> for FileContent<true> {
 
 impl<const STRONG: bool> Clone for FileContent<STRONG> {
     fn clone(&self) -> Self {
+        let mut info = self.ref_count.write().unwrap();
         if STRONG {
-            self.ref_count.borrow_mut().strong_count += 1;
+            info.strong_count += 1;
         } else {
-            self.ref_count.borrow_mut().weak_count += 1;
+            info.weak_count += 1;
         }
         Self {
             content: self.content,
@@ -190,17 +201,19 @@ impl<const STRONG: bool> Clone for FileContent<STRONG> {
 
 impl<const STRONG: bool> Drop for FileContent<STRONG> {
     fn drop(&mut self) {
+        let mut info = self.ref_count.write().unwrap();
+
         if !STRONG {
-            self.ref_count.borrow_mut().weak_count -= 1;
+            info.weak_count -= 1;
             return;
         }
 
-        let mut metadata = self.ref_count.deref().borrow_mut();
-        metadata.strong_count = metadata.strong_count.saturating_sub(1);
+        info.strong_count = info.strong_count.saturating_sub(1);
 
-        if metadata.strong_count == 0 {
-            let previous_destructor: &mut Box<dyn FnOnce() -> ()> = &mut metadata.destructor;
-            let empty_destructor: Box<dyn FnOnce() -> ()> = Box::new(|| ());
+        if info.strong_count == 0 {
+            let previous_destructor: &mut Box<dyn FnOnce() -> () + 'static + Send + Sync> =
+                &mut info.destructor;
+            let empty_destructor: Box<dyn FnOnce() -> () + 'static + Send + Sync> = Box::new(|| ());
             let destructor = std::mem::replace(previous_destructor, empty_destructor);
             (destructor)();
         }

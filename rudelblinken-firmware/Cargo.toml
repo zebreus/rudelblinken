@@ -48,6 +48,7 @@ itertools = "0.13.0"
 crc = "3.2.1"
 thiserror = "1.0.64"
 rudelblinken-sdk = { path = "../rudelblinken-sdk", features = ["host"] }
+rudelblinken-filesystem = { path = "../rudelblinken-filesystem" }
 blake3 = "1.5.4"
 
 [build-dependencies]

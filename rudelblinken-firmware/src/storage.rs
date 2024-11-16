@@ -1,10 +1,10 @@
 use std::{
     io::{Error, ErrorKind},
     os::raw::c_void,
+    sync::{Arc, LazyLock, Mutex, RwLock},
 };
 
-use enumflags2::BitFlags;
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
+use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsDefault};
 use esp_idf_sys::{
     esp_err_to_name, esp_partition_erase_range, esp_partition_find, esp_partition_get,
     esp_partition_mmap, esp_partition_mmap_memory_t,
@@ -14,32 +14,27 @@ use esp_idf_sys::{
     esp_partition_type_t_ESP_PARTITION_TYPE_ANY, esp_partition_type_t_ESP_PARTITION_TYPE_DATA,
     esp_partition_write_raw, ESP_OK,
 };
+use rudelblinken_filesystem::{
+    file::File,
+    storage::{EraseStorageError, Storage, StorageError},
+    Filesystem,
+};
 use thiserror::Error;
-use zerocopy::{FromBytes, FromZeros, Immutable, KnownLayout, TryFromBytes};
-
-/// Storage with wraparound
-pub trait Storage {
-    /// Size of the smallest erasable block
-    const BLOCK_SIZE: usize;
-    /// Total number of blocks
-    const BLOCKS: usize;
-
-    /// Read with wraparound
-    fn read<'a>(&'a self, address: usize, length: usize) -> std::io::Result<&'a [u8]>;
-    fn write(&mut self, address: usize, data: &[u8]) -> std::io::Result<()>;
-    fn erase(&mut self, address: usize, length: usize) -> std::io::Result<()>;
-}
 
 pub struct FlashStorage {
     size: usize,
 
     partition: *const esp_idf_sys::esp_partition_t,
+    nvs: EspNvs<NvsDefault>,
 
     storage_arena: *mut u8,
     storage_handle_a: u32,
     storage_handle_b: u32,
     storage_handle_c: u32,
 }
+
+unsafe impl Sync for FlashStorage {}
+unsafe impl Send for FlashStorage {}
 
 /// Log information about the available partitions
 pub fn print_partitions() {
@@ -70,130 +65,12 @@ pub enum CreateStorageError {
     NoPartitionFound,
     #[error("Failed to memorymap the secrets")]
     FailedToMmapSecrets,
-}
-
-#[derive(Error, Debug, Clone)]
-pub enum WriteStorageError {
-    #[error("Failed to write to flash. Maybe the pages are not erased.")]
-    FailedToWriteToFlash,
-}
-
-// bitflags! {
-
-//     pub struct BlockType: u16 {
-//         const WASM = 0b00000001;
-//         const B = 0b00000010;
-//         const C = 0b00000100;
-//     }
-// }
-
-// #[derive(KnownLayout, TryFromBytes)]
-#[enumflags2::bitflags]
-#[repr(u16)]
-#[derive(Copy, Clone, Debug, PartialEq, KnownLayout)]
-pub enum BlockType {
-    /// If this is a wasm binary
-    WASM,
-    /// This file has been deleted
-    DELETED,
-}
-
-#[derive(KnownLayout, FromBytes, Immutable)]
-#[repr(C)]
-struct BlockMetadata {
-    /// Type of this block
-    /// Access only via the supplied functions
-    block_type: u16,
-    /// Length in bits
-    length: u16,
-    /// SHA3-256 hash of the file
-    hash: [u8; 32],
-    /// Name of the file, null terminated or 16 chars
-    name: [u8; 16],
-    /// Reserved space to fill the metadata to 64 byte
-    _reserved: [u8; 12],
-}
-
-impl BlockMetadata {
-    fn is_empty(&self) -> bool {
-        return self.block_type == 0;
-    }
-    fn length(&self) -> u16 {
-        return self.length;
-    }
-    fn hash(&self) -> [u8; 32] {
-        return self.hash;
-    }
-    fn name(&self) -> &str {
-        let nul_range_end = self.name.iter().position(|&c| c == b'\0').unwrap_or(16);
-        return std::str::from_utf8(&self.name[0..nul_range_end]).unwrap_or_default();
-    }
-}
-
-struct FileInformation {
-    /// Block number
-    location_in_storage: usize,
-    /// Length in bytes
-    length: usize,
-    /// Name of the file, null terminated or 16 chars
-    name: String,
-    /// Block number
-    // TODO: The lifetime of this is definitely not static
-    content: &'static [u8],
-    /// metadata
-    metadata: &'static BlockMetadata,
-}
-
-#[derive(Error, Debug)]
-pub enum CreateFileInformationError {
-    #[error(transparent)]
-    ReadFileError(#[from] std::io::Error),
-    #[error("Failed to read block metadata")]
-    FailedToReadBlockMetadata(
-        #[from]
-        zerocopy::ConvertError<
-            zerocopy::AlignmentError<&'static [u8], BlockMetadata>,
-            zerocopy::SizeError<&'static [u8], BlockMetadata>,
-            std::convert::Infallible,
-        >,
-    ),
-    #[error("No metadata found because the block is empty")]
-    NoMetadata,
-}
-
-impl FileInformation {
-    /// Return information about a new file
-    ///
-    /// None means that there is definitely no file starting there.
-    /// If a file information is returned, there is no guarantee, that it is actually a real file.
-    pub fn new<T: Storage>(
-        storage: &T,
-        location_in_storage: usize,
-    ) -> Result<FileInformation, CreateFileInformationError> {
-        // TODO: This is unsafe AF
-        let maybe_metadata_slice = storage.read(location_in_storage, size_of::<BlockMetadata>())?;
-        let maybe_metadata_slice =
-            unsafe { std::mem::transmute::<&[u8], &'static [u8]>(maybe_metadata_slice) };
-        let metadata: &BlockMetadata = BlockMetadata::ref_from_bytes(maybe_metadata_slice)?;
-        if metadata.is_empty() {
-            return Err(CreateFileInformationError::NoMetadata);
-        }
-
-        let content = storage.read(
-            location_in_storage + size_of::<BlockMetadata>(),
-            metadata.length() as usize,
-        )?;
-        let content = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(content) };
-
-        let information = FileInformation {
-            location_in_storage: location_in_storage,
-            length: metadata.length() as usize,
-            name: metadata.name().into(),
-            metadata: metadata,
-            content: content,
-        };
-        return Ok(information);
-    }
+    #[error("Failed to find the default nvs partition")]
+    NoNvsPartitionFound,
+    #[error("Failed to open filesystem1 nvs namespace")]
+    FailedToOpenNvsNamespace,
+    #[error("The erase size of the underlying flash does not match the static block size")]
+    EraseSizeDoesNotMatchBlockSize,
 }
 
 impl FlashStorage {
@@ -218,6 +95,9 @@ impl FlashStorage {
                 return Err(CreateStorageError::NoPartitionFound);
             }
             partition = esp_partition_get(partition_iterator);
+            if (*partition).erase_size as u32 != Self::BLOCK_SIZE {
+                return Err(CreateStorageError::EraseSizeDoesNotMatchBlockSize);
+            }
         }
 
         // Memorymap the partition
@@ -272,8 +152,14 @@ impl FlashStorage {
             ::log::info!("Got out_ptr: {:0x?}", first_pointer);
             memory_mapped_flash = first_pointer as _;
 
+            let nvs_default_partition: EspNvsPartition<NvsDefault> =
+                EspDefaultNvsPartition::take().or(Err(CreateStorageError::NoNvsPartitionFound))?;
+            let nvs = EspNvs::new(nvs_default_partition, "filesystem1", true)
+                .or(Err(CreateStorageError::FailedToOpenNvsNamespace))?;
+
             return Ok(FlashStorage {
                 partition: partition,
+                nvs,
 
                 size: (*partition).size as usize,
                 storage_arena: memory_mapped_flash,
@@ -283,52 +169,27 @@ impl FlashStorage {
             });
         }
     }
-
-    // pub fn write(&mut self, value: &Vec<u8>) -> Result<(), WriteStorageError> {
-    //     let data = value.as_slice();
-    //     let data_ptr = data.as_ptr() as *const c_void;
-    //     ::log::info!(
-    //         "STORAGE: {:0x?}, INPUT: {:0x?}",
-    //         self.storage_arena,
-    //         data_ptr
-    //     );
-    //     unsafe {
-    //         // Works with erase
-    //         // esp_partition_erase_range(self.partition, 0, (*self.partition).erase_size as usize);
-
-    //         let error_code = esp_partition_write_raw(self.partition, 0, data_ptr, value.len());
-    //         if error_code != ESP_OK {
-    //             ::log::error!("Failed to write to flash with code {}", error_code);
-    //             let error: &std::ffi::CStr = std::ffi::CStr::from_ptr(esp_err_to_name(error_code));
-    //             ::log::error!("Description: {}", error.to_string_lossy());
-    //             return Err(WriteStorageError::FailedToWriteToFlash);
-    //         }
-    //     };
-    //     // unsafe {
-    //     //     std::ptr::copy_nonoverlapping(data_ptr, self.storage_arena, data.len());
-    //     // }
-    //     ::log::info!("Copied data");
-    //     return Ok(());
-    // }
-    // pub fn read(&mut self, length: usize) -> Vec<u8> {}
 }
 
 impl Storage for FlashStorage {
-    const BLOCKS: usize = 256;
-    const BLOCK_SIZE: usize = 4096;
+    const BLOCKS: u32 = 256;
+    const BLOCK_SIZE: u32 = 4096;
 
-    fn read(&self, address: usize, length: usize) -> std::io::Result<&[u8]> {
+    fn read(&self, address: u32, length: u32) -> Result<&'static [u8], StorageError> {
         // TODO: Make this actually safe
         let thing: &[u8];
         unsafe {
             ::log::info!("Reading data");
-            thing = std::slice::from_raw_parts(self.storage_arena.offset(address as isize), length);
+            thing = std::slice::from_raw_parts(
+                self.storage_arena.offset(address as isize),
+                length as usize,
+            );
             ::log::info!("Read data");
         }
         return Ok(thing);
     }
 
-    fn write(&mut self, address: usize, data: &[u8]) -> std::io::Result<()> {
+    fn write(&mut self, address: u32, data: &[u8]) -> Result<(), StorageError> {
         // TODO: Make this actually safe
         let data_ptr = data.as_ptr() as *const c_void;
         ::log::info!(
@@ -340,15 +201,13 @@ impl Storage for FlashStorage {
             // Works with erase
             // esp_partition_erase_range(self.partition, 0, (*self.partition).erase_size as usize);
 
-            let error_code = esp_partition_write_raw(self.partition, address, data_ptr, data.len());
+            let error_code =
+                esp_partition_write_raw(self.partition, address as usize, data_ptr, data.len());
             if error_code != ESP_OK {
                 ::log::error!("Failed to write to flash with code {}", error_code);
                 let error: &std::ffi::CStr = std::ffi::CStr::from_ptr(esp_err_to_name(error_code));
                 ::log::error!("Description: {}", error.to_string_lossy());
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    error.to_string_lossy(),
-                ));
+                return Err(StorageError::Other(error.to_string_lossy().into()));
             }
         };
         // unsafe {
@@ -358,78 +217,105 @@ impl Storage for FlashStorage {
         return Ok(());
     }
 
-    fn erase(&mut self, address: usize, length: usize) -> std::io::Result<()> {
+    fn erase(&mut self, address: u32, length: u32) -> Result<(), EraseStorageError> {
         if length == 0 {
             return Ok(());
         }
-        if address % Self::BLOCK_SIZE != 0 || length % Self::BLOCK_SIZE != 0 {
-            return Err(Error::other("Can only erase along block boundaries"));
+        if address % Self::BLOCK_SIZE != 0 {
+            return Err(EraseStorageError::CanOnlyEraseAlongBlockBoundaries);
+        }
+        if length % Self::BLOCK_SIZE != 0 {
+            return Err(EraseStorageError::CanOnlyEraseInBlockSizedChunks);
+        }
+        if (address) > Self::BLOCKS * Self::BLOCK_SIZE {
+            return Err(StorageError::AddressTooBig.into());
         }
         if (address + length) > Self::BLOCKS * Self::BLOCK_SIZE {
-            return Err(Error::other("Can not erase outside the storage boundaries"));
+            // TODO: Support erase with wraparound
+            return Err(StorageError::SizeTooBig.into());
         }
 
         unsafe {
-            if (*self.partition).erase_size as usize != Self::BLOCK_SIZE {
-                return Err(Error::other("Erase size does not match block size"));
-            }
             ::log::info!(
                 "Erasing {} blocks starting from {}",
                 length % Self::BLOCK_SIZE,
                 address % Self::BLOCK_SIZE
             );
-            esp_partition_erase_range(self.partition, address, length);
+            esp_partition_erase_range(self.partition, address as usize, length as usize);
         }
+        return Ok(());
+    }
+
+    fn read_metadata(&self, key: &str) -> std::io::Result<Box<[u8]>> {
+        let mut read_buffer = [0u8; 256];
+        let buffer = self
+            .nvs
+            .get_raw(key, &mut read_buffer)
+            .map_err(|_| std::io::Error::other("Failed to read value from nvs"))?
+            .ok_or(std::io::ErrorKind::NotFound)?;
+        let boxed_result: Box<[u8]> = buffer.iter().cloned().collect();
+        return Ok(boxed_result);
+    }
+
+    fn write_metadata(&mut self, key: &str, value: &[u8]) -> std::io::Result<()> {
+        self.nvs
+            .set_raw(key, value)
+            .map_err(|_| std::io::Error::other("Failed to write value to nvs"))?;
         return Ok(());
     }
 }
 
-fn get_first_block() -> u16 {
-    let nvs_default_partition = EspDefaultNvsPartition::take().unwrap();
-    let Ok(nvs) = EspNvs::new(nvs_default_partition, "filesystem_ns", false) else {
-        panic!("Something went wrong");
-    };
-    nvs.get_u16("first_block").unwrap_or(Some(0)).unwrap_or(0)
-}
+pub static filesystem_singleton: LazyLock<RwLock<Filesystem<FlashStorage>>> = LazyLock::new(|| {
+    RwLock::new(Filesystem::new(Arc::new(RwLock::new(
+        FlashStorage::new().unwrap(),
+    ))))
+});
 
-fn set_first_block(first_block: u16) {
-    let nvs_default_partition = EspDefaultNvsPartition::take().unwrap();
-    let Ok(nvs) = EspNvs::new(nvs_default_partition, "filesystem_ns", true) else {
-        panic!("Something went wrong");
-    };
-    nvs.set_u16("first_block", first_block).unwrap();
-}
+// fn get_first_block() -> u16 {
+//     let nvs_default_partition = EspDefaultNvsPartition::take().unwrap();
+//     let Ok(nvs) = EspNvs::new(nvs_default_partition, "filesystem_ns", false) else {
+//         panic!("Something went wrong");
+//     };
+//     nvs.get_u16("first_block").unwrap_or(Some(0)).unwrap_or(0)
+// }
 
-struct Filesystem<T: Storage> {
-    storage: T,
-    files: Vec<FileInformation>,
-}
+// fn set_first_block(first_block: u16) {
+//     let nvs_default_partition = EspDefaultNvsPartition::take().unwrap();
+//     let Ok(nvs) = EspNvs::new(nvs_default_partition, "filesystem_ns", true) else {
+//         panic!("Something went wrong");
+//     };
+//     nvs.set_u16("first_block", first_block).unwrap();
+// }
 
-impl<T: Storage> Filesystem<T> {
-    pub fn new(storage: T) -> Self {
-        let first_block = get_first_block() as usize;
+// struct Filesystem<T: Storage> {
+//     storage: T,
+//     files: Vec<File>,
+// }
 
-        let mut files = Vec::new();
-        let mut block_number = 0;
-        while block_number < T::BLOCKS {
-            let current_block_number = (block_number + first_block as usize) % T::BLOCKS;
-            let file_information =
-                FileInformation::new(&storage, current_block_number * T::BLOCK_SIZE);
-            let Ok(file_information) = file_information else {
-                block_number += 1;
-                continue;
-            };
-            block_number += ((file_information.length + 64) / T::BLOCK_SIZE) + 1;
-            files.push(file_information);
-        }
+// impl<T: Storage> Filesystem<T> {
+//     pub fn new(storage: T) -> Self {
+//         let first_block = get_first_block() as usize;
 
-        let filesystem = Self {
-            storage,
-            files: Vec::new(),
-        };
-        return filesystem;
-    }
-}
+//         let mut files = Vec::new();
+//         let mut block_number = 0;
+//         while block_number < T::BLOCKS {
+//             let current_block_number = (block_number + first_block as usize) % T::BLOCKS;
+//             let file_information = File::new(&storage, current_block_number * T::BLOCK_SIZE);
+//             let Ok(file_information) = file_information else {
+//                 block_number += 1;
+//                 continue;
+//             };
+//             block_number += ((file_information.length + 64) / T::BLOCK_SIZE) + 1;
+//             files.push(file_information);
+//         }
+
+//         let filesystem = Self {
+//             storage,
+//             files: Vec::new(),
+//         };
+//         return filesystem;
+//     }
+// }
 // fn init() {
 //     // example storage backend
 //     ram_storage!(tiny);

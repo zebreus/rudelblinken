@@ -3,6 +3,7 @@ use file::File;
 use file::FileHandle;
 use file_content::FileContent;
 use file_metadata::FileMetadata;
+use file_writer::FileWriter;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::ops::Bound::Included;
@@ -65,21 +66,21 @@ pub enum MetadataAccessError {
 }
 
 /// Filesystem implementation
-pub struct Filesystem<T: Storage + 'static> {
+pub struct Filesystem<T: Storage + 'static + Send + Sync> {
     storage: Arc<RwLock<T>>,
     files: Vec<File<T>>,
 }
 
-impl<T: Storage + 'static> Filesystem<T> {
+impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     fn get_first_block(&self) -> Result<u16, MetadataAccessError> {
-        let first_block_slice: [u8; 2] = self
+        let first_block_slice: Box<[u8; 2]> = self
             .storage
             .read()
             .map_err(|_| StorageLockError::FailedToAquireReadLock)?
             .read_metadata(&"first_block")?
             .try_into()
             .unwrap();
-        return Ok(u16::from_le_bytes(first_block_slice));
+        return Ok(u16::from_le_bytes(*first_block_slice));
     }
     fn set_first_block(&mut self, first_block: u16) -> Result<(), MetadataAccessError> {
         self.storage
@@ -226,6 +227,22 @@ impl<T: Storage + 'static> Filesystem<T> {
         content: &[u8],
         hash: &[u8; 32],
     ) -> Result<(), WriteFileError> {
+        let mut writer = self.get_file_writer(name, content.len() as u32, hash)?;
+
+        writer.write_all(content)?;
+        writer.commit();
+        return Ok(());
+    }
+
+    /// Get a writer that allows writing a file over time.
+    ///
+    /// The file can only be read after the content was finished
+    pub fn get_file_writer(
+        &mut self,
+        name: &str,
+        length: u32,
+        hash: &[u8; 32],
+    ) -> Result<FileWriter<T>, WriteFileError> {
         self.cleanup_files();
         // let mut name_array = [0u8; 16];
         // let name_bytes = name.as_bytes();
@@ -233,51 +250,12 @@ impl<T: Storage + 'static> Filesystem<T> {
         //     return Err(WriteFileError::FileNameTooLong);
         // }
         // name_array[0..name_bytes.len()].copy_from_slice(name_bytes);
-        let free_location =
-            self.find_free_space(content.len() as u32 + size_of::<FileMetadata>() as u32)?;
+        let free_location = self.find_free_space(length + size_of::<FileMetadata>() as u32)?;
 
-        let (file, mut writer) = File::to_storage(
-            self.storage.clone(),
-            free_location,
-            content.len() as u32,
-            name,
-        )?;
-        writer.write_all(content)?;
-        writer.commit();
+        let (file, writer) = File::to_storage(self.storage.clone(), free_location, length, name)?;
         self.files.push(file);
-        // let metadata = FileMetadata {
-        //     block_type: 1,
-        //     length: content.len() as u16,
-        //     hash: hash.clone(),
-        //     name: name_array,
-        //     _reserved: [0u8; 12],
-        // };
-        // {
-        //     let mut writable_storage = self
-        //         .storage
-        //         .write()
-        //         .map_err(|_| StorageLockError::FailedToAquireWriteLock)?;
-        //     writable_storage.write(free_location, metadata.as_bytes())?;
-        //     writable_storage.write(free_location + size_of::<BlockMetadata>(), content)?;
-        // }
-        // let file_data = FileInformation::new(self.storage.clone(), free_location)?;
-
-        // // Verify file
-        // if file_data.length != content.len() {
-        //     return Err(WriteFileError::ReadFileDoesNotMatch);
-        // }
-        // if file_data.name != name {
-        //     return Err(WriteFileError::ReadFileDoesNotMatch);
-        // }
-
-        // self.files.push(file_data);
-        return Ok(());
+        Ok(writer)
     }
-
-    /// Get a writer that allows writing a file over time.
-    ///
-    /// The file can only be read after the content was finished
-    pub fn get_file_writer(&mut self, name: &str, length: usize, hash: &[u8; 32]) -> () {}
     /// Delete a file
     ///
     /// The file will only be deleted once there are no strong references to its content left. Strong references can be obtained by calling upgrade on the content of a file

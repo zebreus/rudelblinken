@@ -45,6 +45,7 @@ pub enum WriteFileError {
     CreateMetadataError(#[from] CreateMetadataError),
 }
 
+#[derive(Debug, Clone)]
 pub struct FileHandle {
     // Content
     pub content: FileContent<false>,
@@ -101,7 +102,7 @@ where
     }
 }
 
-pub struct File<T: Storage + 'static> {
+pub struct File<T: Storage + 'static + Send + Sync> {
     /// Starting address of the file (in flash)
     pub address: u32,
     /// Length of the files content in bytes
@@ -115,7 +116,7 @@ pub struct File<T: Storage + 'static> {
     content: Arc<RwLock<FileState>>,
 }
 
-impl<T: Storage + 'static> Clone for File<T> {
+impl<T: Storage + 'static + Send + Sync> Clone for File<T> {
     fn clone(&self) -> Self {
         Self {
             address: self.address.clone(),
@@ -127,7 +128,7 @@ impl<T: Storage + 'static> Clone for File<T> {
     }
 }
 
-impl<T: Storage + 'static> std::fmt::Debug for File<T> {
+impl<T: Storage + 'static + Send + Sync> std::fmt::Debug for File<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("File")
             .field("address", &self.address)
@@ -138,7 +139,7 @@ impl<T: Storage + 'static> std::fmt::Debug for File<T> {
     }
 }
 
-impl<T: Storage + 'static> File<T> {
+impl<T: Storage + 'static + Send + Sync> File<T> {
     /// Read a file from storage.
     ///
     /// address is an address that can be used with storage

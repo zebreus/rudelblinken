@@ -286,7 +286,7 @@ const CAT_MANAGEMENT_SERVICE_NAME_UUID: BleUuid = BleUuid::from_uuid16(CAT_MANAG
 // ];
 
 fn get_device_name() -> String {
-    return "".into();
+    return "dirk".into();
     // let name;
     // unsafe {
     //     let mut mac = [0u8; 6];
@@ -302,7 +302,8 @@ fn get_device_name() -> String {
 pub struct CatManagementService {
     program_hash: Option<[u8; 32]>,
     name: String,
-    pub wasm_runner: mpsc::Sender<WasmHostMessage>,
+    // pub wasm_runner: mpsc::Sender<WasmHostMessage>,
+    file_upload_service: Arc<Mutex<FileUploadService>>,
 }
 
 pub enum WasmHostMessage {
@@ -423,37 +424,38 @@ impl CatManagementService {
     ) -> Arc<Mutex<CatManagementService>> {
         let name = get_device_name();
 
-        let wasm_send = {
-            let (send, recv) = mpsc::channel();
+        // let wasm_send = {
+        //     let (send, recv) = mpsc::channel();
 
-            let files = files.clone();
-            let name = name.clone();
+        //     let files = files.clone();
+        //     let name = name.clone();
 
-            std::thread::Builder::new()
-                .name("wasm-runner".to_owned())
-                .stack_size(0x2000)
-                .spawn(move || {
-                    let wasm_host = HostState {
-                        files,
-                        name,
-                        recv,
-                        start: Instant::now(),
-                        next_wasm: Some([0u8; 32]),
-                        // ble_device,
-                        // led_driver,
-                    };
+        //     std::thread::Builder::new()
+        //         .name("wasm-runner".to_owned())
+        //         .stack_size(0x2000)
+        //         .spawn(move || {
+        //             let wasm_host = HostState {
+        //                 files,
+        //                 name,
+        //                 recv,
+        //                 start: Instant::now(),
+        //                 next_wasm: Some([0u8; 32]),
+        //                 // ble_device,
+        //                 // led_driver,
+        //             };
 
-                    wasm_runner(wasm_host);
-                })
-                .expect("failed to spawn wasm runner thread");
+        //             wasm_runner(wasm_host);
+        //         })
+        //         .expect("failed to spawn wasm runner thread");
 
-            send
-        };
+        //     send
+        // };
 
         let cat_management_service = Arc::new(Mutex::new(CatManagementService {
             name,
             program_hash: None,
-            wasm_runner: wasm_send,
+            // wasm_runner: wasm_send,
+            file_upload_service: files,
         }));
 
         let service = ble_device
@@ -480,10 +482,10 @@ impl CatManagementService {
 
             service.program_hash = Some(hash);
 
-            service
-                .wasm_runner
-                .send(WasmHostMessage::StartModule(hash))
-                .expect("failed to send new wasm module to runner");
+            // service
+            //     .wasm_runner
+            //     .send(WasmHostMessage::StartModule(hash))
+            //     .expect("failed to send new wasm module to runner");
         });
 
         let name_characteristic = service.lock().create_characteristic(

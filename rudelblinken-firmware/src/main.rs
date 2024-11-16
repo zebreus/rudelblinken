@@ -18,6 +18,7 @@ use rudelblinken_sdk::common::BLEAdvNotification;
 
 mod cat_management_service;
 mod file_upload_service;
+pub mod storage;
 
 /// Changes the OUI of the base mac address to 24:ec:4b which is not assigned
 ///
@@ -207,6 +208,10 @@ fn main() {
             .unwrap();
     }
 
+    loop {
+        esp_idf_svc::hal::delay::FreeRtos::delay_ms(1000);
+    }
+
     let mut ble_scan = BLEScan::new();
     ble_scan.active_scan(false).interval(100).window(99);
 
@@ -215,14 +220,14 @@ fn main() {
             ble_scan
                 .start(ble_device, 1000, |dev, data| {
                     if let Some(md) = data.manufacture_data() {
-                        cat_management_service
-                            .lock()
-                            .wasm_runner
-                            .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
-                                mac: dev.addr().as_be_bytes(),
-                                data: md.payload.into(),
-                            }))
-                            .expect("failed to send ble adv callback");
+                        // cat_management_service
+                        //     .lock()
+                        //     .wasm_runner
+                        //     .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
+                        //         mac: dev.addr().as_be_bytes(),
+                        //         data: md.payload.into(),
+                        //     }))
+                        //     .expect("failed to send ble adv callback");
                     }
                     None::<()>
                 })

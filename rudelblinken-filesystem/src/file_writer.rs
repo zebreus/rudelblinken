@@ -15,7 +15,7 @@ use crate::storage::Storage;
 /// The file is considered invalid until you [commit] this filewriter. You cant edit it afterwards.
 ///
 /// If you drop the FileWriter without calling [commit], the file will be deleted.
-pub struct FileWriter<T: Storage + 'static> {
+pub struct FileWriter<T: Storage + 'static + Send + Sync> {
     storage: Arc<RwLock<T>>,
     start_position: u32,
     length: u32,
@@ -23,16 +23,27 @@ pub struct FileWriter<T: Storage + 'static> {
     /// Destructor that will be called when the last strong reference is dropped
     ///
     /// The first argument is whether the file was committed (true) or not (false)
-    destructor: Box<dyn FnOnce(bool) -> () + 'static>,
+    destructor: Box<dyn FnOnce(bool) -> () + 'static + Send + Sync>,
     committed: bool,
 }
 
-impl<T: Storage + 'static> FileWriter<T> {
+impl<T: Storage + 'static + Send + Sync> std::fmt::Debug for FileWriter<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileWriter")
+            .field("start_position", &self.start_position)
+            .field("length", &self.length)
+            .field("current_offset", &self.current_offset)
+            .field("committed", &self.committed)
+            .finish()
+    }
+}
+
+impl<T: Storage + 'static + Send + Sync> FileWriter<T> {
     pub fn new(
         storage: Arc<RwLock<T>>,
         address: u32,
         length: u32,
-        destructor: impl FnOnce(bool) -> () + 'static,
+        destructor: impl FnOnce(bool) -> () + 'static + Send + Sync,
     ) -> Self {
         return FileWriter::<T> {
             storage,
@@ -52,7 +63,7 @@ impl<T: Storage + 'static> FileWriter<T> {
     }
 }
 
-impl<T: Storage + 'static> Seek for FileWriter<T> {
+impl<T: Storage + 'static + Send + Sync> Seek for FileWriter<T> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         let new_offset = match pos {
             SeekFrom::Start(offset) => offset
@@ -84,7 +95,7 @@ impl<T: Storage + 'static> Seek for FileWriter<T> {
     }
 }
 
-impl<T: Storage + 'static> Write for FileWriter<T> {
+impl<T: Storage + 'static + Send + Sync> Write for FileWriter<T> {
     /// The same as [std::io::Write::write] but you can only flip bits from 0 to 1
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let remaining_length = self.length.saturating_sub(self.current_offset);
@@ -109,10 +120,12 @@ impl<T: Storage + 'static> Write for FileWriter<T> {
     }
 }
 
-impl<T: Storage + 'static> Drop for FileWriter<T> {
+impl<T: Storage + 'static + Send + Sync> Drop for FileWriter<T> {
     fn drop(&mut self) {
-        let previous_destructor: &mut Box<dyn FnOnce(bool) -> ()> = &mut self.destructor;
-        let empty_destructor: Box<dyn FnOnce(bool) -> ()> = Box::new(|_| ());
+        let previous_destructor: &mut Box<dyn FnOnce(bool) -> () + 'static + Send + Sync> =
+            &mut self.destructor;
+        let empty_destructor: Box<dyn FnOnce(bool) -> () + 'static + Send + Sync> =
+            Box::new(|_| ());
         let destructor = std::mem::replace(previous_destructor, empty_destructor);
         (destructor)(self.committed);
 

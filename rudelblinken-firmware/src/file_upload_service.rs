@@ -1,11 +1,17 @@
-use std::sync::Arc;
+use std::{
+    io::{Seek, Write},
+    sync::Arc,
+};
 
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
     BLEServer, DescriptorProperties, NimbleProperties,
 };
 use esp_idf_sys as _;
+use rudelblinken_filesystem::{file::FileHandle, file_writer::FileWriter, Filesystem};
 use thiserror::Error;
+
+use crate::storage::{filesystem_singleton, FlashStorage};
 
 const FILE_UPLOAD_SERVICE: u16 = 0x7892;
 const FILE_UPLOAD_SERVICE_DATA: u16 = 0x7893;
@@ -26,16 +32,19 @@ const FILE_UPLOAD_SERVICE_CHUNK_LENGTH_UUID: BleUuid =
 #[derive(Clone, Debug)]
 pub struct File {
     hash: [u8; 32],
-    pub content: Vec<u8>,
+    name: String,
+    pub content: FileHandle,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct IncompleteFile {
-    incomplete_file: File,
+    incomplete_file: FileWriter<FlashStorage>,
     checksums: Vec<u8>,
     received_chunks: Vec<bool>,
     chunk_length: u16,
     length: u32,
+    name: String,
+    hash: [u8; 32],
 }
 
 #[derive(Error, Debug, Clone)]
@@ -55,16 +64,22 @@ pub enum VerifyFileError {
 }
 
 impl IncompleteFile {
-    pub fn new(hash: [u8; 32], checksums: Vec<u8>, chunk_length: u16, length: u32) -> Self {
+    pub fn new(
+        hash: [u8; 32],
+        checksums: Vec<u8>,
+        chunk_length: u16,
+        length: u32,
+        writer: FileWriter<FlashStorage>,
+        name: String,
+    ) -> Self {
         Self {
-            incomplete_file: File {
-                hash,
-                content: vec![0; length as usize],
-            },
+            incomplete_file: writer,
             received_chunks: vec![false; checksums.len()],
             checksums,
             chunk_length,
             length,
+            name,
+            hash,
         }
     }
     pub fn receive_chunk(&mut self, data: &[u8], index: u16) -> Result<(), ReceiveChunkError> {
@@ -91,7 +106,10 @@ impl IncompleteFile {
         }
 
         let offset = (self.chunk_length * index) as usize;
-        self.incomplete_file.content[offset..(data.len() + offset)].copy_from_slice(data);
+        self.incomplete_file
+            .seek(std::io::SeekFrom::Start(offset as u64));
+        self.incomplete_file.write(data);
+        // self.incomplete_file.content[offset..(data.len() + offset)].copy_from_slice(data);
         self.received_chunks[index as usize] = true;
 
         Ok(())
@@ -109,29 +127,37 @@ impl IncompleteFile {
         self.received_chunks.iter().all(|received| *received)
     }
     /// Verify that the received file is complete and has the correct hash
-    pub fn verify_hash(&self) -> Result<(), VerifyFileError> {
+    pub fn verify_hash(
+        self,
+        filesystem: &Filesystem<FlashStorage>,
+    ) -> Result<FileHandle, VerifyFileError> {
         if !self.is_complete() {
             return Err(VerifyFileError::NotComplete);
         }
+        self.incomplete_file.commit();
+        let file = filesystem.read_file(&self.name).unwrap();
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&self.incomplete_file.content);
+        hasher.update(file.content.upgrade().unwrap().as_ref());
 
         // TODO: I am sure there is a better way to convert this into an array but I didnt find it after 10 minutes.
         let mut hash: [u8; 32] = [0; 32];
         hash.copy_from_slice(hasher.finalize().as_bytes());
 
-        if hash != self.incomplete_file.hash {
-            ::log::warn!(target: "file-upload", "Hashes dont match.\nExpected: {:?}\nGot     : {:?}", self.incomplete_file.hash, hash);
+        if hash != self.hash {
+            ::log::warn!(target: "file-upload", "Hashes dont match.\nExpected: {:?}\nGot     : {:?}", self.hash, hash);
             return Err(VerifyFileError::HashMismatch);
         }
         ::log::info!(target: "file-upload", "Hashes match");
 
-        Ok(())
+        Ok(file)
     }
     /// Get the uploaded file, if the upload is finished, otherwise this return None and you just destroyed your incomplete file for no reason
-    pub fn into_file(self) -> Result<File, VerifyFileError> {
-        self.verify_hash()?;
-        Ok(self.incomplete_file)
+    pub fn into_file(
+        self,
+        filesystem: &Filesystem<FlashStorage>,
+    ) -> Result<FileHandle, VerifyFileError> {
+        let file = self.verify_hash(filesystem)?;
+        Ok(file)
     }
 }
 
@@ -198,12 +224,16 @@ impl FileUploadService {
         if (length < min_length) || (length > max_length) {
             return Err(StartUploadError::LengthIncorrect);
         }
+        let mut filesystem = filesystem_singleton.write().unwrap();
+        let writer = filesystem.get_file_writer("toast", length, hash).unwrap();
 
         self.currently_receiving = Some(IncompleteFile::new(
             *hash,
             checksums.clone(),
             chunk_length,
             length,
+            writer,
+            "toast".into(),
         ));
 
         Ok(())
@@ -238,7 +268,11 @@ impl FileUploadService {
         args: &mut esp32_nimble::OnWriteArgs<'_>,
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
+        ::log::info!(target: "file-upload", "chunk length {}", received_data.len());
+
         if received_data.len() < 3 {
+            ::log::info!(target: "file-upload", "data length is too short {}", received_data.len());
+
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
 
@@ -254,12 +288,18 @@ impl FileUploadService {
         };
         current_upload.receive_chunk(data, index)?;
         if current_upload.is_complete() {
-            let file = self
+            let incomplete_file = self
                 .currently_receiving
                 .take()
-                .ok_or(FileUploadError::NoUploadActive)?
-                .into_file()?;
-            self.files.push(file);
+                .ok_or(FileUploadError::NoUploadActive)?;
+            let hash = incomplete_file.hash.clone();
+            let name = incomplete_file.name.clone();
+            let file = incomplete_file.into_file(&filesystem_singleton.read().unwrap())?;
+            self.files.push(File {
+                hash,
+                name: name,
+                content: file,
+            });
         }
         Ok(())
     }
@@ -273,6 +313,8 @@ impl FileUploadService {
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
         if received_data.len() != 32 {
+            ::log::info!(target: "file-upload", "hash length is too short {}", received_data.len());
+
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
 
@@ -316,7 +358,7 @@ impl FileUploadService {
             let Some(file) = self.get_file(hash) else {
                 return Err(FileUploadError::ChecksumFileDoesNotExist);
             };
-            let new_checksums: Vec<u8> = file.content.to_vec();
+            let new_checksums: Vec<u8> = file.content.content.upgrade().unwrap().to_vec();
             if self.latest_checksums.as_ref() == Some(&new_checksums) {
                 return Ok(());
             }
@@ -325,6 +367,8 @@ impl FileUploadService {
             self.currently_receiving = None;
             return Ok(());
         }
+
+        ::log::info!(target: "file-upload", "checksums write length is too short {}", received_data.len());
 
         Err(FileUploadError::ReceivedChunkWayTooShort)
     }
@@ -338,6 +382,8 @@ impl FileUploadService {
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
         if received_data.len() != 4 {
+            ::log::info!(target: "file-upload", "length is too short {}", received_data.len());
+
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
 
@@ -372,6 +418,8 @@ impl FileUploadService {
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
         if received_data.len() != 2 {
+            ::log::info!(target: "file-upload", "chunk length is too short {}", received_data.len());
+
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
 

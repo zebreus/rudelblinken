@@ -11,6 +11,8 @@ pub enum StorageError {
     /// Only returned by write_checked
     #[error("Size is not a multiple of the page size")]
     ReadDataDoesNotMatchWrittenData,
+    #[error("{0}")]
+    Other(String),
 }
 
 #[derive(Error, Debug, Clone)]
@@ -27,13 +29,17 @@ pub enum EraseStorageError {
     StorageError(#[from] StorageError),
     #[error("Size is not a multiple of the page size")]
     SizeNotAMultipleOfPageSize,
+    #[error("Can only erase along block boundaries")]
+    CanOnlyEraseAlongBlockBoundaries,
+    #[error("The size needs to be a multiple of the block size as we can only erase whole blocks")]
+    CanOnlyEraseInBlockSizedChunks,
 }
 
 /// Storage with wraparound
 ///
 /// Implementing write_readback is optional, but can be done for better performance in some places.
 pub trait Storage {
-    /// Size of the smallest erasable block
+    /// Size in which blocks can be erased
     const BLOCK_SIZE: u32;
     /// Total number of blocks
     const BLOCKS: u32;
@@ -58,7 +64,7 @@ pub trait Storage {
     /// Storage must provide these functions to store metadata.
 
     /// Read a metadata key from persistent storage
-    fn read_metadata(&self, key: &str) -> std::io::Result<&[u8]>;
+    fn read_metadata(&self, key: &str) -> std::io::Result<Box<[u8]>>;
     /// Write a metadata key from persistent storage
     fn write_metadata(&mut self, key: &str, value: &[u8]) -> std::io::Result<()>;
 
@@ -84,7 +90,7 @@ use std::collections::HashMap;
 #[cfg(test)]
 pub struct SimulatedStorage {
     pool: Box<[u8; Self::SIZE as usize * 2]>,
-    key_value: HashMap<String, Vec<u8>>,
+    key_value: HashMap<String, Box<[u8]>>,
 }
 
 #[cfg(test)]
@@ -160,11 +166,11 @@ impl Storage for SimulatedStorage {
         return Ok(());
     }
 
-    fn read_metadata(&self, key: &str) -> Result<&[u8], std::io::Error> {
+    fn read_metadata(&self, key: &str) -> Result<Box<[u8]>, std::io::Error> {
         return self
             .key_value
             .get(key)
-            .map(|m| m.as_ref())
+            .map(|m| m.clone())
             .ok_or(std::io::Error::other("Failed to get a key for that value"));
     }
 
