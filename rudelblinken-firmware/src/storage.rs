@@ -25,7 +25,7 @@ pub struct FlashStorage {
     size: usize,
 
     partition: *const esp_idf_sys::esp_partition_t,
-    nvs: EspNvs<NvsDefault>,
+    nvs: Mutex<EspNvs<NvsDefault>>,
 
     storage_arena: *mut u8,
     storage_handle_a: u32,
@@ -159,7 +159,7 @@ impl FlashStorage {
 
             return Ok(FlashStorage {
                 partition: partition,
-                nvs,
+                nvs: Mutex::new(nvs),
 
                 size: (*partition).size as usize,
                 storage_arena: memory_mapped_flash,
@@ -177,19 +177,26 @@ impl Storage for FlashStorage {
 
     fn read(&self, address: u32, length: u32) -> Result<&'static [u8], StorageError> {
         // TODO: Make this actually safe
+        if (address) > Self::BLOCKS * Self::BLOCK_SIZE {
+            return Err(StorageError::AddressTooBig.into());
+        }
+        if (address + length) > Self::BLOCKS * Self::BLOCK_SIZE * 2 {
+            // TODO: Support erase with wraparound
+            return Err(StorageError::SizeTooBig.into());
+        }
         let thing: &[u8];
         unsafe {
-            ::log::info!("Reading data");
+            // ::log::info!("Reading {} bytes at {}", length, address);
             thing = std::slice::from_raw_parts(
                 self.storage_arena.offset(address as isize),
                 length as usize,
             );
-            ::log::info!("Read data");
+            // ::log::info!("Read data");
         }
         return Ok(thing);
     }
 
-    fn write(&mut self, address: u32, data: &[u8]) -> Result<(), StorageError> {
+    fn write(&self, address: u32, data: &[u8]) -> Result<(), StorageError> {
         // TODO: Make this actually safe
         let data_ptr = data.as_ptr() as *const c_void;
         ::log::info!(
@@ -217,7 +224,7 @@ impl Storage for FlashStorage {
         return Ok(());
     }
 
-    fn erase(&mut self, address: u32, length: u32) -> Result<(), EraseStorageError> {
+    fn erase(&self, address: u32, length: u32) -> Result<(), EraseStorageError> {
         if length == 0 {
             return Ok(());
         }
@@ -241,7 +248,14 @@ impl Storage for FlashStorage {
                 length / Self::BLOCK_SIZE,
                 address / Self::BLOCK_SIZE
             );
-            esp_partition_erase_range(self.partition, address as usize, length as usize);
+            let error_code =
+                esp_partition_erase_range(self.partition, address as usize, length as usize);
+            if error_code != ESP_OK {
+                ::log::error!("Failed to erase flash with code {}", error_code);
+                let error: &std::ffi::CStr = std::ffi::CStr::from_ptr(esp_err_to_name(error_code));
+                ::log::info!("Description: {}", error.to_string_lossy());
+                return Err(StorageError::Other(error.to_string_lossy().into()).into());
+            }
         }
         return Ok(());
     }
@@ -250,6 +264,8 @@ impl Storage for FlashStorage {
         let mut read_buffer = [0u8; 256];
         let buffer = self
             .nvs
+            .lock()
+            .map_err(|_| std::io::Error::other("Failed to obtain lock to nvs"))?
             .get_raw(key, &mut read_buffer)
             .map_err(|_| std::io::Error::other("Failed to read value from nvs"))?
             .ok_or(std::io::ErrorKind::NotFound)?;
@@ -257,19 +273,49 @@ impl Storage for FlashStorage {
         return Ok(boxed_result);
     }
 
-    fn write_metadata(&mut self, key: &str, value: &[u8]) -> std::io::Result<()> {
+    fn write_metadata(&self, key: &str, value: &[u8]) -> std::io::Result<()> {
         self.nvs
+            .lock()
+            .map_err(|_| std::io::Error::other("Failed to obtain lock to nvs"))?
             .set_raw(key, value)
             .map_err(|_| std::io::Error::other("Failed to write value to nvs"))?;
         return Ok(());
     }
 }
 
-pub static filesystem_singleton: LazyLock<RwLock<Filesystem<FlashStorage>>> = LazyLock::new(|| {
-    RwLock::new(Filesystem::new(Arc::new(RwLock::new(
-        FlashStorage::new().unwrap(),
-    ))))
-});
+static mut STORAGE_SINGLETON: Option<FlashStorage> = None;
+static mut FILESYSTEM_SINGLETON: Option<RwLock<Filesystem<FlashStorage>>> = None;
+
+#[derive(Error, Debug, Clone)]
+pub enum SetupStorageError {
+    #[error("Storage is already initialized.")]
+    AlreadyInitialized,
+    #[error(transparent)]
+    CreateStorageError(#[from] CreateStorageError),
+}
+
+pub fn setup_storage() -> Result<(), SetupStorageError> {
+    unsafe {
+        if STORAGE_SINGLETON.is_some() || FILESYSTEM_SINGLETON.is_some() {
+            return Err(SetupStorageError::AlreadyInitialized);
+        }
+        STORAGE_SINGLETON = Some(FlashStorage::new()?);
+        FILESYSTEM_SINGLETON = Some(RwLock::new(Filesystem::new(
+            STORAGE_SINGLETON.as_ref().unwrap(),
+        )));
+        dbg!(&FILESYSTEM_SINGLETON.as_ref().unwrap().read().unwrap().files);
+    }
+    return Ok(());
+}
+
+pub fn get_filesystem() -> Result<&'static RwLock<Filesystem<FlashStorage>>, SetupStorageError> {
+    unsafe {
+        if FILESYSTEM_SINGLETON.is_none() {
+            setup_storage()?;
+        }
+        Ok(FILESYSTEM_SINGLETON.as_ref().unwrap())
+    }
+}
 
 // fn get_first_block() -> u16 {
 //     let nvs_default_partition = EspDefaultNvsPartition::take().unwrap();

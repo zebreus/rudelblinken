@@ -8,10 +8,13 @@ use esp32_nimble::{
     BLEServer, DescriptorProperties, NimbleProperties,
 };
 use esp_idf_sys as _;
-use rudelblinken_filesystem::{file::FileHandle, file_writer::FileWriter, Filesystem};
+use rudelblinken_filesystem::{
+    file_content::{FileContent, FileContentState},
+    Filesystem,
+};
 use thiserror::Error;
 
-use crate::storage::{filesystem_singleton, FlashStorage};
+use crate::storage::{get_filesystem, FlashStorage};
 
 const FILE_UPLOAD_SERVICE: u16 = 0x7892;
 const FILE_UPLOAD_SERVICE_DATA: u16 = 0x7893;
@@ -33,12 +36,12 @@ const FILE_UPLOAD_SERVICE_CHUNK_LENGTH_UUID: BleUuid =
 pub struct File {
     hash: [u8; 32],
     name: String,
-    pub content: FileHandle,
+    pub content: FileContent<FlashStorage, { FileContentState::Weak }>,
 }
 
 #[derive(Debug)]
 struct IncompleteFile {
-    incomplete_file: FileWriter<FlashStorage>,
+    incomplete_file: FileContent<FlashStorage, { FileContentState::Writer }>,
     checksums: Vec<u8>,
     received_chunks: Vec<bool>,
     chunk_length: u16,
@@ -69,7 +72,7 @@ impl IncompleteFile {
         checksums: Vec<u8>,
         chunk_length: u16,
         length: u32,
-        writer: FileWriter<FlashStorage>,
+        writer: FileContent<FlashStorage, { FileContentState::Writer }>,
         name: String,
     ) -> Self {
         Self {
@@ -107,8 +110,9 @@ impl IncompleteFile {
 
         let offset = (self.chunk_length * index) as usize;
         self.incomplete_file
-            .seek(std::io::SeekFrom::Start(offset as u64));
-        self.incomplete_file.write(data);
+            .seek(std::io::SeekFrom::Start(offset as u64))
+            .unwrap();
+        self.incomplete_file.write(data).unwrap();
         // self.incomplete_file.content[offset..(data.len() + offset)].copy_from_slice(data);
         self.received_chunks[index as usize] = true;
 
@@ -130,14 +134,14 @@ impl IncompleteFile {
     pub fn verify_hash(
         self,
         filesystem: &Filesystem<FlashStorage>,
-    ) -> Result<FileHandle, VerifyFileError> {
+    ) -> Result<FileContent<FlashStorage, { FileContentState::Weak }>, VerifyFileError> {
         if !self.is_complete() {
             return Err(VerifyFileError::NotComplete);
         }
-        self.incomplete_file.commit();
+        self.incomplete_file.commit().unwrap();
         let file = filesystem.read_file(&self.name).unwrap();
         let mut hasher = blake3::Hasher::new();
-        hasher.update(file.content.upgrade().unwrap().as_ref());
+        hasher.update(file.upgrade().unwrap().as_ref());
 
         // TODO: I am sure there is a better way to convert this into an array but I didnt find it after 10 minutes.
         let mut hash: [u8; 32] = [0; 32];
@@ -155,7 +159,7 @@ impl IncompleteFile {
     pub fn into_file(
         self,
         filesystem: &Filesystem<FlashStorage>,
-    ) -> Result<FileHandle, VerifyFileError> {
+    ) -> Result<FileContent<FlashStorage, { FileContentState::Weak }>, VerifyFileError> {
         let file = self.verify_hash(filesystem)?;
         Ok(file)
     }
@@ -224,7 +228,7 @@ impl FileUploadService {
         if (length < min_length) || (length > max_length) {
             return Err(StartUploadError::LengthIncorrect);
         }
-        let mut filesystem = filesystem_singleton.write().unwrap();
+        let mut filesystem = get_filesystem().unwrap().write().unwrap();
         let writer = filesystem.get_file_writer("toast", length, hash).unwrap();
 
         self.currently_receiving = Some(IncompleteFile::new(
@@ -294,7 +298,7 @@ impl FileUploadService {
                 .ok_or(FileUploadError::NoUploadActive)?;
             let hash = incomplete_file.hash.clone();
             let name = incomplete_file.name.clone();
-            let file = incomplete_file.into_file(&filesystem_singleton.read().unwrap())?;
+            let file = incomplete_file.into_file(&get_filesystem().unwrap().read().unwrap())?;
             self.files.push(File {
                 hash,
                 name: name,
@@ -358,7 +362,7 @@ impl FileUploadService {
             let Some(file) = self.get_file(hash) else {
                 return Err(FileUploadError::ChecksumFileDoesNotExist);
             };
-            let new_checksums: Vec<u8> = file.content.content.upgrade().unwrap().to_vec();
+            let new_checksums: Vec<u8> = file.content.upgrade().unwrap().to_vec();
             if self.latest_checksums.as_ref() == Some(&new_checksums) {
                 return Ok(());
             }

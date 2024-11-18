@@ -15,6 +15,7 @@ use esp_idf_hal::{
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
 use rudelblinken_sdk::common::BLEAdvNotification;
+use storage::setup_storage;
 
 mod cat_management_service;
 mod file_upload_service;
@@ -142,6 +143,8 @@ fn main() {
     fix_mac_address();
 
     setup_ble_server();
+
+    setup_storage();
 
     print_memory_info();
     // print_partitions();
