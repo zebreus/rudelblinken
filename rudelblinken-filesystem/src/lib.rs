@@ -1,7 +1,9 @@
+#![feature(adt_const_params)]
+
 use file::CreateFileInformationError;
 use file::File;
-use file::FileHandle;
 use file_content::FileContent;
+use file_content::FileContentState;
 use file_metadata::FileMetadata;
 use file_writer::FileWriter;
 use std::collections::BTreeMap;
@@ -67,7 +69,7 @@ pub enum MetadataAccessError {
 
 /// Filesystem implementation
 pub struct Filesystem<T: Storage + 'static + Send + Sync> {
-    storage: Arc<RwLock<T>>,
+    storage: &'static T,
     files: Vec<File<T>>,
 }
 
@@ -75,8 +77,6 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     fn get_first_block(&self) -> Result<u16, MetadataAccessError> {
         let first_block_slice: Box<[u8; 2]> = self
             .storage
-            .read()
-            .map_err(|_| StorageLockError::FailedToAquireReadLock)?
             .read_metadata(&"first_block")?
             .try_into()
             .unwrap();
@@ -84,13 +84,11 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     }
     fn set_first_block(&mut self, first_block: u16) -> Result<(), MetadataAccessError> {
         self.storage
-            .write()
-            .map_err(|_| StorageLockError::FailedToAquireWriteLock)?
             .write_metadata(&"first_block", &first_block.to_le_bytes())?;
         return Ok(());
     }
 
-    pub fn new(storage: Arc<RwLock<T>>) -> Self {
+    pub fn new(storage: &'static T) -> Self {
         let mut filesystem = Self {
             storage,
             files: Vec::new(),
@@ -105,10 +103,8 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
         while block_number < T::BLOCKS {
             let current_block_number = (block_number + first_block as u32) % T::BLOCKS;
-            let file_information = File::from_storage(
-                filesystem.storage.clone(),
-                current_block_number * T::BLOCK_SIZE,
-            );
+            let file_information =
+                File::from_storage(filesystem.storage, current_block_number * T::BLOCK_SIZE);
             let Ok(file_information) = file_information else {
                 block_number += 1;
                 continue;
@@ -121,16 +117,16 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     }
 
     /// Get a reference to the underlying storage
-    pub fn get_storage(self) -> Arc<RwLock<T>> {
-        return self.storage.clone();
+    pub fn get_storage(self) -> &'static T {
+        return self.storage;
     }
 
-    pub fn read_file(&self, name: &str) -> Option<FileHandle> {
+    pub fn read_file(&self, name: &str) -> Option<FileContent<T, { FileContentState::Weak }>> {
         let file = self
             .files
             .iter()
             .find(|file| file.name == name && file.valid())?;
-        return file.read();
+        return Some(file.read());
     }
 
     /// Find a free space in storage of at least the given length.
@@ -225,9 +221,9 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         &mut self,
         name: &str,
         content: &[u8],
-        hash: &[u8; 32],
+        _hash: &[u8; 32],
     ) -> Result<(), WriteFileError> {
-        let mut writer = self.get_file_writer(name, content.len() as u32, hash)?;
+        let mut writer = self.get_file_writer(name, content.len() as u32, _hash)?;
 
         writer.write_all(content)?;
         writer.commit();
@@ -241,8 +237,8 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         &mut self,
         name: &str,
         length: u32,
-        hash: &[u8; 32],
-    ) -> Result<FileWriter<T>, WriteFileError> {
+        _hash: &[u8; 32],
+    ) -> Result<FileContent<T, { FileContentState::Writer }>, WriteFileError> {
         self.cleanup_files();
         // let mut name_array = [0u8; 16];
         // let name_bytes = name.as_bytes();
@@ -294,48 +290,48 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
 #[cfg(test)]
 mod tests {
-    use storage::SimulatedStorage;
+    use crate::storage::{get_test_storage, SimulatedStorage};
 
     use super::*;
 
     #[test]
     fn writing_and_reading_a_simple_file_works() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         let result = filesystem.read_file("fancy").unwrap();
-        assert_eq!(result.content.upgrade().unwrap().as_ref(), file);
+        assert_eq!(result.upgrade().unwrap().as_ref(), file);
         // print!("LELELELLELELE {}", result.length);
     }
 
     #[test]
     fn can_read_a_file_from_an_old_storage() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         let mut filesystem = Filesystem::new(storage);
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         let filesystem = Filesystem::new(filesystem.get_storage());
         let result = filesystem.read_file("fancy").unwrap();
-        assert_eq!(result.content.upgrade().unwrap().as_ref(), file);
+        assert_eq!(result.upgrade().unwrap().as_ref(), file);
     }
 
     #[test]
     fn writing_multiple_files() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         filesystem.write_file("fancy2", &file, &[0u8; 32]).unwrap();
         let result = filesystem.read_file("fancy").unwrap();
-        assert_eq!(result.content.upgrade().unwrap().as_ref(), file);
+        assert_eq!(result.upgrade().unwrap().as_ref(), file);
         let result = filesystem.read_file("fancy2").unwrap();
-        assert_eq!(result.content.upgrade().unwrap().as_ref(), file);
+        assert_eq!(result.upgrade().unwrap().as_ref(), file);
     }
 
     #[test]
     fn deleting_a_file_works() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
@@ -347,7 +343,7 @@ mod tests {
 
     #[test]
     fn deleting_a_file_actually_works() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
@@ -364,14 +360,14 @@ mod tests {
 
     #[test]
     fn file_cant_be_upgraded_if_it_has_been_deleted_and_there_are_only_weak_references() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let content = vec![0; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem
             .write_file("fancy", &content, &[0u8; 32])
             .unwrap();
         let file = filesystem.read_file("fancy").unwrap();
-        let weak_ref = file.content;
+        let weak_ref = file;
         filesystem.delete_file("fancy").unwrap();
         let None = weak_ref.upgrade() else {
             panic!("Should not be able to upgrade deleted file");
@@ -383,16 +379,16 @@ mod tests {
 
     #[test]
     fn no_new_references_can_be_created_to_a_file_marked_for_deletion() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let content = vec![0; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem
             .write_file("fancy", &content, &[0u8; 32])
             .unwrap();
         let file = filesystem.read_file("fancy").unwrap();
-        let strong_ref = file.content.upgrade().unwrap();
+        let strong_ref = file.upgrade().unwrap();
         filesystem.delete_file("fancy").unwrap();
-        let None = filesystem.read_file("fancy") else {
+        let None = filesystem.read_file("fancy").unwrap().upgrade() else {
             panic!(
                 "Should not be able to create a new reference to a file marked for deletion file"
             );
@@ -403,35 +399,35 @@ mod tests {
 
     #[test]
     fn writing_a_maximum_size_file_works() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let file = [0u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         let result = filesystem.read_file("fancy").unwrap();
-        assert_eq!(result.content.upgrade().unwrap().as_ref(), file);
+        assert_eq!(result.upgrade().unwrap().as_ref(), file);
     }
 
     #[test]
     fn deleting_a_file_makes_space_for_a_new_file() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let file = [0u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         filesystem.delete_file("fancy").unwrap();
         filesystem.write_file("fancy2", &file, &[0u8; 32]).unwrap();
         let result = filesystem.read_file("fancy2").unwrap();
-        assert_eq!(result.content.upgrade().unwrap().as_ref(), file);
+        assert_eq!(result.upgrade().unwrap().as_ref(), file);
     }
 
     #[test]
     fn deleting_a_file_does_not_make_space_for_a_new_file_if_there_are_still_strong_references_to_its_content(
     ) {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let file = [0u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         let fancy_file = filesystem.read_file("fancy").unwrap();
-        let strong_ref = fancy_file.content.upgrade().unwrap();
+        let strong_ref = fancy_file.upgrade().unwrap();
         filesystem.delete_file("fancy").unwrap();
         let Err(_) = filesystem.write_file("fancy2", &file, &[0u8; 32]) else {
             panic!("Should fail because the file was not yet deleted");
@@ -444,7 +440,7 @@ mod tests {
 
     #[test]
     fn writing_a_file_thats_too_big_fails() {
-        let storage = Arc::new(RwLock::new(SimulatedStorage::new().unwrap()));
+        let storage = get_test_storage();
         let mut filesystem = Filesystem::new(storage);
         let file = [0u8; SimulatedStorage::SIZE as usize + 1];
         let Err(_) = filesystem.write_file("fancy", &file, &[0u8; 32]) else {

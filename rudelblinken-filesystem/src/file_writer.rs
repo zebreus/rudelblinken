@@ -101,7 +101,7 @@ impl<T: Storage + 'static + Send + Sync> Write for FileWriter<T> {
         let remaining_length = self.length.saturating_sub(self.current_offset);
         let write_length = std::cmp::min(remaining_length, buf.len() as u32);
 
-        let mut writable_storage = self
+        let writable_storage = self
             .storage
             .write()
             .map_err(|e| std::io::ErrorKind::ResourceBusy)?;

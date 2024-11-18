@@ -107,7 +107,7 @@ impl FileMetadata {
     /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
     pub unsafe fn set_flag_in_storage<T: Storage, B: Into<BitFlags<FileFlags>>>(
         &self,
-        storage: &mut T,
+        storage: &T,
         address: u32,
         flag: B,
     ) -> Result<(), StorageError> {
@@ -117,7 +117,7 @@ impl FileMetadata {
 
     /// Store the metadata to the specified storage address
     pub fn new_to_storage<T: Storage>(
-        storage: &mut T,
+        storage: &T,
         address: u32,
         name: &str,
         length: u32,
