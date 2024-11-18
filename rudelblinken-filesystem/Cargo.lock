@@ -15,26 +15,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enumflags2"
-version = "0.7.10"
-source = "git+https://github.com/zebreus/enumflags2.git?branch=zerocopy-support#57ea4d19844ac098807b9d0406c31890b87147d8"
-dependencies = [
- "enumflags2_derive",
- "zerocopy",
- "zerocopy-derive",
-]
-
-[[package]]
-name = "enumflags2_derive"
-version = "0.7.10"
-source = "git+https://github.com/zebreus/enumflags2.git?branch=zerocopy-support#57ea4d19844ac098807b9d0406c31890b87147d8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -69,7 +49,6 @@ name = "rudelblinken-filesystem"
 version = "0.1.0"
 dependencies = [
  "bitvec",
- "enumflags2",
  "thiserror",
  "zerocopy",
 ]

@@ -52,9 +52,9 @@ pub trait Storage {
     ///
     /// address must be inside the storage size. length must be lower or equal to the storage size.
     ///
-    /// This operation can only set 0 bits to 1 but not back. If you want to reset bits to 0 use the erase function.
+    /// This operation can only set 1 bits to 0 but not back. If you want to reset bits to 1 use the erase function.
     fn write(&self, address: u32, data: &[u8]) -> Result<(), StorageError>;
-    /// Reset a block of bits to 0
+    /// Reset a block of bits to 1
     ///
     /// address must be inside the storage size. length must be lower or equal to the storage size. address must be block aligned. length must be a multiple of block size
     fn erase(&self, address: u32, length: u32) -> Result<(), EraseStorageError>;
@@ -76,7 +76,9 @@ pub trait Storage {
     }
     /// Write metadata and verify afterwards that the read data matches the written data.
     fn write_checked(&self, address: u32, data: &[u8]) -> Result<&'static [u8], StorageError> {
+        println!("{:?}", data);
         let read_data = self.write_readback(address, data)?;
+        println!("{:?}", read_data);
         if data != read_data {
             return Err(StorageError::ReadDataDoesNotMatchWrittenData);
         }
@@ -108,13 +110,24 @@ impl SimulatedStorage {
     pub const SIZE: u32 = Self::BLOCKS * Self::BLOCK_SIZE;
 
     pub fn new() -> Result<SimulatedStorage, CreateStorageError> {
-        let mut pool = Box::new([0u8; Self::SIZE as usize * 2]);
+        let mut pool = Box::new([0b11111111u8; Self::SIZE as usize * 2]);
         return Ok(SimulatedStorage {
             pool_ptr: &mut *pool,
             pool: pool,
             key_value: Default::default(),
         });
     }
+}
+
+#[cfg(test)]
+/// Copies zeroes from src to dest and ignores ones in src.
+fn copy_zeroes_from_slice(dest: &mut [u8], src: &[u8]) {
+    let new_data: Vec<u8> = src
+        .iter()
+        .zip(dest.iter())
+        .map(|(src, dest)| src & dest)
+        .collect();
+    dest.copy_from_slice(&new_data);
 }
 
 #[cfg(test)]
@@ -147,17 +160,24 @@ impl Storage for SimulatedStorage {
         }
         let pool = unsafe { &mut *self.pool_ptr };
 
-        pool[address as usize..address as usize + data.len()].copy_from_slice(data);
+        copy_zeroes_from_slice(
+            &mut pool[address as usize..address as usize + data.len()],
+            data,
+        );
         // The part of the data that is overlapping
         let overlapping_length = (address + data.len() as u32).saturating_sub(Self::SIZE);
         let nonoverlapping_length = data.len() as u32 - overlapping_length;
 
-        pool[(Self::SIZE + address) as usize
-            ..((Self::SIZE + address) + nonoverlapping_length) as usize]
-            .copy_from_slice(&data[0..nonoverlapping_length as usize]);
+        copy_zeroes_from_slice(
+            &mut pool[(Self::SIZE + address) as usize
+                ..((Self::SIZE + address) + nonoverlapping_length) as usize],
+            &data[0..nonoverlapping_length as usize],
+        );
         if overlapping_length > 0 {
-            pool[0..overlapping_length as usize]
-                .copy_from_slice(&data[data.len() - (overlapping_length as usize)..data.len()]);
+            copy_zeroes_from_slice(
+                &mut pool[0..overlapping_length as usize],
+                &data[data.len() - (overlapping_length as usize)..data.len()],
+            );
         }
         Ok(())
     }
@@ -175,7 +195,7 @@ impl Storage for SimulatedStorage {
         for block in 0..number_of_blocks {
             let base_address = address + block * Self::BLOCK_SIZE;
             pool[base_address as usize..(base_address + Self::BLOCK_SIZE) as usize]
-                .copy_from_slice(&[0u8; Self::BLOCK_SIZE as usize]);
+                .copy_from_slice(&[0b11111111u8; Self::BLOCK_SIZE as usize]);
         }
         return Ok(());
     }

@@ -115,7 +115,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
                     else {
                         continue;
                     };
-                    if current_block.iter().any(|b| *b != 0) {
+                    if current_block.iter().any(|b| *b != 0xff) {
                         println!(
                             "Erasing block {} because it is not zeroed",
                             current_block_number

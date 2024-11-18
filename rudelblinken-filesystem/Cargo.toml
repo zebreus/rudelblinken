@@ -5,8 +5,5 @@ edition = "2021"
 
 [dependencies]
 bitvec = "1.0.1"
-enumflags2 = { git = "https://github.com/zebreus/enumflags2.git", branch = "zerocopy-support", features = [
-    "zerocopy",
-] }
 thiserror = "2.0.0"
 zerocopy = { version = "0.8.9", features = ["derive"] }

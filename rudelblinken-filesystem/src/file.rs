@@ -9,7 +9,7 @@ use crate::{
     file_content::{
         self, CreateFileContentError, CreateFileContentWriterError, FileContent, FileContentState,
     },
-    file_metadata::{CreateMetadataError, FileFlags, FileMetadata, ReadMetadataError},
+    file_metadata::{CreateMetadataError, FileMetadata, ReadMetadataError},
     file_writer::FileWriter,
     storage::{EraseStorageError, Storage, StorageError},
     StorageLockError,

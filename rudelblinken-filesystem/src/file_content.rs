@@ -1,5 +1,5 @@
 use crate::{
-    file_metadata::{FileFlags, FileMetadata, ReadMetadataError},
+    file_metadata::{FileMetadata, ReadMetadataError},
     storage::{EraseStorageError, Storage, StorageError},
     StorageLockError,
 };
@@ -155,7 +155,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             return Err(CreateFileContentError::InvalidMetadataMarker);
         }
 
-        if !metadata.flags.contains(FileFlags::Ready) {
+        if !metadata.ready() {
             return Err(CreateFileContentError::FileNotReady);
         }
 
@@ -174,7 +174,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             })),
         };
 
-        if metadata.flags.contains(FileFlags::MarkedForDeletion) {
+        if metadata.marked_for_deletion() {
             // Delete the file if it was marked for deletion
             unsafe {
                 let _ = file.internal_delete();
@@ -182,7 +182,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             return Err(CreateFileContentError::FileWasDeleted);
         }
 
-        if metadata.flags.contains(FileFlags::Deleted) {
+        if metadata.deleted() {
             // This should only happen if a deletion was interrupted by a crash or something.
             unsafe {
                 let _ = file.internal_delete();
@@ -234,22 +234,19 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
             return Err(CreateFileContentWriterError::InvalidMetadataMarker);
         }
 
-        if metadata.flags.contains(FileFlags::Deleted) {
+        if metadata.deleted() {
             return Err(CreateFileContentWriterError::FileWasDeleted);
         }
 
-        if metadata.flags.contains(FileFlags::Ready) {
+        if metadata.ready() {
             return Err(CreateFileContentWriterError::FileIsAlreadyReady);
         }
 
-        if metadata.flags.contains(FileFlags::MarkedForDeletion) {
+        if metadata.marked_for_deletion() {
             // For now I allow this
         }
 
-        if !data.iter().all(|byte| *byte == 0) {
-            for chunk in data.chunks(16) {
-                println!("{:?}", chunk);
-            }
+        if !data.iter().all(|byte| *byte == 0xff) {
             return Err(CreateFileContentWriterError::NotZeroed);
         }
 
@@ -277,11 +274,8 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
             ref_count.writer_count = 0;
             ref_count.reader_count = 1;
             unsafe {
-                self.metadata.set_flag_in_storage(
-                    ref_count.storage,
-                    ref_count.storage_address,
-                    FileFlags::Ready,
-                )?;
+                self.metadata
+                    .set_ready(ref_count.storage, ref_count.storage_address)?;
             }
         }
         return unsafe {
@@ -331,8 +325,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
             // .as_ptr()
             // .as_raw_ptr()
             // .as_ref()
-            .flags
-            .contains(FileFlags::Ready)
+            .ready()
         {
             return None;
         }
@@ -341,8 +334,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
             // .as_ptr()
             // .as_raw_ptr()
             // .as_ref()
-            .flags
-            .contains(FileFlags::MarkedForDeletion)
+            .marked_for_deletion()
         {
             return None;
         }
@@ -376,17 +368,17 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
     }
 
     pub fn marked_for_deletion(&self) -> bool {
-        return self.metadata.flags.contains(FileFlags::MarkedForDeletion);
+        return self.metadata.marked_for_deletion();
     }
     pub fn deleted(&self) -> bool {
         let info = self.ref_count.read().unwrap();
         if info.has_been_deleted {
             return true;
         }
-        return self.metadata.flags.contains(FileFlags::Deleted);
+        return self.metadata.deleted();
     }
     pub fn ready(&self) -> bool {
-        return self.metadata.flags.contains(FileFlags::Ready);
+        return self.metadata.ready();
     }
 
     /// Mark this file for deletion
@@ -404,11 +396,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
                 // .as_ptr()
                 // .as_raw_ptr()
                 // .as_ref()
-                .set_flag_in_storage(
-                    ref_count.storage,
-                    ref_count.storage_address,
-                    FileFlags::MarkedForDeletion,
-                )
+                .set_marked_for_deletion(ref_count.storage, ref_count.storage_address)
                 .unwrap();
         };
         if ref_count.has_been_deleted == false
@@ -478,7 +466,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> Drop for FileContent<T
 
         if info.reader_count == 0
             && info.has_been_deleted == false
-            && self.metadata.flags.contains(FileFlags::MarkedForDeletion)
+            && self.metadata.marked_for_deletion()
         {
             drop(info);
             unsafe {
@@ -506,7 +494,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
         (transition)(FileContentTransition::DropLastReader);
 
         self.metadata
-            .set_flag_in_storage(info.storage, info.storage_address, FileFlags::Deleted)
+            .set_deleted(info.storage, info.storage_address)
             .map_err(|e| EraseStorageError::from(e))?;
         info.has_been_deleted = true;
 
@@ -530,10 +518,10 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
     /// A valid file should never be zeroed, so I marked this as unsafe
     pub unsafe fn erased(&self) -> bool {
         let metadata_slice = FileMetadata::as_bytes(self.metadata);
-        if metadata_slice.iter().any(|i| *i != 0) {
+        if metadata_slice.iter().any(|i| *i != 0xff) {
             return false;
         }
-        if self.content.iter().any(|i| *i != 0) {
+        if self.content.iter().any(|i| *i != 0xff) {
             return false;
         }
         return true;
@@ -616,7 +604,7 @@ mod tests {
         let backing_storage = get_test_storage();
         let metadata: &'static FileMetadata =
             FileMetadata::new_to_storage(backing_storage, 0, "toast", 100).unwrap();
-        unsafe { metadata.set_flag_in_storage(backing_storage, 0, FileFlags::Ready) }.unwrap();
+        unsafe { metadata.set_ready(backing_storage, 0) }.unwrap();
         let content: &'static [u8] = &backing_storage
             .read(size_of::<FileMetadata>() as u32, 100)
             .unwrap();

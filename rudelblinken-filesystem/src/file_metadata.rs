@@ -1,7 +1,5 @@
 use crate::storage::Storage;
 use crate::storage::StorageError;
-use enumflags2::make_bitflags;
-use enumflags2::BitFlags;
 use thiserror::Error;
 use zerocopy::IntoBytes;
 use zerocopy::TryFromBytes;
@@ -21,23 +19,33 @@ pub enum CreateMetadataError {
     StorageError(#[from] StorageError),
 }
 
-#[enumflags2::bitflags]
-#[repr(u16)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum FileFlags {
-    /// All markers need to be set correctly for the memory to be a valid file
-    MarkerHighA = 0b0000000000000001,
-    MarkerHighB = 0b0000000000100000,
-    MarkerHighC = 0b0100000000000000,
-    MarkerLowA = 0b0000000000000100,
-    MarkerLowB = 0b0000001000000000,
-    MarkerLowC = 0b0000000000010000,
-    /// If this file has been written completly
-    Ready,
-    /// This file is marked for deletion
-    MarkedForDeletion,
-    /// This file has been deleted. It contains invalid content, but its metablock may still be valid
-    Deleted,
+// #[enumflags2::bitflags]
+// #[repr(u16)]
+// #[derive(Copy, Clone, Debug, PartialEq)]
+// pub enum FileFlags {
+//     /// All markers need to be set correctly for the memory to be a valid file
+//     MarkerHighA = 0b0010000000100001,
+//     MarkerHighB = 0b0000000000100000,
+//     MarkerHighC = 0b0100000000000000,
+//     MarkerLowA = 0b0000001000010100,
+//     MarkerLowB = 0b0000001000000000,
+//     MarkerLowC = 0b0000000000010000,
+//     /// If this file has been written completly
+//     Ready,
+//     /// This file is marked for deletion
+//     MarkedForDeletion,
+//     /// This file has been deleted. It contains invalid content, but its metablock may still be valid
+//     Deleted,
+// }
+
+struct FileFlags2 {}
+#[rustfmt::skip]
+impl FileFlags2 {
+    const HIGH_MARKERS: u16 =        0b0010000000100001;
+    const LOW_MARKERS: u16 =         0b0000001000010100;
+    const READY: u16 =               0b0000000000000010;
+    const MARKED_FOR_DELETION: u16 = 0b0000000000001000;
+    const DELETED: u16 =             0b0000000001000000;
 }
 
 /// Represents a the metadata segment of a file that is memory-mapped into storage.
@@ -48,7 +56,7 @@ pub enum FileFlags {
 pub struct FileMetadata {
     /// Type of this block
     /// Access only via the supplied functions
-    pub flags: BitFlags<FileFlags>,
+    pub flags: u16,
     /// Reserved space for alignment reasons
     _reserved: [u8; 2],
     /// Length in bytes
@@ -65,7 +73,7 @@ impl FileMetadata {
     /// Create a new file metadata object in ram
     fn new(name: &str, length: u32) -> Self {
         let mut metadata = FileMetadata {
-            flags: make_bitflags!(FileFlags::{MarkerHighA | MarkerHighB | MarkerHighC}),
+            flags: u16::MAX ^ FileFlags2::LOW_MARKERS,
             _reserved: [0; 2],
             length: length,
             hash: [0; 32],
@@ -77,16 +85,10 @@ impl FileMetadata {
     }
     /// Assert that the marker flags have been set correctly for this file
     pub fn valid_marker(&self) -> bool {
-        if !self
-            .flags
-            .contains(make_bitflags!(FileFlags::{MarkerHighA | MarkerHighB | MarkerHighC}))
-        {
+        if self.flags & FileFlags2::HIGH_MARKERS != FileFlags2::HIGH_MARKERS {
             return false;
         }
-        if self
-            .flags
-            .intersects(make_bitflags!(FileFlags::{MarkerLowA | MarkerLowB | MarkerLowC}))
-        {
+        if self.flags & FileFlags2::LOW_MARKERS != 0 {
             return false;
         }
         return true;
@@ -102,17 +104,56 @@ impl FileMetadata {
         let name_length = name.len().clamp(0, 16);
         self.name[0..name_length].copy_from_slice(&name_bytes[0..name_length]);
     }
-    /// Set a flag of the metadata in storage
+    /// Set flags of the metadata in storage
     ///
     /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
-    pub unsafe fn set_flag_in_storage<T: Storage, B: Into<BitFlags<FileFlags>>>(
+    unsafe fn set_flags<T: Storage>(
         &self,
         storage: &T,
         address: u32,
-        flag: B,
+        flags: u16,
     ) -> Result<(), StorageError> {
-        let flags: BitFlags<FileFlags> = self.flags | flag.into();
+        let flags: u16 = self.flags & !flags;
         storage.write(address, flags.as_bytes())
+    }
+    /// Set the ready flag of the metadata in storage
+    ///
+    /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
+    pub unsafe fn set_ready<T: Storage>(
+        &self,
+        storage: &T,
+        address: u32,
+    ) -> Result<(), StorageError> {
+        self.set_flags(storage, address, FileFlags2::READY)
+    }
+    /// Set the marked for deletion flag of the metadata in storage
+    ///
+    /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
+    pub unsafe fn set_marked_for_deletion<T: Storage>(
+        &self,
+        storage: &T,
+        address: u32,
+    ) -> Result<(), StorageError> {
+        self.set_flags(storage, address, FileFlags2::MARKED_FOR_DELETION)
+    }
+    /// Set the deleted flag of the metadata in storage
+    ///
+    /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
+    pub unsafe fn set_deleted<T: Storage>(
+        &self,
+        storage: &T,
+        address: u32,
+    ) -> Result<(), StorageError> {
+        self.set_flags(storage, address, FileFlags2::DELETED)
+    }
+    pub fn ready(&self) -> bool {
+        self.flags & FileFlags2::READY == 0
+    }
+    pub fn marked_for_deletion(&self) -> bool {
+        self.flags & FileFlags2::MARKED_FOR_DELETION == 0
+    }
+    pub fn deleted(&self) -> bool {
+        self.flags & FileFlags2::DELETED == 0
     }
 
     /// Store the metadata to the specified storage address
@@ -123,7 +164,8 @@ impl FileMetadata {
         length: u32,
     ) -> Result<&'static Self, CreateMetadataError> {
         let new_metadata = Self::new(name, length);
-        let memory_mapped_metadata = storage.write_checked(address, new_metadata.as_bytes())?;
+        let as_bytes = new_metadata.as_bytes();
+        let memory_mapped_metadata = storage.write_checked(address, as_bytes)?;
         Ok(FileMetadata::try_ref_from_bytes(memory_mapped_metadata)
             .map_err(|e| CreateMetadataError::CreateMetadataError)?)
     }
