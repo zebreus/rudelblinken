@@ -238,8 +238,8 @@ impl Storage for FlashStorage {
         unsafe {
             ::log::info!(
                 "Erasing {} blocks starting from {}",
-                length % Self::BLOCK_SIZE,
-                address % Self::BLOCK_SIZE
+                length / Self::BLOCK_SIZE,
+                address / Self::BLOCK_SIZE
             );
             esp_partition_erase_range(self.partition, address as usize, length as usize);
         }
