@@ -9,6 +9,8 @@ use zerocopy::{Immutable, KnownLayout};
 pub enum ReadMetadataError {
     #[error("Failed to read metadata from flash")]
     ReadStorageError,
+    #[error("The read metadata does not have valid marker flags")]
+    InvalidMarkers,
 }
 
 #[derive(Error, Debug)]
@@ -56,7 +58,7 @@ impl FileFlags2 {
 pub struct FileMetadata {
     /// Type of this block
     /// Access only via the supplied functions
-    pub flags: u16,
+    flags: u16,
     /// Reserved space for alignment reasons
     _reserved: [u8; 2],
     /// Length in bytes
@@ -179,8 +181,13 @@ impl FileMetadata {
         let data = storage
             .read(address, size_of::<FileMetadata>() as u32)
             .map_err(|_| ReadMetadataError::ReadStorageError)?;
-        Ok(FileMetadata::try_ref_from_bytes(data)
-            .map_err(|_| ReadMetadataError::ReadStorageError)?)
+
+        let metadata = FileMetadata::try_ref_from_bytes(data)
+            .map_err(|_| ReadMetadataError::ReadStorageError)?;
+        if !metadata.valid_marker() {
+            return Err(ReadMetadataError::InvalidMarkers);
+        }
+        Ok(&metadata)
     }
 }
 
