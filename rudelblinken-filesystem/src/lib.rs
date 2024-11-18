@@ -70,7 +70,7 @@ pub enum MetadataAccessError {
 /// Filesystem implementation
 pub struct Filesystem<T: Storage + 'static + Send + Sync> {
     storage: &'static T,
-    files: Vec<File<T>>,
+    pub files: Vec<File<T>>,
 }
 
 impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
@@ -105,10 +105,30 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             let current_block_number = (block_number + first_block as u32) % T::BLOCKS;
             let file_information =
                 File::from_storage(filesystem.storage, current_block_number * T::BLOCK_SIZE);
-            let Ok(file_information) = file_information else {
-                block_number += 1;
-                continue;
+            let file_information = match file_information {
+                Ok(file_information) => file_information,
+                Err(_) => {
+                    block_number += 1;
+                    let Ok(current_block) = filesystem
+                        .storage
+                        .read(current_block_number * T::BLOCK_SIZE, T::BLOCK_SIZE)
+                    else {
+                        continue;
+                    };
+                    if current_block.iter().any(|b| *b != 0) {
+                        println!(
+                            "Erasing block {} because it is not zeroed",
+                            current_block_number
+                        );
+                        filesystem
+                            .storage
+                            .erase(current_block_number * T::BLOCK_SIZE, T::BLOCK_SIZE)
+                            .unwrap();
+                    };
+                    continue;
+                }
             };
+            if file_information.deleted() {}
             block_number += ((file_information.length + 64) / T::BLOCK_SIZE) + 1;
             filesystem.files.push(file_information);
         }
@@ -315,6 +335,30 @@ mod tests {
         let result = filesystem.read_file("fancy").unwrap();
         assert_eq!(result.upgrade().unwrap().as_ref(), file);
     }
+
+    // #[test]
+    // fn can_handle_a_deleted_but_not_removed_file_on_old_storage() {
+    //     let storage = get_test_storage();
+    //     let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+    //     let mut old_filesystem = Filesystem::new(storage);
+    //     old_filesystem
+    //         .write_file("fancy", &file, &[0u8; 32])
+    //         .unwrap();
+    //     let old_file = old_filesystem
+    //         .read_file("fancy")
+    //         .unwrap()
+    //         .upgrade()
+    //         .unwrap();
+    //     old_file.mark_for_deletion().unwrap();
+
+    //     // To simulate a reboot we dont drop the old filesystem and just create a new one
+
+    //     let mut filesystem = Filesystem::new(storage);
+    //     filesystem.write_file("other", &file, &[0u8; 32]).unwrap();
+    //     // let result = filesystem.read_file("fancy").unwrap();
+    //     // assert_eq!(result.upgrade().unwrap().as_ref(), file);
+    // }
 
     #[test]
     fn writing_multiple_files() {

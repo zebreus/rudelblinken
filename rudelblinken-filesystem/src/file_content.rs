@@ -11,6 +11,7 @@ use std::{
 };
 use std::{io::Seek, marker::ConstParamTy};
 use thiserror::Error;
+use zerocopy::IntoBytes;
 
 pub enum FileContentTransition {
     /// Writer gets committed
@@ -139,7 +140,7 @@ pub enum DeleteFileContentError {
 impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
     /// Create a new file content with the given memory area
     ///
-    ///
+    /// It is only safe to call this function if there are no other instances pointing to the file
     // TODO: Make this function unsafe or the argument a &'static [u8]
     pub fn new(
         // data: VolatileRef<'static, [u8], ReadOnly>,
@@ -154,19 +155,11 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             return Err(CreateFileContentError::InvalidMetadataMarker);
         }
 
-        if metadata.flags.contains(FileFlags::Deleted) {
-            return Err(CreateFileContentError::FileWasDeleted);
-        }
-
         if !metadata.flags.contains(FileFlags::Ready) {
             return Err(CreateFileContentError::FileNotReady);
         }
 
-        if metadata.flags.contains(FileFlags::MarkedForDeletion) {
-            // For now I allow this
-        }
-
-        return Ok(Self {
+        let file = Self {
             content: data,
             metadata: metadata,
             ref_count: Arc::new(RwLock::new(FileContentInfo {
@@ -179,7 +172,25 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
                 transition: Box::new(transition),
                 has_been_deleted: false,
             })),
-        });
+        };
+
+        if metadata.flags.contains(FileFlags::MarkedForDeletion) {
+            // Delete the file if it was marked for deletion
+            unsafe {
+                let _ = file.internal_delete();
+            };
+            return Err(CreateFileContentError::FileWasDeleted);
+        }
+
+        if metadata.flags.contains(FileFlags::Deleted) {
+            // This should only happen if a deletion was interrupted by a crash or something.
+            unsafe {
+                let _ = file.internal_delete();
+            };
+            return Err(CreateFileContentError::FileWasDeleted);
+        };
+
+        return Ok(file);
     }
 
     // pub fn new_to_storage<'a, T: Storage>(
@@ -236,6 +247,9 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
         }
 
         if !data.iter().all(|byte| *byte == 0) {
+            for chunk in data.chunks(16) {
+                println!("{:?}", chunk);
+            }
             return Err(CreateFileContentWriterError::NotZeroed);
         }
 
@@ -402,7 +416,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
             && ref_count.reader_count == 0
         {
             drop(ref_count);
-            unsafe { self.delete()? };
+            unsafe { self.internal_delete()? };
         }
         Ok(())
     }
@@ -470,17 +484,17 @@ impl<T: Storage + 'static, const STATE: FileContentState> Drop for FileContent<T
             unsafe {
                 // We can handle a failed deletion here
                 // TODO: maybe log it
-                let _ = self.delete();
+                let _ = self.internal_delete();
             };
         }
     }
 }
 
 impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> {
-    /// Internal function to erase this file
+    /// Internal delete function that does not consume the file.
     ///
-    /// Only safe if no further reads or writes will be performed to the file.
-    unsafe fn delete(&self) -> Result<(), DeleteFileContentError> {
+    /// Any access to this file afterwards is not safe.
+    unsafe fn internal_delete(&self) -> Result<(), DeleteFileContentError> {
         let mut info = self.ref_count.write().unwrap();
 
         let previous_transition: &mut Box<
@@ -499,8 +513,30 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
         let full_file_length = self.metadata.length + size_of::<FileMetadata>() as u32;
         let length = full_file_length.div_ceil(T::BLOCK_SIZE) * T::BLOCK_SIZE;
 
+        // TODO: Make sure the block with the metadata gets erased last
         info.storage.erase(info.storage_address, length)?;
         return Ok(());
+    }
+
+    /// Zero out the backing storage of this file and mark it as deleted.
+    ///
+    /// Only safe if no further reads or writes will be performed to the file.
+    pub fn delete(self) -> Result<(), DeleteFileContentError> {
+        unsafe { self.internal_delete() }
+    }
+
+    /// Check if the backing storage for the file is completely zeroed out
+    ///
+    /// A valid file should never be zeroed, so I marked this as unsafe
+    pub unsafe fn erased(&self) -> bool {
+        let metadata_slice = FileMetadata::as_bytes(self.metadata);
+        if metadata_slice.iter().any(|i| *i != 0) {
+            return false;
+        }
+        if self.content.iter().any(|i| *i != 0) {
+            return false;
+        }
+        return true;
     }
 }
 
