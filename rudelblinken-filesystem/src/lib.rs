@@ -18,7 +18,6 @@ use thiserror::Error;
 pub mod file;
 pub mod file_content;
 pub mod file_metadata;
-pub mod file_writer;
 pub mod storage;
 
 #[derive(Error, Debug, Clone)]
@@ -155,12 +154,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     fn find_free_space(&self, length: u32) -> Result<u32, FindFreeSpaceError> {
         let mut free_ranges: BTreeMap<u16, u16> = Default::default();
         free_ranges.insert(0, T::BLOCKS as u16 * 2);
-        // for file in &self.files {
-        //     let in_range = free_ranges.lower_bound(bound)
-        // }
 
-        // let mut used_blocks = bitvec![u8, Msb0; 0; T::BLOCKS];
-        // let mut used_blocks = vec![false; T::BLOCKS];
         for file in &self.files {
             let start_block = (file.address / T::BLOCK_SIZE) as u16;
             let length_in_blocks =
@@ -194,10 +188,6 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
                     free_ranges.insert(end_block, space_after);
                 }
             }
-
-            // for block in 0..length_in_blocks {
-            //     used_blocks[(start_block + block) % T::BLOCKS] = true;
-            // }
         }
 
         // Fix the last entry for wraparound
@@ -260,15 +250,9 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         _hash: &[u8; 32],
     ) -> Result<FileContent<T, { FileContentState::Writer }>, WriteFileError> {
         self.cleanup_files();
-        // let mut name_array = [0u8; 16];
-        // let name_bytes = name.as_bytes();
-        // if name_bytes.len() > 16 {
-        //     return Err(WriteFileError::FileNameTooLong);
-        // }
-        // name_array[0..name_bytes.len()].copy_from_slice(name_bytes);
         let free_location = self.find_free_space(length + size_of::<FileMetadata>() as u32)?;
 
-        let (file, writer) = File::to_storage(self.storage.clone(), free_location, length, name)?;
+        let (file, writer) = File::to_storage(self.storage, free_location, length, name)?;
         self.files.push(file);
         Ok(writer)
     }
@@ -338,30 +322,6 @@ mod tests {
         let result = filesystem.read_file("fancy").unwrap();
         assert_eq!(result.upgrade().unwrap().as_ref(), file);
     }
-
-    // #[test]
-    // fn can_handle_a_deleted_but_not_removed_file_on_old_storage() {
-    //     let storage = get_test_storage();
-    //     let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
-
-    //     let mut old_filesystem = Filesystem::new(storage);
-    //     old_filesystem
-    //         .write_file("fancy", &file, &[0u8; 32])
-    //         .unwrap();
-    //     let old_file = old_filesystem
-    //         .read_file("fancy")
-    //         .unwrap()
-    //         .upgrade()
-    //         .unwrap();
-    //     old_file.mark_for_deletion().unwrap();
-
-    //     // To simulate a reboot we dont drop the old filesystem and just create a new one
-
-    //     let mut filesystem = Filesystem::new(storage);
-    //     filesystem.write_file("other", &file, &[0u8; 32]).unwrap();
-    //     // let result = filesystem.read_file("fancy").unwrap();
-    //     // assert_eq!(result.upgrade().unwrap().as_ref(), file);
-    // }
 
     #[test]
     fn writing_multiple_files() {
