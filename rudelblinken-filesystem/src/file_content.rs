@@ -13,6 +13,40 @@ use std::{io::Seek, marker::ConstParamTy};
 use thiserror::Error;
 use zerocopy::IntoBytes;
 
+#[derive(Error, Debug)]
+pub enum CreateFileContentReaderError {
+    #[error("No metadata found the metadata does not have the correct marker.")]
+    InvalidMetadataMarker,
+    #[error("File has already been deleted")]
+    FileWasDeleted,
+    #[error("File is not marked as ready. Maybe you lost power during writing?")]
+    FileNotReady,
+}
+
+#[derive(Error, Debug)]
+pub enum CreateFileContentWriterError {
+    #[error("No metadata found the metadata does not have the correct marker.")]
+    InvalidMetadataMarker,
+    #[error("File has already been deleted")]
+    FileWasDeleted,
+    #[error("File is already marked as ready. You should not write to this anymore.")]
+    FileIsAlreadyReady,
+    #[error("The backing storage for a new file needs to be empty")]
+    NotZeroed,
+}
+
+#[derive(Error, Debug)]
+pub enum DeleteFileContentError {
+    #[error(transparent)]
+    EraseStorageError(#[from] EraseStorageError),
+}
+
+#[derive(Error, Debug)]
+pub enum CommitFileContentError {
+    #[error(transparent)]
+    StorageError(#[from] StorageError),
+}
+
 pub enum FileContentTransition {
     /// Writer gets committed
     Commit,
@@ -72,34 +106,6 @@ pub struct FileContent<
     metadata: &'static FileMetadata,
     // TODO: Change this to an arcmutex
     info: NonNull<RwLock<FileContentInfo<T>>>,
-}
-
-#[derive(Error, Debug)]
-pub enum CreateFileContentReaderError {
-    #[error("No metadata found the metadata does not have the correct marker.")]
-    InvalidMetadataMarker,
-    #[error("File has already been deleted")]
-    FileWasDeleted,
-    #[error("File is not marked as ready. Maybe you lost power during writing?")]
-    FileNotReady,
-}
-
-#[derive(Error, Debug)]
-pub enum CreateFileContentWriterError {
-    #[error("No metadata found the metadata does not have the correct marker.")]
-    InvalidMetadataMarker,
-    #[error("File has already been deleted")]
-    FileWasDeleted,
-    #[error("File is already marked as ready. You should not write to this anymore.")]
-    FileIsAlreadyReady,
-    #[error("The backing storage for a new file needs to be empty")]
-    NotZeroed,
-}
-
-#[derive(Error, Debug)]
-pub enum DeleteFileContentError {
-    #[error(transparent)]
-    EraseStorageError(#[from] EraseStorageError),
 }
 
 impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
@@ -204,7 +210,9 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
         });
     }
 
-    pub fn commit(self) -> Result<FileContent<T, { FileContentState::Reader }>, StorageError> {
+    pub fn commit(
+        self,
+    ) -> Result<FileContent<T, { FileContentState::Reader }>, CommitFileContentError> {
         {
             let mut info = unsafe { (self.info.as_ref()).write().unwrap() };
             assert!(info.writer_count == 1);

@@ -1,6 +1,3 @@
-use std::fmt::{Debug, Formatter};
-use thiserror::Error;
-
 use crate::{
     file_content::{
         CreateFileContentReaderError, CreateFileContentWriterError, DeleteFileContentError,
@@ -8,15 +5,14 @@ use crate::{
     },
     file_metadata::{CreateMetadataError, FileMetadata, ReadMetadataError},
     storage::{EraseStorageError, Storage, StorageError},
-    StorageLockError,
 };
+use std::fmt::{Debug, Formatter};
+use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum CreateFileInformationError {
+pub enum CreateFileError {
     #[error(transparent)]
     ReadFileError(#[from] std::io::Error),
-    #[error(transparent)]
-    StorageLockError(#[from] StorageLockError),
     #[error(transparent)]
     ReadStorageError(#[from] StorageError),
     #[error(transparent)]
@@ -34,13 +30,11 @@ pub enum WriteFileError {
     #[error("The filename can not be longer than 16 bytes")]
     FileNameTooLong,
     #[error(transparent)]
-    CreateFileInformationError(#[from] CreateFileInformationError),
+    CreateFileInformationError(#[from] CreateFileError),
     #[error(transparent)]
     WriteStorageError(#[from] StorageError),
     #[error("The read file does not match the written file")]
     ReadFileDoesNotMatch,
-    #[error(transparent)]
-    StorageLockError(#[from] StorageLockError),
     #[error(transparent)]
     CreateMetadataError(#[from] CreateMetadataError),
     #[error(transparent)]
@@ -86,10 +80,7 @@ impl<T: Storage + 'static + Send + Sync> File<T> {
     /// Read a file from storage.
     ///
     /// address is an address that can be used with storage
-    pub fn from_storage(
-        storage: &'static T,
-        address: u32,
-    ) -> Result<File<T>, CreateFileInformationError> {
+    pub fn from_storage(storage: &'static T, address: u32) -> Result<File<T>, CreateFileError> {
         let metadata = FileMetadata::from_storage(storage, address)?;
         let content = storage.read(address + size_of::<FileMetadata>() as u32, metadata.length)?;
         let file_content = FileContent::<T, { FileContentState::Reader }>::new(

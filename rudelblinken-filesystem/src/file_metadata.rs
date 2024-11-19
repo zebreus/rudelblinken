@@ -22,28 +22,9 @@ pub enum CreateMetadataError {
     StorageError(#[from] StorageError),
 }
 
-// #[enumflags2::bitflags]
-// #[repr(u16)]
-// #[derive(Copy, Clone, Debug, PartialEq)]
-// pub enum FileFlags {
-//     /// All markers need to be set correctly for the memory to be a valid file
-//     MarkerHighA = 0b0010000000100001,
-//     MarkerHighB = 0b0000000000100000,
-//     MarkerHighC = 0b0100000000000000,
-//     MarkerLowA = 0b0000001000010100,
-//     MarkerLowB = 0b0000001000000000,
-//     MarkerLowC = 0b0000000000010000,
-//     /// If this file has been written completly
-//     Ready,
-//     /// This file is marked for deletion
-//     MarkedForDeletion,
-//     /// This file has been deleted. It contains invalid content, but its metablock may still be valid
-//     Deleted,
-// }
-
-struct FileFlags2 {}
+struct FileFlags {}
 #[rustfmt::skip]
-impl FileFlags2 {
+impl FileFlags {
     const HIGH_MARKERS: u16 =        0b0010000000100001;
     const LOW_MARKERS: u16 =         0b0000001000010100;
     const READY: u16 =               0b0000000000000010;
@@ -94,7 +75,7 @@ impl FileMetadata {
     /// Create a new file metadata object in ram
     fn new(name: &str, length: u32) -> Self {
         let mut metadata = FileMetadata {
-            flags: u16::MAX ^ FileFlags2::LOW_MARKERS,
+            flags: u16::MAX ^ FileFlags::LOW_MARKERS,
             _reserved: [0; 2],
             length: length,
             hash: [0; 32],
@@ -106,10 +87,10 @@ impl FileMetadata {
     }
     /// Assert that the marker flags have been set correctly for this file
     pub fn valid_marker(&self) -> bool {
-        if self.flags & FileFlags2::HIGH_MARKERS != FileFlags2::HIGH_MARKERS {
+        if self.flags & FileFlags::HIGH_MARKERS != FileFlags::HIGH_MARKERS {
             return false;
         }
-        if self.flags & FileFlags2::LOW_MARKERS != 0 {
+        if self.flags & FileFlags::LOW_MARKERS != 0 {
             return false;
         }
         return true;
@@ -145,7 +126,7 @@ impl FileMetadata {
         storage: &T,
         address: u32,
     ) -> Result<(), StorageError> {
-        self.set_flags(storage, address, FileFlags2::READY)
+        self.set_flags(storage, address, FileFlags::READY)
     }
     /// Set the marked for deletion flag of the metadata in storage
     ///
@@ -155,7 +136,7 @@ impl FileMetadata {
         storage: &T,
         address: u32,
     ) -> Result<(), StorageError> {
-        self.set_flags(storage, address, FileFlags2::MARKED_FOR_DELETION)
+        self.set_flags(storage, address, FileFlags::MARKED_FOR_DELETION)
     }
     /// Set the deleted flag of the metadata in storage
     ///
@@ -165,19 +146,22 @@ impl FileMetadata {
         storage: &T,
         address: u32,
     ) -> Result<(), StorageError> {
-        self.set_flags(storage, address, FileFlags2::DELETED)
+        self.set_flags(storage, address, FileFlags::DELETED)
     }
+    /// Check if the file is ready to be read
     pub fn ready(&self) -> bool {
-        self.flags & FileFlags2::READY == 0
+        self.flags & FileFlags::READY == 0
     }
+    /// Check if the file is marked for deletion
     pub fn marked_for_deletion(&self) -> bool {
-        self.flags & FileFlags2::MARKED_FOR_DELETION == 0
+        self.flags & FileFlags::MARKED_FOR_DELETION == 0
     }
+    /// Check if the file has been deleted
     pub fn deleted(&self) -> bool {
-        self.flags & FileFlags2::DELETED == 0
+        self.flags & FileFlags::DELETED == 0
     }
 
-    /// Store the metadata to the specified storage address
+    /// Create new metadata at the specified location
     pub fn new_to_storage<T: Storage>(
         storage: &T,
         address: u32,
@@ -190,9 +174,10 @@ impl FileMetadata {
         Ok(FileMetadata::ref_from_bytes(memory_mapped_metadata)
             .map_err(|e| CreateMetadataError::CreateMetadataError(e.to_string()))?)
     }
-    /// Read a file metadata object from storage
+
+    /// Read exisiting metadata from the specified location
     ///
-    /// Returns a reference to memorymapped flash storage
+    /// Returns a reference to memory mapped flash storage
     pub fn from_storage<T: Storage>(
         storage: &T,
         address: u32,

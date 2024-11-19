@@ -5,6 +5,7 @@
 #![feature(allocator_api)]
 
 use file::File;
+use file_content::CommitFileContentError;
 use file_content::FileContent;
 use file_content::FileContentState;
 use file_metadata::FileMetadata;
@@ -15,13 +16,13 @@ use storage::EraseStorageError;
 use storage::Storage;
 use storage::StorageError;
 use thiserror::Error;
-pub mod file;
-pub mod file_content;
-pub mod file_metadata;
-pub mod storage;
+mod file;
+mod file_content;
+mod file_metadata;
+mod storage;
 
 #[derive(Error, Debug, Clone)]
-pub enum FindFreeSpaceError {
+enum FindFreeSpaceError {
     #[error("Error in filesystem structure")]
     FilesystemError,
     #[error("No free space")]
@@ -31,7 +32,7 @@ pub enum FindFreeSpaceError {
 }
 
 #[derive(Error, Debug)]
-pub enum WriteFileError {
+enum FilesystemWriteError {
     #[error(transparent)]
     FindFreeSpaceError(#[from] FindFreeSpaceError),
     #[error(transparent)]
@@ -39,31 +40,15 @@ pub enum WriteFileError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error(transparent)]
-    StorageError(#[from] StorageError),
+    CommitFileContentError(#[from] CommitFileContentError),
 }
 
 #[derive(Error, Debug)]
-pub enum DeleteFileError {
+enum FilesystemDeleteError {
     #[error(transparent)]
     EraseStorageError(#[from] EraseStorageError),
     #[error("The file does not exist")]
     FileNotFound,
-}
-
-#[derive(Error, Debug)]
-pub enum StorageLockError {
-    #[error("Failed to aquire a read lock to the underlying storage")]
-    FailedToAquireReadLock,
-    #[error("Failed to aquire a write lock to the underlying storage")]
-    FailedToAquireWriteLock,
-}
-
-#[derive(Error, Debug)]
-pub enum MetadataAccessError {
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-    #[error(transparent)]
-    StorageLockError(#[from] StorageLockError),
 }
 
 /// Filesystem implementation
@@ -73,7 +58,7 @@ pub struct Filesystem<T: Storage + 'static + Send + Sync> {
 }
 
 impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
-    fn get_first_block(&self) -> Result<u16, MetadataAccessError> {
+    fn get_first_block(&self) -> Result<u16, std::io::Error> {
         let first_block_slice: Box<[u8; 2]> = self
             .storage
             .read_metadata(&"first_block")?
@@ -81,7 +66,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             .unwrap();
         return Ok(u16::from_le_bytes(*first_block_slice));
     }
-    fn set_first_block(&mut self, first_block: u16) -> Result<(), MetadataAccessError> {
+    fn set_first_block(&mut self, first_block: u16) -> Result<(), std::io::Error> {
         self.storage
             .write_metadata(&"first_block", &first_block.to_le_bytes())?;
         return Ok(());
@@ -232,7 +217,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         name: &str,
         content: &[u8],
         _hash: &[u8; 32],
-    ) -> Result<(), WriteFileError> {
+    ) -> Result<(), FilesystemWriteError> {
         let mut writer = self.get_file_writer(name, content.len() as u32, _hash)?;
 
         writer.write_all(content)?;
@@ -248,7 +233,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         name: &str,
         length: u32,
         _hash: &[u8; 32],
-    ) -> Result<FileContent<T, { FileContentState::Writer }>, WriteFileError> {
+    ) -> Result<FileContent<T, { FileContentState::Writer }>, FilesystemWriteError> {
         self.cleanup_files();
         let free_location = self.find_free_space(length + size_of::<FileMetadata>() as u32)?;
 
@@ -259,14 +244,14 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     /// Delete a file
     ///
     /// The file will only be deleted once there are no strong references to its content left. Strong references can be obtained by calling upgrade on the content of a file
-    pub fn delete_file(&mut self, filename: &str) -> Result<(), DeleteFileError> {
+    pub fn delete_file(&mut self, filename: &str) -> Result<(), FilesystemDeleteError> {
         let Some((index, _)) = self
             .files
             .iter()
             .enumerate()
             .find(|(_, file)| file.name == filename)
         else {
-            return Err(DeleteFileError::FileNotFound);
+            return Err(FilesystemDeleteError::FileNotFound);
         };
         let file = &mut self.files[index];
         if !file.marked_for_deletion() {
