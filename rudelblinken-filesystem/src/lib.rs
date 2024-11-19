@@ -1,4 +1,6 @@
 #![feature(adt_const_params)]
+#![feature(box_as_ptr)]
+#![feature(box_vec_non_null)]
 
 use file::CreateFileInformationError;
 use file::File;
