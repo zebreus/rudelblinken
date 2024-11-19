@@ -7,7 +7,8 @@ use thiserror::Error;
 
 use crate::{
     file_content::{
-        self, CreateFileContentError, CreateFileContentWriterError, FileContent, FileContentState,
+        self, CreateFileContentReaderError, CreateFileContentWriterError, FileContent,
+        FileContentState,
     },
     file_metadata::{CreateMetadataError, FileMetadata, ReadMetadataError},
     file_writer::FileWriter,
@@ -30,7 +31,7 @@ pub enum CreateFileInformationError {
     #[error(transparent)]
     EraseStorageError(#[from] EraseStorageError),
     #[error(transparent)]
-    CreateFileContentError(#[from] CreateFileContentError),
+    CreateFileContentError(#[from] CreateFileContentReaderError),
 }
 
 #[derive(Error, Debug)]

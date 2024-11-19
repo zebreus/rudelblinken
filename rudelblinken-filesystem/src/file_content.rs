@@ -1,10 +1,9 @@
 use crate::{
-    file_metadata::{FileMetadata, ReadMetadataError},
+    file_metadata::FileMetadata,
     storage::{EraseStorageError, Storage, StorageError},
-    StorageLockError,
 };
 use std::{
-    fmt,
+    fmt::{self, Debug},
     io::{SeekFrom, Write},
     ops::Deref,
     sync::{Arc, RwLock},
@@ -71,61 +70,29 @@ pub struct FileContent<
     content: &'static [u8],
     metadata: &'static FileMetadata,
     // TODO: Change this to an arcmutex
-    ref_count: Arc<RwLock<FileContentInfo<T>>>,
-}
-
-impl<T: Storage + 'static, const STATE: FileContentState> std::fmt::Debug
-    for FileContent<T, STATE>
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FileContent")
-            // .field("content", &self.content)
-            .field("metadata", &self.metadata)
-            .field("ref_count", &self.ref_count)
-            .finish()
-    }
+    info: Arc<RwLock<FileContentInfo<T>>>,
 }
 
 #[derive(Error, Debug)]
-pub enum CreateFileContentError {
-    #[error(transparent)]
-    ReadFileError(#[from] std::io::Error),
-    #[error(transparent)]
-    StorageLockError(#[from] StorageLockError),
-    #[error(transparent)]
-    ReadStorageError(#[from] StorageError),
-    #[error(transparent)]
-    FailedToReadBlockMetadata(#[from] ReadMetadataError),
+pub enum CreateFileContentReaderError {
     #[error("No metadata found the metadata does not have the correct marker.")]
     InvalidMetadataMarker,
     #[error("File has already been deleted")]
     FileWasDeleted,
     #[error("File is not marked as ready. Maybe you lost power during writing?")]
     FileNotReady,
-    #[error(transparent)]
-    EraseStorageError(#[from] EraseStorageError),
 }
 
 #[derive(Error, Debug)]
 pub enum CreateFileContentWriterError {
-    #[error(transparent)]
-    ReadFileError(#[from] std::io::Error),
-    #[error(transparent)]
-    StorageLockError(#[from] StorageLockError),
-    #[error(transparent)]
-    ReadStorageError(#[from] StorageError),
-    #[error(transparent)]
-    FailedToReadBlockMetadata(#[from] ReadMetadataError),
     #[error("No metadata found the metadata does not have the correct marker.")]
     InvalidMetadataMarker,
     #[error("File has already been deleted")]
     FileWasDeleted,
     #[error("File is already marked as ready. You should not write to this anymore.")]
     FileIsAlreadyReady,
-    #[error("The backing for a new file needs to be zeroed")]
+    #[error("The backing storage for a new file needs to be empty")]
     NotZeroed,
-    #[error(transparent)]
-    EraseStorageError(#[from] EraseStorageError),
 }
 
 #[derive(Error, Debug)]
@@ -133,9 +100,6 @@ pub enum DeleteFileContentError {
     #[error(transparent)]
     EraseStorageError(#[from] EraseStorageError),
 }
-
-// unsafe impl<const T: bool> Send for FileContent<T> {}
-// unsafe impl<const T: bool> Sync for FileContent<T> {}
 
 impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
     /// Create a new file content with the given memory area
@@ -150,19 +114,19 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
         storage: &'static T,
         storage_address: u32,
         transition: impl FnOnce(FileContentTransition) -> () + 'static + Send + Sync,
-    ) -> Result<Self, CreateFileContentError> {
+    ) -> Result<Self, CreateFileContentReaderError> {
         if !metadata.valid_marker() {
-            return Err(CreateFileContentError::InvalidMetadataMarker);
+            return Err(CreateFileContentReaderError::InvalidMetadataMarker);
         }
 
         if !metadata.ready() {
-            return Err(CreateFileContentError::FileNotReady);
+            return Err(CreateFileContentReaderError::FileNotReady);
         }
 
         let file = Self {
             content: data,
             metadata: metadata,
-            ref_count: Arc::new(RwLock::new(FileContentInfo {
+            info: Arc::new(RwLock::new(FileContentInfo {
                 reader_count: 1,
                 weak_count: 0,
                 writer_count: 0,
@@ -179,7 +143,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             unsafe {
                 let _ = file.internal_delete();
             };
-            return Err(CreateFileContentError::FileWasDeleted);
+            return Err(CreateFileContentReaderError::FileWasDeleted);
         }
 
         if metadata.deleted() {
@@ -187,43 +151,16 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             unsafe {
                 let _ = file.internal_delete();
             };
-            return Err(CreateFileContentError::FileWasDeleted);
+            return Err(CreateFileContentReaderError::FileWasDeleted);
         };
 
         return Ok(file);
     }
-
-    // pub fn new_to_storage<'a, T: Storage>(
-    //     storage: &'a mut T,
-    //     address: usize,
-    //     data: &[u8],
-    //     destructor: impl FnOnce(bool) -> () + 'static,
-    // ) -> Result<Self, WriteFileError> {
-    //     let memory_mapped_content = storage.write_checked(address, data)?;
-
-    //     return Ok(Self::new(memory_mapped_content, destructor));
-    // }
-
-    // pub fn from_storage<T: Storage>(
-    //     storage: &T,
-    //     address: usize,
-    //     length: usize,
-    //     destructor: impl FnOnce(bool) -> () + 'static,
-    // ) -> Result<Self, StorageError> {
-    //     let memory_mapped_content = storage.read(address, length)?;
-
-    //     return Ok(Self::new(memory_mapped_content, destructor));
-    // }
 }
 
 impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
     /// Create a new file content with the given memory area
-    ///
-    ///
-    // TODO: Make this function unsafe or the argument a &'static [u8]
     pub fn new_writer(
-        // data: VolatileRef<'static, [u8], ReadOnly>,
-        // metadata: VolatileRef<'static, FileMetadata, ReadOnly>,
         data: &'static [u8],
         metadata: &'static FileMetadata,
         storage: &'static T,
@@ -253,7 +190,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
         return Ok(Self {
             content: data,
             metadata: metadata,
-            ref_count: Arc::new(RwLock::new(FileContentInfo {
+            info: Arc::new(RwLock::new(FileContentInfo {
                 reader_count: 0,
                 weak_count: 0,
                 writer_count: 1,
@@ -268,14 +205,14 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
 
     pub fn commit(self) -> Result<FileContent<T, { FileContentState::Reader }>, StorageError> {
         {
-            let mut ref_count = self.ref_count.write().unwrap();
-            assert!(ref_count.writer_count == 1);
-            assert!(ref_count.reader_count == 0);
-            ref_count.writer_count = 0;
-            ref_count.reader_count = 1;
+            let mut info = self.info.write().unwrap();
+            assert!(info.writer_count == 1);
+            assert!(info.reader_count == 0);
+            info.writer_count = 0;
+            info.reader_count = 1;
             unsafe {
                 self.metadata
-                    .set_ready(ref_count.storage, ref_count.storage_address)?;
+                    .set_ready(info.storage, info.storage_address)?;
             }
         }
         return unsafe {
@@ -290,11 +227,11 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
 impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> {
     /// Creates a new weak pointer to this data
     pub fn downgrade(&self) -> FileContent<T, { FileContentState::Weak }> {
-        self.ref_count.write().unwrap().weak_count += 1;
+        self.info.write().unwrap().weak_count += 1;
         return FileContent::<T, { FileContentState::Weak }> {
             content: self.content,
             metadata: self.metadata,
-            ref_count: self.ref_count.clone(),
+            info: self.info.clone(),
         };
     }
 
@@ -313,29 +250,14 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
         if STATE == FileContentState::Writer {
             return None;
         }
-        let mut info = self.ref_count.write().unwrap();
-        // if STATE == FileContentState::Weak && info.reader_count == 0 {
-        //     return None;
-        // }
+        let mut info = self.info.write().unwrap();
         if info.has_been_deleted {
             return None;
         }
-        if !self
-            .metadata
-            // .as_ptr()
-            // .as_raw_ptr()
-            // .as_ref()
-            .ready()
-        {
+        if !self.metadata.ready() {
             return None;
         }
-        if self
-            .metadata
-            // .as_ptr()
-            // .as_raw_ptr()
-            // .as_ref()
-            .marked_for_deletion()
-        {
+        if self.metadata.marked_for_deletion() {
             return None;
         }
 
@@ -343,35 +265,35 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
         return Some(FileContent::<T, { FileContentState::Reader }> {
             content: self.content,
             metadata: self.metadata,
-            ref_count: self.ref_count.clone(),
+            info: self.info.clone(),
         });
     }
 
     /// Check if the data will be dropped if this reference is dropped.
     pub fn is_last(&self) -> bool {
         if STATE == FileContentState::Reader {
-            return self.ref_count.read().unwrap().reader_count == 1;
+            return self.info.read().unwrap().reader_count == 1;
         }
         if STATE == FileContentState::Writer {
-            return self.ref_count.read().unwrap().writer_count == 1;
+            return self.info.read().unwrap().writer_count == 1;
         }
 
         return false;
     }
 
     pub fn reader_count(&self) -> usize {
-        return self.ref_count.read().unwrap().reader_count;
+        return self.info.read().unwrap().reader_count;
     }
 
     pub fn writer_count(&self) -> usize {
-        return self.ref_count.read().unwrap().writer_count;
+        return self.info.read().unwrap().writer_count;
     }
 
     pub fn marked_for_deletion(&self) -> bool {
         return self.metadata.marked_for_deletion();
     }
     pub fn deleted(&self) -> bool {
-        let info = self.ref_count.read().unwrap();
+        let info = self.info.read().unwrap();
         if info.has_been_deleted {
             return true;
         }
@@ -386,104 +308,26 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
     /// No new strong references can be created to a file thats marked for deletion, except with clone on a strong reference.
     ///
     /// If there are no strong references left, the file will be deleted right away
-    // TODO: Figure out how this will work when called on a weak ref with no strong ref in existence
-    // TODO: Figure out how this will work when called on a writer
     pub fn mark_for_deletion(&self) -> Result<(), DeleteFileContentError> {
-        let ref_count = self.ref_count.read().unwrap();
+        let info = self.info.read().unwrap();
 
         unsafe {
             self.metadata
-                // .as_ptr()
-                // .as_raw_ptr()
-                // .as_ref()
-                .set_marked_for_deletion(ref_count.storage, ref_count.storage_address)
+                .set_marked_for_deletion(info.storage, info.storage_address)
                 .unwrap();
         };
-        if ref_count.has_been_deleted == false
-            && ref_count.writer_count == 0
-            && ref_count.reader_count == 0
-        {
-            drop(ref_count);
+        if info.has_been_deleted == false && info.writer_count == 0 && info.reader_count == 0 {
+            drop(info);
             unsafe { self.internal_delete()? };
         }
         Ok(())
     }
-}
 
-impl<T: Storage + 'static> Deref for FileContent<T, { FileContentState::Reader }> {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        // return unsafe { &*self.content.as_ptr().as_raw_ptr().as_ptr() };
-        return self.content;
-    }
-}
-
-impl<T: Storage + 'static> PartialEq<Self> for FileContent<T, { FileContentState::Reader }> {
-    fn ne(&self, other: &Self) -> bool {
-        !self.eq(other)
-    }
-
-    fn eq(&self, other: &Self) -> bool {
-        self.content == other.content
-    }
-}
-
-impl<T: Storage + 'static> Clone for FileContent<T, { FileContentState::Reader }> {
-    fn clone(&self) -> Self {
-        let mut info = self.ref_count.write().unwrap();
-        info.reader_count += 1;
-        Self {
-            content: self.content,
-            metadata: self.metadata,
-            ref_count: self.ref_count.clone(),
-        }
-    }
-}
-
-impl<T: Storage + 'static> Clone for FileContent<T, { FileContentState::Weak }> {
-    fn clone(&self) -> Self {
-        let mut info = self.ref_count.write().unwrap();
-        info.weak_count += 1;
-        Self {
-            content: self.content,
-            metadata: self.metadata,
-            ref_count: self.ref_count.clone(),
-        }
-    }
-}
-
-impl<T: Storage + 'static, const STATE: FileContentState> Drop for FileContent<T, STATE> {
-    fn drop(&mut self) {
-        let mut info = self.ref_count.write().unwrap();
-
-        if STATE == { FileContentState::Weak } {
-            info.weak_count -= 1;
-            return;
-        }
-
-        info.reader_count = info.reader_count.saturating_sub(1);
-
-        if info.reader_count == 0
-            && info.has_been_deleted == false
-            && self.metadata.marked_for_deletion()
-        {
-            drop(info);
-            unsafe {
-                // We can handle a failed deletion here
-                // TODO: maybe log it
-                let _ = self.internal_delete();
-            };
-        }
-    }
-}
-
-impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> {
     /// Internal delete function that does not consume the file.
     ///
     /// Any access to this file afterwards is not safe.
     unsafe fn internal_delete(&self) -> Result<(), DeleteFileContentError> {
-        let mut info = self.ref_count.write().unwrap();
+        let mut info = self.info.write().unwrap();
 
         let previous_transition: &mut Box<
             dyn FnOnce(FileContentTransition) -> () + 'static + Send + Sync,
@@ -528,11 +372,88 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
     }
 }
 
+impl<T: Storage + 'static, const STATE: FileContentState> Debug for FileContent<T, STATE> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FileContent")
+            // .field("content", &self.content)
+            .field("metadata", &self.metadata)
+            .field("info", &self.info)
+            .finish()
+    }
+}
+
+impl<T: Storage + 'static> Deref for FileContent<T, { FileContentState::Reader }> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        return self.content;
+    }
+}
+
+impl<T: Storage + 'static> PartialEq<Self> for FileContent<T, { FileContentState::Reader }> {
+    fn ne(&self, other: &Self) -> bool {
+        !self.eq(other)
+    }
+
+    fn eq(&self, other: &Self) -> bool {
+        self.content == other.content
+    }
+}
+
+impl<T: Storage + 'static> Clone for FileContent<T, { FileContentState::Reader }> {
+    fn clone(&self) -> Self {
+        let mut info = self.info.write().unwrap();
+        info.reader_count += 1;
+        Self {
+            content: self.content,
+            metadata: self.metadata,
+            info: self.info.clone(),
+        }
+    }
+}
+
+impl<T: Storage + 'static> Clone for FileContent<T, { FileContentState::Weak }> {
+    fn clone(&self) -> Self {
+        let mut info = self.info.write().unwrap();
+        info.weak_count += 1;
+        Self {
+            content: self.content,
+            metadata: self.metadata,
+            info: self.info.clone(),
+        }
+    }
+}
+
+impl<T: Storage + 'static, const STATE: FileContentState> Drop for FileContent<T, STATE> {
+    fn drop(&mut self) {
+        let mut info = self.info.write().unwrap();
+
+        if STATE == { FileContentState::Weak } {
+            info.weak_count -= 1;
+            return;
+        }
+
+        info.reader_count = info.reader_count.saturating_sub(1);
+
+        if info.reader_count == 0
+            && info.has_been_deleted == false
+            && self.metadata.marked_for_deletion()
+        {
+            drop(info);
+            unsafe {
+                // We cant really handle a failed deletion here
+                // TODO: maybe log it
+                let _ = self.internal_delete();
+            };
+        }
+    }
+}
+
 impl<T: Storage + 'static + Send + Sync> Seek for FileContent<T, { FileContentState::Writer }> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         let length = self.content.len() as u32;
         let current_offset = &mut self
-            .ref_count
+            .info
             .write()
             .map_err(|e| std::io::Error::other(e.to_string()))?
             .current_offset;
@@ -565,23 +486,23 @@ impl<T: Storage + 'static + Send + Sync> Write for FileContent<T, { FileContentS
     /// The same as [std::io::Write::write] but you can only flip bits from 0 to 1
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let length = self.content.len() as u32;
-        let ref_count = &mut self
-            .ref_count
+        let info = &mut self
+            .info
             .write()
             .map_err(|_| std::io::ErrorKind::ResourceBusy)?;
-        let current_offset = ref_count.current_offset;
+        let current_offset = info.current_offset;
 
         let remaining_length = length.saturating_sub(current_offset);
         let write_length = std::cmp::min(remaining_length, buf.len() as u32);
 
-        let writable_storage = ref_count.storage;
+        let writable_storage = info.storage;
         writable_storage
             .write(
-                ref_count.storage_address + size_of::<FileMetadata>() as u32 + current_offset,
+                info.storage_address + size_of::<FileMetadata>() as u32 + current_offset,
                 &buf[0..write_length as usize],
             )
             .map_err(|e| std::io::Error::other(e))?;
-        ref_count.current_offset += write_length;
+        info.current_offset += write_length;
         return Ok(write_length as usize);
     }
 
