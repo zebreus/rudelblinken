@@ -1,6 +1,6 @@
 use crate::{
     file_content::{
-        DeleteFileContentError, FileContent, FileContentState, ReadFileFromStorageError,
+        DeleteFileContentError, File, FileState, ReadFileFromStorageError,
         WriteFileToStorageError,
     },
     storage::Storage,
@@ -8,7 +8,7 @@ use crate::{
 use std::fmt::Formatter;
 
 /// Internal proxy for a file that tracks some metadata in memory
-pub(crate) struct File<T: Storage + 'static + Send + Sync> {
+pub(crate) struct FileInformation<T: Storage + 'static + Send + Sync> {
     /// Starting address of the file (in flash)
     pub address: u32,
     /// Length of the files content in bytes
@@ -17,10 +17,10 @@ pub(crate) struct File<T: Storage + 'static + Send + Sync> {
     pub name: String,
     /// Content of the file
     /// Will be None if the file has been deleted
-    content: FileContent<T, { FileContentState::Weak }>,
+    content: File<T, { FileState::Weak }>,
 }
 
-impl<T: Storage + 'static + Send + Sync> Clone for File<T> {
+impl<T: Storage + 'static + Send + Sync> Clone for FileInformation<T> {
     fn clone(&self) -> Self {
         Self {
             address: self.address.clone(),
@@ -31,7 +31,7 @@ impl<T: Storage + 'static + Send + Sync> Clone for File<T> {
     }
 }
 
-impl<T: Storage + 'static + Send + Sync> std::fmt::Debug for File<T> {
+impl<T: Storage + 'static + Send + Sync> std::fmt::Debug for FileInformation<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("File")
             .field("address", &self.address)
@@ -42,18 +42,18 @@ impl<T: Storage + 'static + Send + Sync> std::fmt::Debug for File<T> {
     }
 }
 
-impl<T: Storage + 'static + Send + Sync> File<T> {
+impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
     /// Read a file from storage.
     ///
     /// address is an address that can be used with storage
     pub fn from_storage(
         storage: &'static T,
         address: u32,
-    ) -> Result<File<T>, ReadFileFromStorageError> {
+    ) -> Result<FileInformation<T>, ReadFileFromStorageError> {
         let file_content =
-            FileContent::<T, { FileContentState::Reader }>::from_storage(storage, address)?;
+            File::<T, { FileState::Reader }>::from_storage(storage, address)?;
 
-        let information = File {
+        let information = FileInformation {
             address,
             length: file_content.len() as u32,
             name: file_content.name_str().into(),
@@ -69,12 +69,12 @@ impl<T: Storage + 'static + Send + Sync> File<T> {
         address: u32,
         length: u32,
         name: &str,
-    ) -> Result<(Self, FileContent<T, { FileContentState::Writer }>), WriteFileToStorageError> {
-        let file_content = FileContent::<T, { FileContentState::Writer }>::to_storage(
+    ) -> Result<(Self, File<T, { FileState::Writer }>), WriteFileToStorageError> {
+        let file_content = File::<T, { FileState::Writer }>::to_storage(
             storage, address, length, name,
         )?;
 
-        let information = File {
+        let information = FileInformation {
             address: address,
             length: length,
             name: name.into(),
@@ -100,7 +100,7 @@ impl<T: Storage + 'static + Send + Sync> File<T> {
         self.content.ready()
     }
 
-    pub fn read(&self) -> FileContent<T, { FileContentState::Weak }> {
+    pub fn read(&self) -> File<T, { FileState::Weak }> {
         return self.content.clone();
     }
 }

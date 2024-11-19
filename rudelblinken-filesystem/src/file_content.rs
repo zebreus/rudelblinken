@@ -14,7 +14,7 @@ use thiserror::Error;
 use zerocopy::IntoBytes;
 
 #[derive(Error, Debug)]
-pub enum ReadFileContentError {
+pub enum ReadFileError {
     #[error(transparent)]
     StorageError(#[from] StorageError),
     #[error("No metadata found the metadata does not have the correct marker.")]
@@ -26,7 +26,7 @@ pub enum ReadFileContentError {
 }
 
 #[derive(Error, Debug)]
-pub enum WriteFileContentError {
+pub enum WriteFileError {
     #[error(transparent)]
     StorageError(#[from] StorageError),
     #[error("No metadata found the metadata does not have the correct marker.")]
@@ -44,7 +44,7 @@ pub enum ReadFileFromStorageError {
     #[error(transparent)]
     ReadMetadataError(#[from] ReadMetadataError),
     #[error(transparent)]
-    ReadFileContentError(#[from] ReadFileContentError),
+    ReadFileContentError(#[from] ReadFileError),
 }
 
 #[derive(Error, Debug)]
@@ -52,7 +52,7 @@ pub enum WriteFileToStorageError {
     #[error(transparent)]
     WriteMetadataError(#[from] WriteMetadataError),
     #[error(transparent)]
-    WriteFileContentError(#[from] WriteFileContentError),
+    WriteFileContentError(#[from] WriteFileError),
 }
 
 #[derive(Error, Debug)]
@@ -69,14 +69,15 @@ pub enum CommitFileContentError {
 
 pub enum FileContentTransition {
     /// Writer gets committed
-    Commit,
+    // Commit,
     /// Writer gets dropped without commit
-    Abort,
+    // Abort,
     /// Last reader gets dropped
     DropLastReader,
 }
 
-struct FileContentInfo<T: Storage + 'static> {
+/// Shared data about the current state of a file
+struct InnerFile<T: Storage + 'static> {
     /// Number of weak references
     weak_count: usize,
     /// Number of strong references
@@ -96,7 +97,7 @@ struct FileContentInfo<T: Storage + 'static> {
     has_been_deleted: bool,
 }
 
-impl<T: Storage + 'static> fmt::Debug for FileContentInfo<T> {
+impl<T: Storage + 'static> fmt::Debug for InnerFile<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FileContentInfo")
             .field("weak_count", &self.weak_count)
@@ -107,7 +108,7 @@ impl<T: Storage + 'static> fmt::Debug for FileContentInfo<T> {
 }
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Debug)]
-pub enum FileContentState {
+pub enum FileState {
     /// Obtain a writer by creating a new file
     Writer,
     /// Can be obtained by upgrading a weak reference
@@ -116,44 +117,36 @@ pub enum FileContentState {
     Weak,
 }
 
-pub struct FileContent<
-    T: Storage + 'static,
-    const STATE: FileContentState = { FileContentState::Reader },
-> {
-    // content: VolatileRef<'static, [u8], ReadOnly>,
-    // metadata: VolatileRef<'static, FileMetadata, ReadOnly>,
+pub struct File<T: Storage + 'static, const STATE: FileState = { FileState::Reader }> {
     content: &'static [u8],
     metadata: &'static FileMetadata,
-    // TODO: Change this to an arcmutex
-    info: NonNull<RwLock<FileContentInfo<T>>>,
+    info: NonNull<RwLock<InnerFile<T>>>,
 }
 
-impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
+impl<T: Storage + 'static> File<T, { FileState::Reader }> {
     /// Create a new file content with the given memory area
     ///
     /// It is only safe to call this function if there are no other instances pointing to the file
     // TODO: Make this function unsafe or the argument a &'static [u8]
-    pub fn new(
-        // data: VolatileRef<'static, [u8], ReadOnly>,
-        // metadata: VolatileRef<'static, FileMetadata, ReadOnly>,
+    fn new(
         data: &'static [u8],
         metadata: &'static FileMetadata,
         storage: &'static T,
         storage_address: u32,
         transition: impl FnOnce(FileContentTransition) -> () + 'static + Send + Sync,
-    ) -> Result<Self, ReadFileContentError> {
+    ) -> Result<Self, ReadFileError> {
         if !metadata.valid_marker() {
-            return Err(ReadFileContentError::InvalidMetadataMarker);
+            return Err(ReadFileError::InvalidMetadataMarker);
         }
 
         if !metadata.ready() {
-            return Err(ReadFileContentError::FileNotReady);
+            return Err(ReadFileError::FileNotReady);
         }
 
         let file = Self {
             content: data,
             metadata: metadata,
-            info: Box::into_non_null(Box::new(RwLock::new(FileContentInfo {
+            info: Box::into_non_null(Box::new(RwLock::new(InnerFile {
                 reader_count: 1,
                 weak_count: 0,
                 writer_count: 0,
@@ -170,7 +163,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             unsafe {
                 let _ = file.internal_delete();
             };
-            return Err(ReadFileContentError::FileWasDeleted);
+            return Err(ReadFileError::FileWasDeleted);
         }
 
         if metadata.deleted() {
@@ -178,7 +171,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             unsafe {
                 let _ = file.internal_delete();
             };
-            return Err(ReadFileContentError::FileWasDeleted);
+            return Err(ReadFileError::FileWasDeleted);
         };
 
         return Ok(file);
@@ -194,14 +187,9 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
         let metadata = FileMetadata::from_storage(storage, address)?;
         let content = storage
             .read(address + size_of::<FileMetadata>() as u32, metadata.length)
-            .map_err(|e| ReadFileContentError::from(e))?;
-        let file_content = FileContent::<T, { FileContentState::Reader }>::new(
-            content,
-            metadata,
-            storage,
-            address,
-            |_| (),
-        )?;
+            .map_err(|e| ReadFileError::from(e))?;
+        let file_content =
+            File::<T, { FileState::Reader }>::new(content, metadata, storage, address, |_| ())?;
 
         return Ok(file_content);
     }
@@ -211,39 +199,39 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
     }
 }
 
-impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
+impl<T: Storage + 'static> File<T, { FileState::Writer }> {
     /// Create a new file content with the given memory area
-    pub fn new_writer(
+    fn new_writer(
         data: &'static [u8],
         metadata: &'static FileMetadata,
         storage: &'static T,
         storage_address: u32,
         transition: impl FnOnce(FileContentTransition) -> () + 'static + Send + Sync,
-    ) -> Result<Self, WriteFileContentError> {
+    ) -> Result<Self, WriteFileError> {
         if !metadata.valid_marker() {
-            return Err(WriteFileContentError::InvalidMetadataMarker);
+            return Err(WriteFileError::InvalidMetadataMarker);
         }
 
         if metadata.deleted() {
-            return Err(WriteFileContentError::FileWasDeleted);
+            return Err(WriteFileError::FileWasDeleted);
         }
 
         if metadata.ready() {
-            return Err(WriteFileContentError::FileIsAlreadyReady);
+            return Err(WriteFileError::FileIsAlreadyReady);
         }
 
         if metadata.marked_for_deletion() {
-            // For now I allow this
+            // For now I allow this as this should never happen
         }
 
         if !data.iter().all(|byte| *byte == 0xff) {
-            return Err(WriteFileContentError::NotZeroed);
+            return Err(WriteFileError::NotZeroed);
         }
 
         return Ok(Self {
             content: data,
             metadata: metadata,
-            info: Box::into_non_null(Box::new(RwLock::new(FileContentInfo {
+            info: Box::into_non_null(Box::new(RwLock::new(InnerFile {
                 reader_count: 0,
                 weak_count: 0,
                 writer_count: 1,
@@ -266,8 +254,8 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
         let metadata = FileMetadata::new_to_storage(storage, address, name, length)?;
         let content = storage
             .read(address + size_of::<FileMetadata>() as u32, metadata.length)
-            .map_err(|e| WriteFileContentError::from(e))?;
-        let file_content = FileContent::<T, { FileContentState::Writer }>::new_writer(
+            .map_err(|e| WriteFileError::from(e))?;
+        let file_content = File::<T, { FileState::Writer }>::new_writer(
             content,
             metadata,
             storage,
@@ -278,9 +266,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
         return Ok(file_content);
     }
 
-    pub fn commit(
-        self,
-    ) -> Result<FileContent<T, { FileContentState::Reader }>, CommitFileContentError> {
+    pub fn commit(self) -> Result<File<T, { FileState::Reader }>, CommitFileContentError> {
         {
             let mut info = unsafe { (self.info.as_ref()).write().unwrap() };
             assert!(info.writer_count == 1);
@@ -293,21 +279,20 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
             }
         }
         return unsafe {
-            Ok(std::mem::transmute::<
-                _,
-                FileContent<T, { FileContentState::Reader }>,
-            >(self))
+            Ok(std::mem::transmute::<_, File<T, { FileState::Reader }>>(
+                self,
+            ))
         };
     }
 }
 
-impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> {
+impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
     /// Creates a new weak pointer to this data
-    pub fn downgrade(&self) -> FileContent<T, { FileContentState::Weak }> {
+    pub fn downgrade(&self) -> File<T, { FileState::Weak }> {
         unsafe {
             self.info.as_ref().write().unwrap().weak_count += 1;
         }
-        return FileContent::<T, { FileContentState::Weak }> {
+        return File::<T, { FileState::Weak }> {
             content: self.content,
             metadata: self.metadata,
             info: self.info.clone(),
@@ -325,8 +310,8 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
     /// Upgrading a writer will alwayse fail. Use commit instead.
     ///
     /// Upgrading will always fail while there is a writer alive
-    pub fn upgrade(&self) -> Option<FileContent<T, { FileContentState::Reader }>> {
-        if STATE == FileContentState::Writer {
+    pub fn upgrade(&self) -> Option<File<T, { FileState::Reader }>> {
+        if STATE == FileState::Writer {
             return None;
         }
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
@@ -341,7 +326,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
         }
 
         info.reader_count += 1;
-        return Some(FileContent::<T, { FileContentState::Reader }> {
+        return Some(File::<T, { FileState::Reader }> {
             content: self.content,
             metadata: self.metadata,
             info: self.info.clone(),
@@ -350,10 +335,10 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
 
     /// Check if the data will be dropped if this reference is dropped.
     pub fn is_last(&self) -> bool {
-        if STATE == FileContentState::Reader {
+        if STATE == FileState::Reader {
             return unsafe { self.info.as_ref().read().unwrap().reader_count == 1 };
         }
-        if STATE == FileContentState::Writer {
+        if STATE == FileState::Writer {
             return unsafe { self.info.as_ref().read().unwrap().writer_count == 1 };
         }
 
@@ -451,7 +436,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> FileContent<T, STATE> 
     }
 }
 
-impl<T: Storage + 'static, const STATE: FileContentState> Debug for FileContent<T, STATE> {
+impl<T: Storage + 'static, const STATE: FileState> Debug for File<T, STATE> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileContent")
             // .field("content", &self.content)
@@ -461,7 +446,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> Debug for FileContent<
     }
 }
 
-impl<T: Storage + 'static> Deref for FileContent<T, { FileContentState::Reader }> {
+impl<T: Storage + 'static> Deref for File<T, { FileState::Reader }> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -469,7 +454,7 @@ impl<T: Storage + 'static> Deref for FileContent<T, { FileContentState::Reader }
     }
 }
 
-impl<T: Storage + 'static> PartialEq<Self> for FileContent<T, { FileContentState::Reader }> {
+impl<T: Storage + 'static> PartialEq<Self> for File<T, { FileState::Reader }> {
     fn ne(&self, other: &Self) -> bool {
         !self.eq(other)
     }
@@ -479,7 +464,7 @@ impl<T: Storage + 'static> PartialEq<Self> for FileContent<T, { FileContentState
     }
 }
 
-impl<T: Storage + 'static> Clone for FileContent<T, { FileContentState::Reader }> {
+impl<T: Storage + 'static> Clone for File<T, { FileState::Reader }> {
     fn clone(&self) -> Self {
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
         info.reader_count += 1;
@@ -491,7 +476,7 @@ impl<T: Storage + 'static> Clone for FileContent<T, { FileContentState::Reader }
     }
 }
 
-impl<T: Storage + 'static> Clone for FileContent<T, { FileContentState::Weak }> {
+impl<T: Storage + 'static> Clone for File<T, { FileState::Weak }> {
     fn clone(&self) -> Self {
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
         info.weak_count += 1;
@@ -503,17 +488,17 @@ impl<T: Storage + 'static> Clone for FileContent<T, { FileContentState::Weak }> 
     }
 }
 
-impl<T: Storage + 'static, const STATE: FileContentState> Drop for FileContent<T, STATE> {
+impl<T: Storage + 'static, const STATE: FileState> Drop for File<T, STATE> {
     fn drop(&mut self) {
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
 
-        if STATE == { FileContentState::Weak } {
+        if STATE == { FileState::Weak } {
             info.weak_count = info.weak_count.saturating_sub(1);
         }
-        if STATE == { FileContentState::Writer } {
+        if STATE == { FileState::Writer } {
             info.writer_count = info.writer_count.saturating_sub(1);
         }
-        if STATE == { FileContentState::Reader } {
+        if STATE == { FileState::Reader } {
             info.reader_count = info.reader_count.saturating_sub(1);
         }
 
@@ -540,7 +525,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> Drop for FileContent<T
     }
 }
 
-impl<T: Storage + 'static + Send + Sync> Seek for FileContent<T, { FileContentState::Writer }> {
+impl<T: Storage + 'static + Send + Sync> Seek for File<T, { FileState::Writer }> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         let length = self.content.len() as u32;
         let current_offset = unsafe {
@@ -576,7 +561,7 @@ impl<T: Storage + 'static + Send + Sync> Seek for FileContent<T, { FileContentSt
     }
 }
 
-impl<T: Storage + 'static + Send + Sync> Write for FileContent<T, { FileContentState::Writer }> {
+impl<T: Storage + 'static + Send + Sync> Write for File<T, { FileState::Writer }> {
     /// The same as [std::io::Write::write] but you can only flip bits from 0 to 1
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let length = self.content.len() as u32;
@@ -638,15 +623,9 @@ mod tests {
         return (backing_storage, mut_content, metadata);
     }
 
-    fn call_new() -> FileContent<SimulatedStorage, { FileContentState::Reader }> {
+    fn call_new() -> File<SimulatedStorage, { FileState::Reader }> {
         let (storage, content, metadata) = get_backing();
-        let content = FileContent::<_, { FileContentState::Reader }>::new(
-            content,
-            metadata,
-            storage,
-            0,
-            |_| (),
-        );
+        let content = File::<_, { FileState::Reader }>::new(content, metadata, storage, 0, |_| ());
         return content.unwrap();
     }
 
@@ -659,33 +638,18 @@ mod tests {
     #[test]
     fn equality_works() {
         let (storage1, content1, metadata1) = get_backing();
-        let content1 = FileContent::<_, { FileContentState::Reader }>::new(
-            content1,
-            metadata1,
-            storage1,
-            0,
-            |_| (),
-        )
-        .unwrap();
+        let content1 =
+            File::<_, { FileState::Reader }>::new(content1, metadata1, storage1, 0, |_| ())
+                .unwrap();
         let (storage2, content2, metadata2) = get_backing();
-        let content2 = FileContent::<_, { FileContentState::Reader }>::new(
-            content2,
-            metadata2,
-            storage2,
-            0,
-            |_| (),
-        )
-        .unwrap();
+        let content2 =
+            File::<_, { FileState::Reader }>::new(content2, metadata2, storage2, 0, |_| ())
+                .unwrap();
         let (storage3, content3, metadata3) = get_backing();
         content3[1] = 17;
-        let content3 = FileContent::<_, { FileContentState::Reader }>::new(
-            content3,
-            metadata3,
-            storage3,
-            0,
-            |_| (),
-        )
-        .unwrap();
+        let content3 =
+            File::<_, { FileState::Reader }>::new(content3, metadata3, storage3, 0, |_| ())
+                .unwrap();
         assert_eq!(content1, content2);
         assert_ne!(content2, content3);
     }
@@ -694,14 +658,8 @@ mod tests {
     fn cloning_works() {
         let (storage, content, metadata) = get_backing();
         content[3] = 17;
-        let content = FileContent::<_, { FileContentState::Reader }>::new(
-            content,
-            metadata,
-            storage,
-            0,
-            |_| (),
-        )
-        .unwrap();
+        let content =
+            File::<_, { FileState::Reader }>::new(content, metadata, storage, 0, |_| ()).unwrap();
         let cloned_content = content.clone();
         assert_eq!(content, cloned_content);
     }
@@ -710,43 +668,43 @@ mod tests {
     fn is_last_works() {
         let content = call_new();
 
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         let other_content = content.clone();
-        assert!(!FileContent::is_last(&content));
-        assert!(!FileContent::is_last(&other_content));
+        assert!(!File::is_last(&content));
+        assert!(!File::is_last(&other_content));
         drop(content);
-        assert!(FileContent::is_last(&other_content));
+        assert!(File::is_last(&other_content));
     }
 
     #[test]
     fn downgrading_works() {
         let content = call_new();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         let weak_content = content.downgrade();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         drop(weak_content);
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
     }
 
     #[test]
     fn upgrading_works() {
         let content = call_new();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         let weak_content = content.downgrade();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         let upgraded_content = weak_content.upgrade().unwrap();
-        assert!(!FileContent::is_last(&content));
-        assert!(!FileContent::is_last(&upgraded_content));
+        assert!(!File::is_last(&content));
+        assert!(!File::is_last(&upgraded_content));
         drop(content);
-        assert!(FileContent::is_last(&upgraded_content));
+        assert!(File::is_last(&upgraded_content));
     }
 
     #[test]
     fn upgrading_works_even_if_there_are_no_readers_left() {
         let content = call_new();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         let weak_content = content.downgrade();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         drop(content);
         weak_content.upgrade().unwrap();
     }
@@ -754,9 +712,9 @@ mod tests {
     #[test]
     fn upgrading_does_not_work_when_reader_was_marked_for_deletion() {
         let content = call_new();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         let weak_content = content.downgrade();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         content.mark_for_deletion().unwrap();
         drop(content);
         let None = weak_content.upgrade() else {
@@ -767,9 +725,9 @@ mod tests {
     #[test]
     fn upgrading_does_not_work_when_weak_was_marked_for_deletion() {
         let content = call_new();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         let weak_content = content.downgrade();
-        assert!(FileContent::is_last(&content));
+        assert!(File::is_last(&content));
         drop(content);
         weak_content.mark_for_deletion().unwrap();
         let None = weak_content.upgrade() else {
@@ -808,7 +766,7 @@ mod tests {
     fn upgrading_fails_when_marked_for_deletion() {
         let content = call_new();
         let weak_content = content.downgrade();
-        FileContent::mark_for_deletion(&content).unwrap();
+        File::mark_for_deletion(&content).unwrap();
         let None = content.upgrade() else {
             panic!("Should not be able to upgrade when there are no strong references left");
         };

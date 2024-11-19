@@ -4,11 +4,11 @@
 #![cfg(test)]
 #![feature(allocator_api)]
 
-use file::File;
 use file_content::CommitFileContentError;
-use file_content::FileContent;
-use file_content::FileContentState;
+use file_content::File;
+use file_content::FileState;
 use file_content::WriteFileToStorageError;
+use file_information::FileInformation;
 use file_metadata::FileMetadata;
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -16,10 +16,10 @@ use std::ops::Bound::Included;
 use storage::EraseStorageError;
 use storage::Storage;
 use thiserror::Error;
-mod file;
 mod file_content;
+mod file_information;
 mod file_metadata;
-mod storage;
+pub mod storage;
 
 #[derive(Error, Debug, Clone)]
 pub enum FindFreeSpaceError {
@@ -54,7 +54,7 @@ pub enum FilesystemDeleteError {
 /// Filesystem implementation
 pub struct Filesystem<T: Storage + 'static + Send + Sync> {
     storage: &'static T,
-    files: Vec<File<T>>,
+    files: Vec<FileInformation<T>>,
 }
 
 impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
@@ -87,8 +87,10 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
         while block_number < T::BLOCKS {
             let current_block_number = (block_number + first_block as u32) % T::BLOCKS;
-            let file_information =
-                File::from_storage(filesystem.storage, current_block_number * T::BLOCK_SIZE);
+            let file_information = FileInformation::from_storage(
+                filesystem.storage,
+                current_block_number * T::BLOCK_SIZE,
+            );
             let file_information = match file_information {
                 Ok(file_information) => file_information,
                 Err(_) => {
@@ -125,7 +127,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         return self.storage;
     }
 
-    pub fn read_file(&self, name: &str) -> Option<FileContent<T, { FileContentState::Weak }>> {
+    pub fn read_file(&self, name: &str) -> Option<File<T, { FileState::Weak }>> {
         let file = self
             .files
             .iter()
@@ -233,11 +235,12 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         name: &str,
         length: u32,
         _hash: &[u8; 32],
-    ) -> Result<FileContent<T, { FileContentState::Writer }>, FilesystemWriteError> {
+    ) -> Result<File<T, { FileState::Writer }>, FilesystemWriteError> {
         self.cleanup_files();
         let free_location = self.find_free_space(length + size_of::<FileMetadata>() as u32)?;
 
-        let (file, writer) = File::to_storage(self.storage, free_location, length, name)?;
+        let (file, writer) =
+            FileInformation::to_storage(self.storage, free_location, length, name)?;
         self.files.push(file);
         Ok(writer)
     }
