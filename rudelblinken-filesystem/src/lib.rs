@@ -4,10 +4,10 @@
 #![cfg(test)]
 #![feature(allocator_api)]
 
-use file_content::CommitFileContentError;
-use file_content::File;
-use file_content::FileState;
-use file_content::WriteFileToStorageError;
+use file::CommitFileContentError;
+use file::File;
+use file::FileState;
+use file::WriteFileToStorageError;
 use file_information::FileInformation;
 use file_metadata::FileMetadata;
 use std::collections::BTreeMap;
@@ -16,7 +16,7 @@ use std::ops::Bound::Included;
 use storage::EraseStorageError;
 use storage::Storage;
 use thiserror::Error;
-mod file_content;
+mod file;
 mod file_information;
 mod file_metadata;
 pub mod storage;

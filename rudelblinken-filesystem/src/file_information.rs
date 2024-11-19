@@ -1,7 +1,6 @@
 use crate::{
-    file_content::{
-        DeleteFileContentError, File, FileState, ReadFileFromStorageError,
-        WriteFileToStorageError,
+    file::{
+        DeleteFileContentError, File, FileState, ReadFileFromStorageError, WriteFileToStorageError,
     },
     storage::Storage,
 };
@@ -50,8 +49,7 @@ impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
         storage: &'static T,
         address: u32,
     ) -> Result<FileInformation<T>, ReadFileFromStorageError> {
-        let file_content =
-            File::<T, { FileState::Reader }>::from_storage(storage, address)?;
+        let file_content = File::<T, { FileState::Reader }>::from_storage(storage, address)?;
 
         let information = FileInformation {
             address,
@@ -70,9 +68,8 @@ impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
         length: u32,
         name: &str,
     ) -> Result<(Self, File<T, { FileState::Writer }>), WriteFileToStorageError> {
-        let file_content = File::<T, { FileState::Writer }>::to_storage(
-            storage, address, length, name,
-        )?;
+        let file_content =
+            File::<T, { FileState::Writer }>::to_storage(storage, address, length, name)?;
 
         let information = FileInformation {
             address: address,
