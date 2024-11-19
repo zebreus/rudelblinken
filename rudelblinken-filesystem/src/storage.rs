@@ -38,6 +38,8 @@ pub enum EraseStorageError {
 /// Storage with wraparound
 ///
 /// Implementing write_readback is optional, but can be done for better performance in some places.
+///
+/// The starting address of each block returned by read needs to be aligned to 64 bytes
 pub trait Storage {
     /// Size in which blocks can be erased
     const BLOCK_SIZE: u32;
@@ -76,9 +78,7 @@ pub trait Storage {
     }
     /// Write metadata and verify afterwards that the read data matches the written data.
     fn write_checked(&self, address: u32, data: &[u8]) -> Result<&'static [u8], StorageError> {
-        println!("{:?}", data);
         let read_data = self.write_readback(address, data)?;
-        println!("{:?}", read_data);
         if data != read_data {
             return Err(StorageError::ReadDataDoesNotMatchWrittenData);
         }
@@ -94,8 +94,13 @@ use std::{
 
 #[cfg(test)]
 #[derive(Debug)]
+#[repr(C, align(4096))]
+struct AlignedBuffer<const SIZE: usize>([u8; SIZE]);
+
+#[cfg(test)]
+#[derive(Debug)]
 pub struct SimulatedStorage {
-    pool: Box<[u8; Self::SIZE as usize * 2]>,
+    pool: Box<AlignedBuffer<{ Self::SIZE as usize * 2 }>>,
     pool_ptr: *mut [u8; Self::SIZE as usize * 2],
     key_value: Arc<Mutex<HashMap<String, Box<[u8]>>>>,
 }
@@ -110,9 +115,9 @@ impl SimulatedStorage {
     pub const SIZE: u32 = Self::BLOCKS * Self::BLOCK_SIZE;
 
     pub fn new() -> Result<SimulatedStorage, CreateStorageError> {
-        let mut pool = Box::new([0b11111111u8; Self::SIZE as usize * 2]);
+        let mut pool = Box::new(AlignedBuffer([0b11111111u8; Self::SIZE as usize * 2]));
         return Ok(SimulatedStorage {
-            pool_ptr: &mut *pool,
+            pool_ptr: &mut (pool.0),
             pool: pool,
             key_value: Default::default(),
         });
@@ -144,7 +149,7 @@ impl Storage for SimulatedStorage {
         }
         let static_slice = unsafe {
             std::mem::transmute::<&[u8], &'static [u8]>(
-                &self.pool[address as usize..(address + length) as usize],
+                &self.pool.0[address as usize..(address + length) as usize],
             )
         };
 
@@ -225,8 +230,8 @@ static STATIC_STORAGES: LazyLock<RwLock<Vec<Box<SimulatedStorage>>>> =
 
 #[cfg(test)]
 pub(crate) fn get_test_storage() -> &'static SimulatedStorage {
-    let mut backing_storage = Box::new(SimulatedStorage::new().unwrap());
-    let backing_storage_ptr: *mut SimulatedStorage = &mut (*backing_storage);
+    let backing_storage = Box::new(SimulatedStorage::new().unwrap());
+    let backing_storage_ptr: *const SimulatedStorage = Box::as_ptr(&backing_storage);
     STATIC_STORAGES.write().unwrap().push(backing_storage);
     let backing_storage: &'static SimulatedStorage = unsafe { &*backing_storage_ptr };
     return backing_storage;

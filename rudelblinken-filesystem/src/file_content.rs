@@ -432,8 +432,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> Drop for FileContent<T
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
 
         if STATE == { FileContentState::Weak } {
-            info.weak_count -= 1;
-            return;
+            info.weak_count = info.weak_count.saturating_sub(1);
         }
         if STATE == { FileContentState::Writer } {
             info.writer_count = info.writer_count.saturating_sub(1);

@@ -1,24 +1,20 @@
 #![feature(adt_const_params)]
 #![feature(box_as_ptr)]
 #![feature(box_vec_non_null)]
+#![cfg(test)]
+#![feature(allocator_api)]
 
-use file::CreateFileInformationError;
 use file::File;
 use file_content::FileContent;
 use file_content::FileContentState;
 use file_metadata::FileMetadata;
-use file_writer::FileWriter;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::ops::Bound::Included;
-use std::sync::Arc;
-use std::sync::RwLock;
 use storage::EraseStorageError;
 use storage::Storage;
 use storage::StorageError;
 use thiserror::Error;
-use zerocopy::IntoBytes;
-use zerocopy::{FromBytes, Immutable, KnownLayout};
 pub mod file;
 pub mod file_content;
 pub mod file_metadata;
@@ -43,7 +39,7 @@ pub enum WriteFileError {
     WriteFileError(#[from] file::WriteFileError),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
-#[error(transparent)]
+    #[error(transparent)]
     StorageError(#[from] StorageError),
 }
 
@@ -314,24 +310,27 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{get_test_storage, SimulatedStorage};
+    use crate::storage::SimulatedStorage;
 
     use super::*;
 
     #[test]
     fn writing_and_reading_a_simple_file_works() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         let result = filesystem.read_file("fancy").unwrap();
         assert_eq!(result.upgrade().unwrap().as_ref(), file);
-        // print!("LELELELLELELE {}", result.length);
     }
 
     #[test]
     fn can_read_a_file_from_an_old_storage() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         let mut filesystem = Filesystem::new(storage);
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
@@ -366,7 +365,9 @@ mod tests {
 
     #[test]
     fn writing_multiple_files() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
@@ -379,7 +380,9 @@ mod tests {
 
     #[test]
     fn deleting_a_file_works() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
@@ -391,7 +394,9 @@ mod tests {
 
     #[test]
     fn deleting_a_file_actually_works() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
@@ -408,7 +413,9 @@ mod tests {
 
     #[test]
     fn file_cant_be_upgraded_if_it_has_been_deleted_and_there_are_only_weak_references() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let content = vec![0; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem
@@ -427,7 +434,9 @@ mod tests {
 
     #[test]
     fn no_new_references_can_be_created_to_a_file_marked_for_deletion() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let content = vec![0; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem
@@ -447,7 +456,9 @@ mod tests {
 
     #[test]
     fn writing_a_maximum_size_file_works() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let file = [0u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
@@ -457,7 +468,9 @@ mod tests {
 
     #[test]
     fn deleting_a_file_makes_space_for_a_new_file() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let file = [0u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
@@ -470,7 +483,9 @@ mod tests {
     #[test]
     fn deleting_a_file_does_not_make_space_for_a_new_file_if_there_are_still_strong_references_to_its_content(
     ) {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let file = [0u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
@@ -488,7 +503,9 @@ mod tests {
 
     #[test]
     fn writing_a_file_thats_too_big_fails() {
-        let storage = get_test_storage();
+        let owned_storage = SimulatedStorage::new().unwrap();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
         let file = [0u8; SimulatedStorage::SIZE as usize + 1];
         let Err(_) = filesystem.write_file("fancy", &file, &[0u8; 32]) else {
