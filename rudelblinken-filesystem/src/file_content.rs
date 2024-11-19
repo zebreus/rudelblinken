@@ -1,5 +1,5 @@
 use crate::{
-    file_metadata::FileMetadata,
+    file_metadata::{FileMetadata, ReadMetadataError, WriteMetadataError},
     storage::{EraseStorageError, Storage, StorageError},
 };
 use std::{
@@ -14,7 +14,9 @@ use thiserror::Error;
 use zerocopy::IntoBytes;
 
 #[derive(Error, Debug)]
-pub enum CreateFileContentReaderError {
+pub enum ReadFileContentError {
+    #[error(transparent)]
+    StorageError(#[from] StorageError),
     #[error("No metadata found the metadata does not have the correct marker.")]
     InvalidMetadataMarker,
     #[error("File has already been deleted")]
@@ -24,7 +26,9 @@ pub enum CreateFileContentReaderError {
 }
 
 #[derive(Error, Debug)]
-pub enum CreateFileContentWriterError {
+pub enum WriteFileContentError {
+    #[error(transparent)]
+    StorageError(#[from] StorageError),
     #[error("No metadata found the metadata does not have the correct marker.")]
     InvalidMetadataMarker,
     #[error("File has already been deleted")]
@@ -33,6 +37,22 @@ pub enum CreateFileContentWriterError {
     FileIsAlreadyReady,
     #[error("The backing storage for a new file needs to be empty")]
     NotZeroed,
+}
+
+#[derive(Error, Debug)]
+pub enum ReadFileFromStorageError {
+    #[error(transparent)]
+    ReadMetadataError(#[from] ReadMetadataError),
+    #[error(transparent)]
+    ReadFileContentError(#[from] ReadFileContentError),
+}
+
+#[derive(Error, Debug)]
+pub enum WriteFileToStorageError {
+    #[error(transparent)]
+    WriteMetadataError(#[from] WriteMetadataError),
+    #[error(transparent)]
+    WriteFileContentError(#[from] WriteFileContentError),
 }
 
 #[derive(Error, Debug)]
@@ -121,13 +141,13 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
         storage: &'static T,
         storage_address: u32,
         transition: impl FnOnce(FileContentTransition) -> () + 'static + Send + Sync,
-    ) -> Result<Self, CreateFileContentReaderError> {
+    ) -> Result<Self, ReadFileContentError> {
         if !metadata.valid_marker() {
-            return Err(CreateFileContentReaderError::InvalidMetadataMarker);
+            return Err(ReadFileContentError::InvalidMetadataMarker);
         }
 
         if !metadata.ready() {
-            return Err(CreateFileContentReaderError::FileNotReady);
+            return Err(ReadFileContentError::FileNotReady);
         }
 
         let file = Self {
@@ -150,7 +170,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             unsafe {
                 let _ = file.internal_delete();
             };
-            return Err(CreateFileContentReaderError::FileWasDeleted);
+            return Err(ReadFileContentError::FileWasDeleted);
         }
 
         if metadata.deleted() {
@@ -158,10 +178,36 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Reader }> {
             unsafe {
                 let _ = file.internal_delete();
             };
-            return Err(CreateFileContentReaderError::FileWasDeleted);
+            return Err(ReadFileContentError::FileWasDeleted);
         };
 
         return Ok(file);
+    }
+
+    /// Read a file from storage.
+    ///
+    /// address is an address that can be used with storage
+    pub fn from_storage(
+        storage: &'static T,
+        address: u32,
+    ) -> Result<Self, ReadFileFromStorageError> {
+        let metadata = FileMetadata::from_storage(storage, address)?;
+        let content = storage
+            .read(address + size_of::<FileMetadata>() as u32, metadata.length)
+            .map_err(|e| ReadFileContentError::from(e))?;
+        let file_content = FileContent::<T, { FileContentState::Reader }>::new(
+            content,
+            metadata,
+            storage,
+            address,
+            |_| (),
+        )?;
+
+        return Ok(file_content);
+    }
+
+    pub fn name_str(&self) -> &str {
+        return self.metadata.name_str();
     }
 }
 
@@ -173,17 +219,17 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
         storage: &'static T,
         storage_address: u32,
         transition: impl FnOnce(FileContentTransition) -> () + 'static + Send + Sync,
-    ) -> Result<Self, CreateFileContentWriterError> {
+    ) -> Result<Self, WriteFileContentError> {
         if !metadata.valid_marker() {
-            return Err(CreateFileContentWriterError::InvalidMetadataMarker);
+            return Err(WriteFileContentError::InvalidMetadataMarker);
         }
 
         if metadata.deleted() {
-            return Err(CreateFileContentWriterError::FileWasDeleted);
+            return Err(WriteFileContentError::FileWasDeleted);
         }
 
         if metadata.ready() {
-            return Err(CreateFileContentWriterError::FileIsAlreadyReady);
+            return Err(WriteFileContentError::FileIsAlreadyReady);
         }
 
         if metadata.marked_for_deletion() {
@@ -191,7 +237,7 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
         }
 
         if !data.iter().all(|byte| *byte == 0xff) {
-            return Err(CreateFileContentWriterError::NotZeroed);
+            return Err(WriteFileContentError::NotZeroed);
         }
 
         return Ok(Self {
@@ -208,6 +254,28 @@ impl<T: Storage + 'static> FileContent<T, { FileContentState::Writer }> {
                 has_been_deleted: false,
             }))),
         });
+    }
+
+    /// Create a new file and return a writer
+    pub fn to_storage(
+        storage: &'static T,
+        address: u32,
+        length: u32,
+        name: &str,
+    ) -> Result<Self, WriteFileToStorageError> {
+        let metadata = FileMetadata::new_to_storage(storage, address, name, length)?;
+        let content = storage
+            .read(address + size_of::<FileMetadata>() as u32, metadata.length)
+            .map_err(|e| WriteFileContentError::from(e))?;
+        let file_content = FileContent::<T, { FileContentState::Writer }>::new_writer(
+            content,
+            metadata,
+            storage,
+            address,
+            |_| (),
+        )?;
+
+        return Ok(file_content);
     }
 
     pub fn commit(

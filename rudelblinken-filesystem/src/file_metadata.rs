@@ -3,21 +3,22 @@ use crate::storage::StorageError;
 use thiserror::Error;
 use zerocopy::FromBytes;
 use zerocopy::IntoBytes;
-use zerocopy::TryFromBytes;
 use zerocopy::{Immutable, KnownLayout};
 
 #[derive(Error, Debug)]
 pub enum ReadMetadataError {
-    #[error("Failed to read metadata from flash")]
-    ReadStorageError,
     #[error("The read metadata does not have valid marker flags")]
     InvalidMarkers,
+    #[error("Failed to interpret the storage as metadata: {0}")]
+    FailedToInterpretStorageAsMetadata(String),
+    #[error(transparent)]
+    StorageError(#[from] StorageError),
 }
 
 #[derive(Error, Debug)]
-pub enum CreateMetadataError {
-    #[error("Metadata seems invalid: {0}")]
-    CreateMetadataError(String),
+pub enum WriteMetadataError {
+    #[error("Failed to interpret the storage as metadata: {0}")]
+    FailedToInterpretStorageAsMetadata(String),
     #[error(transparent)]
     StorageError(#[from] StorageError),
 }
@@ -167,12 +168,12 @@ impl FileMetadata {
         address: u32,
         name: &str,
         length: u32,
-    ) -> Result<&'static Self, CreateMetadataError> {
+    ) -> Result<&'static Self, WriteMetadataError> {
         let new_metadata = Self::new(name, length);
         let as_bytes = new_metadata.as_bytes();
         let memory_mapped_metadata = storage.write_checked(address, as_bytes)?;
         Ok(FileMetadata::ref_from_bytes(memory_mapped_metadata)
-            .map_err(|e| CreateMetadataError::CreateMetadataError(e.to_string()))?)
+            .map_err(|e| WriteMetadataError::FailedToInterpretStorageAsMetadata(e.to_string()))?)
     }
 
     /// Read exisiting metadata from the specified location
@@ -182,12 +183,10 @@ impl FileMetadata {
         storage: &T,
         address: u32,
     ) -> Result<&'static Self, ReadMetadataError> {
-        let data = storage
-            .read(address, size_of::<FileMetadata>() as u32)
-            .map_err(|_| ReadMetadataError::ReadStorageError)?;
+        let data = storage.read(address, size_of::<FileMetadata>() as u32)?;
 
-        let metadata = FileMetadata::try_ref_from_bytes(data)
-            .map_err(|_| ReadMetadataError::ReadStorageError)?;
+        let metadata = FileMetadata::ref_from_bytes(data)
+            .map_err(|e| ReadMetadataError::FailedToInterpretStorageAsMetadata(e.to_string()))?;
         if !metadata.valid_marker() {
             return Err(ReadMetadataError::InvalidMarkers);
         }

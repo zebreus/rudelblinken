@@ -8,13 +8,13 @@ use file::File;
 use file_content::CommitFileContentError;
 use file_content::FileContent;
 use file_content::FileContentState;
+use file_content::WriteFileToStorageError;
 use file_metadata::FileMetadata;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::ops::Bound::Included;
 use storage::EraseStorageError;
 use storage::Storage;
-use storage::StorageError;
 use thiserror::Error;
 mod file;
 mod file_content;
@@ -22,7 +22,7 @@ mod file_metadata;
 mod storage;
 
 #[derive(Error, Debug, Clone)]
-enum FindFreeSpaceError {
+pub enum FindFreeSpaceError {
     #[error("Error in filesystem structure")]
     FilesystemError,
     #[error("No free space")]
@@ -32,11 +32,11 @@ enum FindFreeSpaceError {
 }
 
 #[derive(Error, Debug)]
-enum FilesystemWriteError {
+pub enum FilesystemWriteError {
     #[error(transparent)]
     FindFreeSpaceError(#[from] FindFreeSpaceError),
     #[error(transparent)]
-    WriteFileError(#[from] file::WriteFileError),
+    WriteFileToStorageError(#[from] WriteFileToStorageError),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error(transparent)]
@@ -44,7 +44,7 @@ enum FilesystemWriteError {
 }
 
 #[derive(Error, Debug)]
-enum FilesystemDeleteError {
+pub enum FilesystemDeleteError {
     #[error(transparent)]
     EraseStorageError(#[from] EraseStorageError),
     #[error("The file does not exist")]
@@ -54,7 +54,7 @@ enum FilesystemDeleteError {
 /// Filesystem implementation
 pub struct Filesystem<T: Storage + 'static + Send + Sync> {
     storage: &'static T,
-    pub files: Vec<File<T>>,
+    files: Vec<File<T>>,
 }
 
 impl<T: Storage + 'static + Send + Sync> Filesystem<T> {

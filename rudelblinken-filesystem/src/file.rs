@@ -1,48 +1,14 @@
 use crate::{
     file_content::{
-        CreateFileContentReaderError, CreateFileContentWriterError, DeleteFileContentError,
-        FileContent, FileContentState,
+        DeleteFileContentError, FileContent, FileContentState, ReadFileFromStorageError,
+        WriteFileToStorageError,
     },
-    file_metadata::{CreateMetadataError, FileMetadata, ReadMetadataError},
-    storage::{EraseStorageError, Storage, StorageError},
+    storage::Storage,
 };
-use std::fmt::{Debug, Formatter};
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum CreateFileError {
-    #[error(transparent)]
-    ReadFileError(#[from] std::io::Error),
-    #[error(transparent)]
-    ReadStorageError(#[from] StorageError),
-    #[error(transparent)]
-    FailedToReadBlockMetadata(#[from] ReadMetadataError),
-    #[error("No metadata found the metadata does not have the correct marker.")]
-    InvalidMetadataMarker,
-    #[error(transparent)]
-    EraseStorageError(#[from] EraseStorageError),
-    #[error(transparent)]
-    CreateFileContentError(#[from] CreateFileContentReaderError),
-}
-
-#[derive(Error, Debug)]
-pub enum WriteFileError {
-    #[error("The filename can not be longer than 16 bytes")]
-    FileNameTooLong,
-    #[error(transparent)]
-    CreateFileInformationError(#[from] CreateFileError),
-    #[error(transparent)]
-    WriteStorageError(#[from] StorageError),
-    #[error("The read file does not match the written file")]
-    ReadFileDoesNotMatch,
-    #[error(transparent)]
-    CreateMetadataError(#[from] CreateMetadataError),
-    #[error(transparent)]
-    CreateFileContentWriterError(#[from] CreateFileContentWriterError),
-}
+use std::fmt::Formatter;
 
 /// Internal proxy for a file that tracks some metadata in memory
-pub struct File<T: Storage + 'static + Send + Sync> {
+pub(crate) struct File<T: Storage + 'static + Send + Sync> {
     /// Starting address of the file (in flash)
     pub address: u32,
     /// Length of the files content in bytes
@@ -80,21 +46,17 @@ impl<T: Storage + 'static + Send + Sync> File<T> {
     /// Read a file from storage.
     ///
     /// address is an address that can be used with storage
-    pub fn from_storage(storage: &'static T, address: u32) -> Result<File<T>, CreateFileError> {
-        let metadata = FileMetadata::from_storage(storage, address)?;
-        let content = storage.read(address + size_of::<FileMetadata>() as u32, metadata.length)?;
-        let file_content = FileContent::<T, { FileContentState::Reader }>::new(
-            content,
-            metadata,
-            storage,
-            address,
-            |_| (),
-        )?;
+    pub fn from_storage(
+        storage: &'static T,
+        address: u32,
+    ) -> Result<File<T>, ReadFileFromStorageError> {
+        let file_content =
+            FileContent::<T, { FileContentState::Reader }>::from_storage(storage, address)?;
 
         let information = File {
             address,
-            length: metadata.length,
-            name: metadata.name_str().into(),
+            length: file_content.len() as u32,
+            name: file_content.name_str().into(),
             content: file_content.downgrade(),
         };
 
@@ -107,21 +69,15 @@ impl<T: Storage + 'static + Send + Sync> File<T> {
         address: u32,
         length: u32,
         name: &str,
-    ) -> Result<(Self, FileContent<T, { FileContentState::Writer }>), WriteFileError> {
-        let metadata = FileMetadata::new_to_storage(storage, address, name, length)?;
-        let content = storage.read(address + size_of::<FileMetadata>() as u32, metadata.length)?;
-        let file_content = FileContent::<T, { FileContentState::Writer }>::new_writer(
-            content,
-            metadata,
-            storage,
-            address,
-            |_| (),
+    ) -> Result<(Self, FileContent<T, { FileContentState::Writer }>), WriteFileToStorageError> {
+        let file_content = FileContent::<T, { FileContentState::Writer }>::to_storage(
+            storage, address, length, name,
         )?;
 
         let information = File {
             address: address,
-            length: metadata.length,
-            name: metadata.name_str().into(),
+            length: length,
+            name: name.into(),
             content: file_content.downgrade(),
         };
         return Ok((information, file_content));
