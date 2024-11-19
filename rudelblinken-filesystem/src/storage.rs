@@ -9,7 +9,7 @@ pub enum StorageError {
     #[error("Size is bigger than the storage size")]
     SizeTooBig,
     /// Only returned by write_checked
-    #[error("Size is not a multiple of the page size")]
+    #[error("Read data does not match written data")]
     ReadDataDoesNotMatchWrittenData,
     #[error("{0}")]
     Other(String),
