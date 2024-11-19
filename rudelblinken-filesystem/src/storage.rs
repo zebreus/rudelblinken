@@ -48,7 +48,9 @@ pub trait Storage {
 
     /// Read at a specific location.
     ///
-    /// address must be inside the storage size. length must be lower or equal to the storage size. If address + length go over the bounds of the storage the storage needs to wrap around there. You should use an MMU for this
+    /// Address must be inside the storage size. length must be lower or equal to the storage size. If address + length go over the bounds of the storage the storage needs to wrap around there. You should use an MMU for this
+    ///
+    /// This function is expected to return a slice that points into memory mapped storage. This means that the data is not copied and the data is directly read from the storage. This way no copy operations are needed to read data from the storage.
     fn read(&self, address: u32, length: u32) -> Result<&'static [u8], StorageError>;
     /// Write at a specific location
     ///

@@ -1,7 +1,24 @@
+//! A zero-copy flash filesystem optimized for embedded systems
+//!
+//! `rudelblinken-filesystem` implements a flash-friendly filesystem designed for resource-constrained
+//! embedded devices. Key features include:
+//!
+//! - **Zero-copy access**: Files are memory-mapped for direct, efficient access
+//! - **Flash-optimized**: Implements wear leveling and flash-aware write patterns  
+//! - **Safe concurrency**: Reference counting enables safe concurrent access with reader/writer separation
+//! - **Resource efficient**: Minimal RAM overhead and no dynamic allocation during normal operation
+//! - **Reliable**: Two-phase commits and deferred deletion ensure data integrity
+//!
+//! The filesystem provides direct memory-mapped access to file contents while maintaining safety
+//! through a custom reference counting system. Multiple readers can access files concurrently
+//! while writers get exclusive access. Files are only deleted once all references are dropped.
+//!
+//! Designed specifically for flash storage, the implementation uses block-aligned operations,
+//! respects write limitations, and implements basic wear leveling.
+//!
 #![feature(adt_const_params)]
 #![feature(box_as_ptr)]
 #![feature(box_vec_non_null)]
-#![cfg(test)]
 #![feature(allocator_api)]
 
 use file::CommitFileContentError;
@@ -51,13 +68,36 @@ pub enum FilesystemDeleteError {
     FileNotFound,
 }
 
-/// Filesystem implementation
+///  A struct representing the filesystem backed by a generic storage type `T`.
+///
+/// # Type Parameters
+///
+/// * `T` - A type that implements the `Storage` trait and is `'static`, `Send`, and `Sync`.
 pub struct Filesystem<T: Storage + 'static + Send + Sync> {
     storage: &'static T,
     files: Vec<FileInformation<T>>,
 }
 
+///
+/// # Methods
+///
+/// * `get_first_block` - Retrieves the first block number from the storage metadata.
+/// * `set_first_block` - Sets the first block number in the storage metadata.
+/// * `new` - Initializes a new `Filesystem` instance, reading existing files from storage.
+/// * `get_storage` - Returns a reference to the underlying storage.
+/// * `read_file` - Reads a file by name and returns an optional `File` object.
+/// * `find_free_space` - Finds a free space in storage of at least the given length.
+/// * `write_file` - Writes a file with the given name, content, and hash.
+/// * `get_file_writer` - Returns a writer for writing a file over time.
+/// * `delete_file` - Deletes a file by name, marking it for deletion if necessary.
+/// * `cleanup_files` - Removes all files with no remaining strong pointers.
+///
+/// # File System Layout
+/// The filesystem maintains:
+/// - A "first_block" metadata entry for circular buffer management
+/// - Files stored sequentially in blocks, each with metadata header
 impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
+    /// Retrieves the first block number from the storage metadata.
     fn get_first_block(&self) -> Result<u16, std::io::Error> {
         let first_block_slice: Box<[u8; 2]> = self
             .storage
@@ -66,12 +106,26 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             .unwrap();
         return Ok(u16::from_le_bytes(*first_block_slice));
     }
+    /// Sets the first block number in the storage metadata.
     fn set_first_block(&mut self, first_block: u16) -> Result<(), std::io::Error> {
         self.storage
             .write_metadata(&"first_block", &first_block.to_le_bytes())?;
         return Ok(());
     }
 
+    /// Creates a new filesystem instance on top of the provided storage.
+    ///
+    /// # Initialization Process
+    /// 1. Reads or initializes the first block pointer from metadata
+    /// 2. Scans through blocks starting at first_block
+    /// 3. Reconstructs file list from valid file headers
+    /// 4. Erases corrupted blocks (non-0xFF when invalid)
+    ///
+    /// # Arguments
+    /// * `storage` - Static reference to storage implementing the Storage trait
+    ///
+    /// # Returns
+    /// A new `Filesystem` instance with the reconstructed file list
     pub fn new(storage: &'static T) -> Self {
         let mut filesystem = Self {
             storage,
@@ -122,11 +176,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         return filesystem;
     }
 
-    /// Get a reference to the underlying storage
-    pub fn get_storage(self) -> &'static T {
-        return self.storage;
-    }
-
+    /// Finds a file by name and returns a reference to it.
     pub fn read_file(&self, name: &str) -> Option<File<T, { FileState::Weak }>> {
         let file = self
             .files
@@ -306,7 +356,7 @@ mod tests {
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         let mut filesystem = Filesystem::new(storage);
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
-        let filesystem = Filesystem::new(filesystem.get_storage());
+        let filesystem = Filesystem::new(storage);
         let result = filesystem.read_file("fancy").unwrap();
         assert_eq!(result.upgrade().unwrap().as_ref(), file);
     }
@@ -353,7 +403,7 @@ mod tests {
             panic!("Should not be able to read a deleted file");
         };
 
-        let filesystem = Filesystem::new(filesystem.get_storage());
+        let filesystem = Filesystem::new(storage);
         let None = filesystem.read_file("fancy") else {
             panic!("Should not be able to read a deleted file");
         };
