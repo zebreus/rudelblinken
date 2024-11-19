@@ -43,6 +43,8 @@ pub enum WriteFileError {
     WriteFileError(#[from] file::WriteFileError),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
+#[error(transparent)]
+    StorageError(#[from] StorageError),
 }
 
 #[derive(Error, Debug)]
@@ -248,7 +250,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         let mut writer = self.get_file_writer(name, content.len() as u32, _hash)?;
 
         writer.write_all(content)?;
-        writer.commit();
+        writer.commit()?;
         return Ok(());
     }
 
