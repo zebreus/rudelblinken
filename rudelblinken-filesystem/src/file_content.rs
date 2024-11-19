@@ -380,7 +380,7 @@ impl<T: Storage + 'static, const STATE: FileContentState> Debug for FileContent<
         f.debug_struct("FileContent")
             // .field("content", &self.content)
             .field("metadata", &self.metadata)
-            .field("info", &self.info)
+            .field("info", unsafe { self.info.as_ref() })
             .finish()
     }
 }
