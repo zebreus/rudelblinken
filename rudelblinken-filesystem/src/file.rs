@@ -332,9 +332,10 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
             }
         }
         unsafe {
-            Ok(std::mem::transmute::<_, File<T, { FileState::Reader }>>(
-                self,
-            ))
+            Ok(std::mem::transmute::<
+                File<T, { FileState::Writer }>,
+                File<T, { FileState::Reader }>,
+            >(self))
         }
     }
 }
@@ -515,10 +516,6 @@ impl<T: Storage + 'static> Deref for File<T, { FileState::Reader }> {
 }
 
 impl<T: Storage + 'static> PartialEq<Self> for File<T, { FileState::Reader }> {
-    fn ne(&self, other: &Self) -> bool {
-        !self.eq(other)
-    }
-
     fn eq(&self, other: &Self) -> bool {
         self.content == other.content
     }
@@ -597,7 +594,7 @@ impl<T: Storage + 'static + Send + Sync> Seek for File<T, { FileState::Writer }>
                 .current_offset
         };
         let new_offset = match pos {
-            SeekFrom::Start(offset) => offset.try_into().unwrap_or(std::u32::MAX).clamp(0, length),
+            SeekFrom::Start(offset) => offset.try_into().unwrap_or(u32::MAX).clamp(0, length),
             SeekFrom::End(offset) => length
                 .saturating_add_signed(
                     offset

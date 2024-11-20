@@ -42,6 +42,10 @@ pub enum EraseStorageError {
 /// Implementing write_readback is optional, but can be done for better performance in some places.
 ///
 /// The starting address of each block returned by read needs to be aligned to 64 bytes
+///
+/// Filesystem metadata is not stored in the main storage block
+///
+/// Storage must provide these functions to store metadata.
 pub trait Storage {
     /// Size in which blocks can be erased
     const BLOCK_SIZE: u32;
@@ -64,10 +68,6 @@ pub trait Storage {
     ///
     /// address must be inside the storage size. length must be lower or equal to the storage size. address must be block aligned. length must be a multiple of block size
     fn erase(&self, address: u32, length: u32) -> Result<(), EraseStorageError>;
-
-    /// Filesystem metadata is not stored in the main storage block
-    ///
-    /// Storage must provide these functions to store metadata.
 
     /// Read a metadata key from persistent storage
     fn read_metadata(&self, key: &str) -> std::io::Result<Box<[u8]>>;
