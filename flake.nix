@@ -106,6 +106,7 @@
             pkgs.ldproxy
             pkgs.probe-rs-tools
             pkgs.wasm-tools
+            pkgs.cargo-rdme
             # For the cli:
             pkgs.dbus
           ];
