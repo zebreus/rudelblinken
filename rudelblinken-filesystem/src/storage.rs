@@ -78,7 +78,7 @@ pub trait Storage {
     fn write_readback(&self, address: u32, data: &[u8]) -> Result<&'static [u8], StorageError> {
         self.write(address, data)?;
         let data = self.read(address, data.len() as u32)?;
-        return Ok(data);
+        Ok(data)
     }
     /// Write metadata and verify afterwards that the read data matches the written data.
     fn write_checked(&self, address: u32, data: &[u8]) -> Result<&'static [u8], StorageError> {
@@ -86,7 +86,7 @@ pub trait Storage {
         if data != read_data {
             return Err(StorageError::ReadDataDoesNotMatchWrittenData);
         }
-        return Ok(read_data);
+        Ok(read_data)
     }
 }
 

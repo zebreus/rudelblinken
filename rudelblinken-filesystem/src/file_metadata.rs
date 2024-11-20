@@ -102,13 +102,13 @@ impl FileMetadata {
         let mut metadata = FileMetadata {
             flags: u16::MAX ^ FileFlags::LOW_MARKERS,
             _reserved: [0; 2],
-            length: length,
+            length,
             hash: [0; 32],
             name: [0; 16],
             _padding: [0; 8],
         };
         metadata.set_name(name);
-        return metadata;
+        metadata
     }
     /// Assert that the marker flags have been set correctly for this file
     pub fn valid_marker(&self) -> bool {
@@ -118,15 +118,15 @@ impl FileMetadata {
         if self.flags & FileFlags::LOW_MARKERS != 0 {
             return false;
         }
-        return true;
+        true
     }
     /// Convenience function to get the name as a string slice
     pub fn name_str(&self) -> &str {
         let nul_range_end = self.name.iter().position(|&c| c == b'\0').unwrap_or(16);
-        return std::str::from_utf8(&self.name[0..nul_range_end]).unwrap_or_default();
+        std::str::from_utf8(&self.name[0..nul_range_end]).unwrap_or_default()
     }
     /// Internal function to set the name from a string slice
-    fn set_name(&mut self, name: &str) -> () {
+    fn set_name(&mut self, name: &str) {
         let name_bytes = name.as_bytes();
         let name_length = name.len().clamp(0, 16);
         self.name[0..name_length].copy_from_slice(&name_bytes[0..name_length]);
@@ -203,8 +203,8 @@ impl FileMetadata {
         let new_metadata = Self::new(name, length);
         let as_bytes = new_metadata.as_bytes();
         let memory_mapped_metadata = storage.write_checked(address, as_bytes)?;
-        Ok(FileMetadata::ref_from_bytes(memory_mapped_metadata)
-            .map_err(|e| WriteMetadataError::FailedToInterpretStorageAsMetadata(e.to_string()))?)
+        FileMetadata::ref_from_bytes(memory_mapped_metadata)
+            .map_err(|e| WriteMetadataError::FailedToInterpretStorageAsMetadata(e.to_string()))
     }
 
     /// Read exisiting metadata from the specified location
@@ -221,7 +221,7 @@ impl FileMetadata {
         if !metadata.valid_marker() {
             return Err(ReadMetadataError::InvalidMarkers);
         }
-        Ok(&metadata)
+        Ok(metadata)
     }
 }
 

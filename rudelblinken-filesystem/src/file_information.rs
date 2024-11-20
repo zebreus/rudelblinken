@@ -22,8 +22,8 @@ pub(crate) struct FileInformation<T: Storage + 'static + Send + Sync> {
 impl<T: Storage + 'static + Send + Sync> Clone for FileInformation<T> {
     fn clone(&self) -> Self {
         Self {
-            address: self.address.clone(),
-            length: self.length.clone(),
+            address: self.address,
+            length: self.length,
             name: self.name.clone(),
             content: self.content.clone(),
         }
@@ -58,7 +58,7 @@ impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
             content: file_content.downgrade(),
         };
 
-        return Ok(information);
+        Ok(information)
     }
 
     /// Create a new file and return a writer
@@ -72,12 +72,12 @@ impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
             File::<T, { FileState::Writer }>::to_storage(storage, address, length, name)?;
 
         let information = FileInformation {
-            address: address,
-            length: length,
+            address,
+            length,
             name: name.into(),
             content: file_content.downgrade(),
         };
-        return Ok((information, file_content));
+        Ok((information, file_content))
     }
 
     /// Transition to ready by reading content from storage
@@ -102,6 +102,6 @@ impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
 
     /// Read the file content
     pub fn read(&self) -> File<T, { FileState::Weak }> {
-        return self.content.clone();
+        self.content.clone()
     }
 }

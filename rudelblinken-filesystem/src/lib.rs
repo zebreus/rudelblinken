@@ -90,16 +90,16 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     fn get_first_block(&self) -> Result<u16, std::io::Error> {
         let first_block_slice: Box<[u8; 2]> = self
             .storage
-            .read_metadata(&"first_block")?
+            .read_metadata("first_block")?
             .try_into()
             .unwrap();
-        return Ok(u16::from_le_bytes(*first_block_slice));
+        Ok(u16::from_le_bytes(*first_block_slice))
     }
     /// Sets the first block number in the storage metadata.
     fn set_first_block(&mut self, first_block: u16) -> Result<(), std::io::Error> {
         self.storage
-            .write_metadata(&"first_block", &first_block.to_le_bytes())?;
-        return Ok(());
+            .write_metadata("first_block", &first_block.to_le_bytes())?;
+        Ok(())
     }
 
     /// Creates a new filesystem instance on top of the provided storage.
@@ -157,12 +157,11 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
                     continue;
                 }
             };
-            if file_information.deleted() {}
             block_number += ((file_information.length + 64) / T::BLOCK_SIZE) + 1;
             filesystem.files.push(file_information);
         }
 
-        return filesystem;
+        filesystem
     }
 
     /// Finds a file by name and returns a reference to it.
@@ -171,7 +170,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             .files
             .iter()
             .find(|file| file.name == name && file.valid())?;
-        return Some(file.read());
+        Some(file.read())
     }
 
     /// Find a free space in storage of at least the given length.
@@ -250,7 +249,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
         let longest_range_start = longest_range.0 % (T::BLOCKS);
 
-        return Ok(longest_range_start * T::BLOCK_SIZE);
+        Ok(longest_range_start * T::BLOCK_SIZE)
     }
 
     /// Write a file to storage.
@@ -264,7 +263,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
         writer.write_all(content)?;
         writer.commit()?;
-        return Ok(());
+        Ok(())
     }
 
     /// Get a writer that allows writing a file over time.
@@ -304,7 +303,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         if file.deleted() {
             self.files.swap_remove(index);
         }
-        return Ok(());
+        Ok(())
     }
 
     /// Remove all files with no remaining strong pointers

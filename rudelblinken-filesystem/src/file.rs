@@ -113,7 +113,7 @@ struct InnerFile<T: Storage + 'static> {
     /// Offset from the base address; only used for writer.
     current_offset: u32,
     /// Destructor that will be called when the last strong reference is dropped.
-    transition: Box<dyn FnOnce(FileContentTransition) -> () + 'static + Send + Sync>,
+    transition: Box<dyn FnOnce(FileContentTransition) + 'static + Send + Sync>,
     // We need to track this in memory because the flags in memory-mapped flash will be reset when a new file is created in the same place
     /// Set if the file has been deleted.
     has_been_deleted: bool,
@@ -182,7 +182,7 @@ impl<T: Storage + 'static> File<T, { FileState::Reader }> {
         metadata: &'static FileMetadata,
         storage: &'static T,
         storage_address: u32,
-        transition: impl FnOnce(FileContentTransition) -> () + 'static + Send + Sync,
+        transition: impl FnOnce(FileContentTransition) + 'static + Send + Sync,
     ) -> Result<Self, ReadFileError> {
         if !metadata.valid_marker() {
             return Err(ReadFileError::InvalidMetadataMarker);
@@ -194,7 +194,7 @@ impl<T: Storage + 'static> File<T, { FileState::Reader }> {
 
         let file = Self {
             content: data,
-            metadata: metadata,
+            metadata,
             info: Box::into_non_null(Box::new(RwLock::new(InnerFile {
                 reader_count: 1,
                 weak_count: 0,
@@ -223,7 +223,7 @@ impl<T: Storage + 'static> File<T, { FileState::Reader }> {
             return Err(ReadFileError::FileWasDeleted);
         };
 
-        return Ok(file);
+        Ok(file)
     }
 
     /// Read a file from storage.
@@ -236,16 +236,16 @@ impl<T: Storage + 'static> File<T, { FileState::Reader }> {
         let metadata = FileMetadata::from_storage(storage, address)?;
         let content = storage
             .read(address + size_of::<FileMetadata>() as u32, metadata.length)
-            .map_err(|e| ReadFileError::from(e))?;
+            .map_err(ReadFileError::from)?;
         let file_content =
             File::<T, { FileState::Reader }>::new(content, metadata, storage, address, |_| ())?;
 
-        return Ok(file_content);
+        Ok(file_content)
     }
 
     /// Get the name of the file as a string slice.
     pub fn name_str(&self) -> &str {
-        return self.metadata.name_str();
+        self.metadata.name_str()
     }
 }
 
@@ -256,7 +256,7 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
         metadata: &'static FileMetadata,
         storage: &'static T,
         storage_address: u32,
-        transition: impl FnOnce(FileContentTransition) -> () + 'static + Send + Sync,
+        transition: impl FnOnce(FileContentTransition) + 'static + Send + Sync,
     ) -> Result<Self, WriteFileError> {
         if !metadata.valid_marker() {
             return Err(WriteFileError::InvalidMetadataMarker);
@@ -278,9 +278,9 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
             return Err(WriteFileError::NotZeroed);
         }
 
-        return Ok(Self {
+        Ok(Self {
             content: data,
-            metadata: metadata,
+            metadata,
             info: Box::into_non_null(Box::new(RwLock::new(InnerFile {
                 reader_count: 0,
                 weak_count: 0,
@@ -291,7 +291,7 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
                 transition: Box::new(transition),
                 has_been_deleted: false,
             }))),
-        });
+        })
     }
 
     /// Create a new file and return a writer.
@@ -304,7 +304,7 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
         let metadata = FileMetadata::new_to_storage(storage, address, name, length)?;
         let content = storage
             .read(address + size_of::<FileMetadata>() as u32, metadata.length)
-            .map_err(|e| WriteFileError::from(e))?;
+            .map_err(WriteFileError::from)?;
         let file_content = File::<T, { FileState::Writer }>::new_writer(
             content,
             metadata,
@@ -313,7 +313,7 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
             |_| (),
         )?;
 
-        return Ok(file_content);
+        Ok(file_content)
     }
 
     /// Commit the file content and convert it to a reader.
@@ -331,11 +331,11 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
                     .set_ready(info.storage, info.storage_address)?;
             }
         }
-        return unsafe {
+        unsafe {
             Ok(std::mem::transmute::<_, File<T, { FileState::Reader }>>(
                 self,
             ))
-        };
+        }
     }
 }
 
@@ -345,11 +345,11 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
         unsafe {
             self.info.as_ref().write().unwrap().weak_count += 1;
         }
-        return File::<T, { FileState::Weak }> {
+        File::<T, { FileState::Weak }> {
             content: self.content,
             metadata: self.metadata,
-            info: self.info.clone(),
-        };
+            info: self.info,
+        }
     }
 
     /// Creates a new strong pointer to this data.
@@ -379,11 +379,11 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
         }
 
         info.reader_count += 1;
-        return Some(File::<T, { FileState::Reader }> {
+        Some(File::<T, { FileState::Reader }> {
             content: self.content,
             metadata: self.metadata,
-            info: self.info.clone(),
-        });
+            info: self.info,
+        })
     }
 
     /// Check if the data will be dropped if this reference is dropped.
@@ -395,7 +395,7 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
             return unsafe { self.info.as_ref().read().unwrap().writer_count == 1 };
         }
 
-        return false;
+        false
     }
 
     /// Get the number of readers.
@@ -410,7 +410,7 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
 
     /// Check if the file is marked for deletion.
     pub fn marked_for_deletion(&self) -> bool {
-        return self.metadata.marked_for_deletion();
+        self.metadata.marked_for_deletion()
     }
 
     /// Check if the file is deleted.
@@ -419,12 +419,12 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
         if info.has_been_deleted {
             return true;
         }
-        return self.metadata.deleted();
+        self.metadata.deleted()
     }
 
     /// Check if the file is ready.
     pub fn ready(&self) -> bool {
-        return self.metadata.ready();
+        self.metadata.ready()
     }
 
     /// Mark this file for deletion.
@@ -440,7 +440,7 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
                 .set_marked_for_deletion(info.storage, info.storage_address)
                 .unwrap();
         };
-        if info.has_been_deleted == false && info.writer_count == 0 && info.reader_count == 0 {
+        if !info.has_been_deleted && info.writer_count == 0 && info.reader_count == 0 {
             drop(info);
             unsafe { self.internal_delete()? };
         }
@@ -454,16 +454,16 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
 
         let previous_transition: &mut Box<
-            dyn FnOnce(FileContentTransition) -> () + 'static + Send + Sync,
+            dyn FnOnce(FileContentTransition) + 'static + Send + Sync,
         > = &mut info.transition;
-        let empty_transition: Box<dyn FnOnce(FileContentTransition) -> () + 'static + Send + Sync> =
+        let empty_transition: Box<dyn FnOnce(FileContentTransition) + 'static + Send + Sync> =
             Box::new(|_| ());
         let transition = std::mem::replace(previous_transition, empty_transition);
         (transition)(FileContentTransition::DropLastReader);
 
         self.metadata
             .set_deleted(info.storage, info.storage_address)
-            .map_err(|e| EraseStorageError::from(e))?;
+            .map_err(EraseStorageError::from)?;
         info.has_been_deleted = true;
 
         let full_file_length = self.metadata.length + size_of::<FileMetadata>() as u32;
@@ -471,7 +471,7 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
 
         // TODO: Make sure the block with the metadata gets erased last
         info.storage.erase(info.storage_address, length)?;
-        return Ok(());
+        Ok(())
     }
 
     /// Zero out the backing storage of this file and mark it as deleted.
@@ -492,7 +492,7 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
         if self.content.iter().any(|i| *i != 0xff) {
             return false;
         }
-        return true;
+        true
     }
 }
 
@@ -510,7 +510,7 @@ impl<T: Storage + 'static> Deref for File<T, { FileState::Reader }> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        return self.content;
+        self.content
     }
 }
 
@@ -531,7 +531,7 @@ impl<T: Storage + 'static> Clone for File<T, { FileState::Reader }> {
         Self {
             content: self.content,
             metadata: self.metadata,
-            info: self.info.clone(),
+            info: self.info,
         }
     }
 }
@@ -543,7 +543,7 @@ impl<T: Storage + 'static> Clone for File<T, { FileState::Weak }> {
         Self {
             content: self.content,
             metadata: self.metadata,
-            info: self.info.clone(),
+            info: self.info,
         }
     }
 }
@@ -569,7 +569,7 @@ impl<T: Storage + 'static, const STATE: FileState> Drop for File<T, STATE> {
         let weak_count = info.weak_count;
         let has_been_deleted = info.has_been_deleted;
         drop(info);
-        if has_been_deleted == false && self.metadata.marked_for_deletion() {
+        if !has_been_deleted && self.metadata.marked_for_deletion() {
             unsafe {
                 // We cant really handle a failed deletion here
                 // TODO: maybe log it
@@ -617,7 +617,7 @@ impl<T: Storage + 'static + Send + Sync> Seek for File<T, { FileState::Writer }>
         };
 
         *current_offset = new_offset;
-        return Ok(*current_offset as u64);
+        Ok(*current_offset as u64)
     }
 }
 
@@ -643,13 +643,13 @@ impl<T: Storage + 'static + Send + Sync> Write for File<T, { FileState::Writer }
                 info.storage_address + size_of::<FileMetadata>() as u32 + current_offset,
                 &buf[0..write_length as usize],
             )
-            .map_err(|e| std::io::Error::other(e))?;
+            .map_err(std::io::Error::other)?;
         info.current_offset += write_length;
-        return Ok(write_length as usize);
+        Ok(write_length as usize)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        return Ok(());
+        Ok(())
     }
 }
 
