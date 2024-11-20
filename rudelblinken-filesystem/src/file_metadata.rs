@@ -1,10 +1,32 @@
-use crate::storage::Storage;
-use crate::storage::StorageError;
+//! This module provides the `FileMetadata` struct and associated functionality for working
+//! with memory-mapped file metadata. It includes error types for reading and
+//! writing metadata, as well as utility functions for manipulating and validating metadata.
+//!
+//! # Overview
+//!
+//! The `FileMetadata` struct represents the metadata segment of a file that is memory-mapped
+//! into storage. It includes fields for flags, length, hash, name, and padding. The struct
+//! provides methods for creating new metadata, reading existing metadata from storage, and
+//! setting various flags in the metadata.
+//!
+//! The public interface only allows you to obtain a reference to memory-mapped metadata, so
+//! metadata is always read-only. To modify metadata, you must pass the correct storage and address.
+//! If the storage and address are not the same that were used to create the metadata, you will die.
+//!
+//! # Safety
+//!
+//! Some methods in this module are marked as `unsafe` because they assume that the metadata
+//! is located at a specific address in storage. Undefined behavior may occur if these
+//! assumptions are violated. Use these methods with caution and ensure that the metadata
+//! is correctly memory-mapped before calling them.
+/// This module provides the `Storage` trait which defines the interface for
+/// storage backends used in the application. Implementations of this trait
+/// are responsible for handling theuse crate::storage::Storage;
+use crate::storage::{Storage, StorageError};
 use thiserror::Error;
-use zerocopy::FromBytes;
-use zerocopy::IntoBytes;
-use zerocopy::{Immutable, KnownLayout};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
+/// Errors that can occur when reading metadata from storage.
 #[derive(Error, Debug)]
 pub enum ReadMetadataError {
     #[error("The read metadata does not have valid marker flags")]
@@ -15,6 +37,7 @@ pub enum ReadMetadataError {
     StorageError(#[from] StorageError),
 }
 
+/// Errors that can occur when writing metadata to storage.
 #[derive(Error, Debug)]
 pub enum WriteMetadataError {
     #[error("Failed to interpret the storage as metadata: {0}")]
@@ -23,6 +46,7 @@ pub enum WriteMetadataError {
     StorageError(#[from] StorageError),
 }
 
+/// The `FileFlags` struct defines various flags used in the metadata, including markers for validity, readiness, deletion, and more.
 struct FileFlags {}
 #[rustfmt::skip]
 impl FileFlags {
@@ -107,6 +131,7 @@ impl FileMetadata {
         let name_length = name.len().clamp(0, 16);
         self.name[0..name_length].copy_from_slice(&name_bytes[0..name_length]);
     }
+
     /// Set flags of the metadata in storage
     ///
     /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
@@ -119,6 +144,7 @@ impl FileMetadata {
         let flags: u16 = self.flags & !flags;
         storage.write(address, flags.as_bytes())
     }
+
     /// Set the ready flag of the metadata in storage
     ///
     /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
@@ -129,6 +155,7 @@ impl FileMetadata {
     ) -> Result<(), StorageError> {
         self.set_flags(storage, address, FileFlags::READY)
     }
+
     /// Set the marked for deletion flag of the metadata in storage
     ///
     /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
@@ -139,6 +166,7 @@ impl FileMetadata {
     ) -> Result<(), StorageError> {
         self.set_flags(storage, address, FileFlags::MARKED_FOR_DELETION)
     }
+
     /// Set the deleted flag of the metadata in storage
     ///
     /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
@@ -149,14 +177,17 @@ impl FileMetadata {
     ) -> Result<(), StorageError> {
         self.set_flags(storage, address, FileFlags::DELETED)
     }
+
     /// Check if the file is ready to be read
     pub fn ready(&self) -> bool {
         self.flags & FileFlags::READY == 0
     }
+
     /// Check if the file is marked for deletion
     pub fn marked_for_deletion(&self) -> bool {
         self.flags & FileFlags::MARKED_FOR_DELETION == 0
     }
+
     /// Check if the file has been deleted
     pub fn deleted(&self) -> bool {
         self.flags & FileFlags::DELETED == 0
@@ -196,10 +227,8 @@ impl FileMetadata {
 
 #[cfg(test)]
 mod tests {
-
-    use crate::storage::SimulatedStorage;
-
     use super::*;
+    use crate::storage::SimulatedStorage;
 
     #[test]
     fn storing_metadata_works() {
