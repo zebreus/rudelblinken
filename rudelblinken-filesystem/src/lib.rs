@@ -4,10 +4,9 @@
 //! embedded devices. Key features include:
 //!
 //! - **Zero-copy access**: Files are memory-mapped for direct, efficient access
-//! - **Flash-optimized**: Implements wear leveling and flash-aware write patterns  
-//! - **Safe concurrency**: Reference counting enables safe concurrent access with reader/writer separation
-//! - **Resource efficient**: Minimal RAM overhead and no dynamic allocation during normal operation
-//! - **Reliable**: Two-phase commits and deferred deletion ensure data integrity
+//! - **Flash-optimized**: Implements wear leveling and flash-aware write patterns
+//! - **Safe concurrency**: Reference counting enables safe concurrent access with reader/writer separation. Deferred deletion ensure data integrity
+//! - **Resource efficient**: Minimal RAM overhead during normal operation
 //!
 //! The filesystem provides direct memory-mapped access to file contents while maintaining safety
 //! through a custom reference counting system. Multiple readers can access files concurrently
