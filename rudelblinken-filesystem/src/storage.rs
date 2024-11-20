@@ -1,36 +1,38 @@
 use thiserror::Error;
 
+/// Some kind of error that can occur during a storage operation
 #[derive(Error, Debug)]
 pub enum StorageError {
+    /// Failed to write to flash. Maybe the pages are not erased.
     #[error("Failed to write to flash. Maybe the pages are not erased.")]
     IoError(#[from] std::io::Error),
+    /// Address is bigger than the storage size
     #[error("Address is bigger than the storage size")]
     AddressTooBig,
+    /// Size is bigger than the storage size
     #[error("Size is bigger than the storage size")]
     SizeTooBig,
     /// Only returned by write_checked
     #[error("Read data does not match written data")]
     ReadDataDoesNotMatchWrittenData,
+    /// Other error occurred during a storage operation
     #[error("{0}")]
     Other(String),
 }
 
-#[derive(Error, Debug, Clone)]
-pub enum CreateStorageError {
-    #[error("Failed to find a storage partition. (type: data, subtype: undefined, name: storage)")]
-    NoPartitionFound,
-    #[error("Failed to memorymap the secrets")]
-    FailedToMmapSecrets,
-}
-
 #[derive(Error, Debug)]
+/// Errors that can occur during the erase operation of the storage.
 pub enum EraseStorageError {
+    /// Failed during storage operation
     #[error(transparent)]
     StorageError(#[from] StorageError),
+    /// Size is not a multiple of the page size
     #[error("Size is not a multiple of the page size")]
     SizeNotAMultipleOfPageSize,
+    /// Can only erase along block boundaries
     #[error("Can only erase along block boundaries")]
     CanOnlyEraseAlongBlockBoundaries,
+    /// The size needs to be a multiple of the block size as we can only erase whole blocks
     #[error("The size needs to be a multiple of the block size as we can only erase whole blocks")]
     CanOnlyEraseInBlockSizedChunks,
 }
@@ -101,6 +103,7 @@ struct AlignedBuffer<const SIZE: usize>([u8; SIZE]);
 
 #[cfg(test)]
 #[derive(Debug)]
+/// A storage that is backed by a heap allocated buffer
 pub struct SimulatedStorage {
     pool: Box<AlignedBuffer<{ Self::SIZE as usize * 2 }>>,
     pool_ptr: *mut [u8; Self::SIZE as usize * 2],
@@ -114,15 +117,17 @@ unsafe impl Sync for SimulatedStorage {}
 
 #[cfg(test)]
 impl SimulatedStorage {
+    /// Size of the storage
     pub const SIZE: u32 = Self::BLOCKS * Self::BLOCK_SIZE;
 
-    pub fn new() -> Result<SimulatedStorage, CreateStorageError> {
+    /// Create a new storage for testing purposes
+    pub fn new() -> SimulatedStorage {
         let mut pool = Box::new(AlignedBuffer([0b11111111u8; Self::SIZE as usize * 2]));
-        return Ok(SimulatedStorage {
+        return SimulatedStorage {
             pool_ptr: &mut (pool.0),
             pool: pool,
             key_value: Default::default(),
-        });
+        };
     }
 }
 
@@ -232,7 +237,7 @@ static STATIC_STORAGES: LazyLock<RwLock<Vec<Box<SimulatedStorage>>>> =
 
 #[cfg(test)]
 pub(crate) fn get_test_storage() -> &'static SimulatedStorage {
-    let backing_storage = Box::new(SimulatedStorage::new().unwrap());
+    let backing_storage = Box::new(SimulatedStorage::new());
     let backing_storage_ptr: *const SimulatedStorage = Box::as_ptr(&backing_storage);
     STATIC_STORAGES.write().unwrap().push(backing_storage);
     let backing_storage: &'static SimulatedStorage = unsafe { &*backing_storage_ptr };

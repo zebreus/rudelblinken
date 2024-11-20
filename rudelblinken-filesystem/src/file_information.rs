@@ -85,18 +85,22 @@ impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
         self.content.mark_for_deletion()
     }
 
+    /// Check if the file is marked for deletion
     pub fn marked_for_deletion(&self) -> bool {
         self.content.marked_for_deletion()
     }
 
+    /// Check if the file has been deleted
     pub fn deleted(&self) -> bool {
         self.content.deleted()
     }
 
+    /// Check if the file is ready to be read
     pub fn valid(&self) -> bool {
         self.content.ready()
     }
 
+    /// Read the file content
     pub fn read(&self) -> File<T, { FileState::Weak }> {
         return self.content.clone();
     }

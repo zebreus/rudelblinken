@@ -15,55 +15,63 @@
 //!
 //! Designed specifically for flash storage, the implementation uses block-aligned operations,
 //! respects write limitations, and implements basic wear leveling.
-//!
+#![warn(missing_docs)]
 #![feature(adt_const_params)]
 #![feature(box_as_ptr)]
 #![feature(box_vec_non_null)]
 #![feature(allocator_api)]
 
-use file::CommitFileContentError;
-use file::File;
-use file::FileState;
-use file::WriteFileToStorageError;
+use file::{CommitFileContentError, File, FileState, WriteFileToStorageError};
 use file_information::FileInformation;
 use file_metadata::FileMetadata;
-use std::collections::BTreeMap;
-use std::io::Write;
-use std::ops::Bound::Included;
-use storage::EraseStorageError;
-use storage::Storage;
+use std::{collections::BTreeMap, io::Write, ops::Bound::Included};
+use storage::{EraseStorageError, Storage};
 use thiserror::Error;
+
 mod file;
 mod file_information;
 mod file_metadata;
+/// Storage traits and implementations
 pub mod storage;
 
+/// Errors that can occur when finding free space
 #[derive(Error, Debug, Clone)]
 pub enum FindFreeSpaceError {
+    /// Error in filesystem structure
     #[error("Error in filesystem structure")]
     FilesystemError,
+    /// No free space
     #[error("No free space")]
     NoFreeSpace,
+    /// Not enough space
     #[error("Not enough space")]
     NotEnoughSpace,
 }
 
+/// Errors that can occur when writing a file
 #[derive(Error, Debug)]
 pub enum FilesystemWriteError {
+    /// Error while finding free space
     #[error(transparent)]
     FindFreeSpaceError(#[from] FindFreeSpaceError),
+    /// Error while writing file to storage
     #[error(transparent)]
     WriteFileToStorageError(#[from] WriteFileToStorageError),
+    /// Some kind of io error
     #[error(transparent)]
     IoError(#[from] std::io::Error),
+    /// Error while committing file content
     #[error(transparent)]
     CommitFileContentError(#[from] CommitFileContentError),
 }
 
+/// Errors that can occur when deleting a file
 #[derive(Error, Debug)]
 pub enum FilesystemDeleteError {
+    /// Error while erasing storage
     #[error(transparent)]
     EraseStorageError(#[from] EraseStorageError),
+    /// The file does not exist
     #[error("The file does not exist")]
     FileNotFound,
 }
@@ -246,6 +254,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         return Ok(longest_range_start * T::BLOCK_SIZE);
     }
 
+    /// Write a file to storage.
     pub fn write_file(
         &mut self,
         name: &str,
@@ -321,7 +330,7 @@ mod tests {
 
     #[test]
     fn writing_and_reading_a_simple_file_works() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
@@ -333,7 +342,7 @@ mod tests {
 
     #[test]
     fn can_read_a_file_from_an_old_storage() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -346,7 +355,7 @@ mod tests {
 
     #[test]
     fn writing_multiple_files() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
@@ -361,7 +370,7 @@ mod tests {
 
     #[test]
     fn deleting_a_file_works() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
@@ -375,7 +384,7 @@ mod tests {
 
     #[test]
     fn deleting_a_file_actually_works() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
@@ -394,7 +403,7 @@ mod tests {
 
     #[test]
     fn file_cant_be_upgraded_if_it_has_been_deleted_and_there_are_only_weak_references() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
@@ -415,7 +424,7 @@ mod tests {
 
     #[test]
     fn no_new_references_can_be_created_to_a_file_marked_for_deletion() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
@@ -437,7 +446,7 @@ mod tests {
 
     #[test]
     fn writing_a_maximum_size_file_works() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
@@ -449,7 +458,7 @@ mod tests {
 
     #[test]
     fn deleting_a_file_makes_space_for_a_new_file() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
@@ -464,7 +473,7 @@ mod tests {
     #[test]
     fn deleting_a_file_does_not_make_space_for_a_new_file_if_there_are_still_strong_references_to_its_content(
     ) {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);
@@ -484,7 +493,7 @@ mod tests {
 
     #[test]
     fn writing_a_file_thats_too_big_fails() {
-        let owned_storage = SimulatedStorage::new().unwrap();
+        let owned_storage = SimulatedStorage::new();
         let storage =
             unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
         let mut filesystem = Filesystem::new(storage);

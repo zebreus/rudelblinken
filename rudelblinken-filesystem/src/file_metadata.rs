@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn storing_metadata_works() {
-        let mut storage = SimulatedStorage::new().unwrap();
+        let mut storage = SimulatedStorage::new();
         let metadata = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300).unwrap();
         assert_eq!(metadata.length, 300);
         assert_eq!(metadata.name_str(), "toast");
@@ -240,14 +240,14 @@ mod tests {
 
     #[test]
     fn marker_gets_set_for_new_metadata() {
-        let mut storage = SimulatedStorage::new().unwrap();
+        let mut storage = SimulatedStorage::new();
         let metadata = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300).unwrap();
         assert!(metadata.valid_marker());
     }
 
     #[test]
     fn reading_metadata_works() {
-        let mut storage = SimulatedStorage::new().unwrap();
+        let mut storage = SimulatedStorage::new();
         let _ = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300).unwrap();
         let read_metadata = FileMetadata::from_storage(&storage, 0).unwrap();
         assert_eq!(read_metadata.length, 300);
