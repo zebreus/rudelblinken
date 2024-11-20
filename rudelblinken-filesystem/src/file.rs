@@ -3,7 +3,7 @@ use crate::{
     storage::{EraseStorageError, Storage, StorageError},
 };
 use std::{
-    fmt::{self, Debug},
+    fmt::Debug,
     io::{SeekFrom, Write},
     ops::Deref,
     ptr::NonNull,
@@ -13,92 +13,114 @@ use std::{io::Seek, marker::ConstParamTy};
 use thiserror::Error;
 use zerocopy::IntoBytes;
 
+/// Represents an error that can occur while reading a file.
 #[derive(Error, Debug)]
 pub enum ReadFileError {
+    /// Error occurred in the storage layer.
     #[error(transparent)]
     StorageError(#[from] StorageError),
+    /// No metadata found or the metadata does not have the correct marker.
     #[error("No metadata found the metadata does not have the correct marker.")]
     InvalidMetadataMarker,
+    /// The file has already been deleted.
     #[error("File has already been deleted")]
     FileWasDeleted,
+    /// The file is not marked as ready, possibly due to a power loss during writing.
     #[error("File is not marked as ready. Maybe you lost power during writing?")]
     FileNotReady,
 }
 
+/// Represents an error that can occur while writing a file.
 #[derive(Error, Debug)]
 pub enum WriteFileError {
+    /// Error occurred in the storage layer.
     #[error(transparent)]
     StorageError(#[from] StorageError),
+    /// No metadata found or the metadata does not have the correct marker.
     #[error("No metadata found the metadata does not have the correct marker.")]
     InvalidMetadataMarker,
+    /// The file has already been deleted.
     #[error("File has already been deleted")]
     FileWasDeleted,
+    /// The file is already marked as ready and should not be written to anymore.
     #[error("File is already marked as ready. You should not write to this anymore.")]
     FileIsAlreadyReady,
+    /// The backing storage for a new file needs to be empty.
     #[error("The backing storage for a new file needs to be empty")]
     NotZeroed,
 }
 
+/// Represents an error that can occur while reading a file from storage.
 #[derive(Error, Debug)]
 pub enum ReadFileFromStorageError {
+    /// Error occurred while reading metadata.
     #[error(transparent)]
     ReadMetadataError(#[from] ReadMetadataError),
+    /// Error occurred while reading file content.
     #[error(transparent)]
     ReadFileContentError(#[from] ReadFileError),
 }
 
+/// Represents an error that can occur while writing a file to storage.
 #[derive(Error, Debug)]
 pub enum WriteFileToStorageError {
+    /// Error occurred while writing metadata.
     #[error(transparent)]
     WriteMetadataError(#[from] WriteMetadataError),
+    /// Error occurred while writing file content.
     #[error(transparent)]
     WriteFileContentError(#[from] WriteFileError),
 }
 
+/// Represents an error that can occur while deleting file content.
 #[derive(Error, Debug)]
 pub enum DeleteFileContentError {
+    /// Error occurred while erasing storage.
     #[error(transparent)]
     EraseStorageError(#[from] EraseStorageError),
 }
 
+/// Represents an error that can occur while committing file content.
 #[derive(Error, Debug)]
 pub enum CommitFileContentError {
+    /// Error occurred in the storage layer.
     #[error(transparent)]
     StorageError(#[from] StorageError),
 }
 
+/// Represents the transition state of file content.
 pub enum FileContentTransition {
-    /// Writer gets committed
+    // /// Writer gets committed
     // Commit,
-    /// Writer gets dropped without commit
+    // /// Writer gets dropped without commit
     // Abort,
     /// Last reader gets dropped
     DropLastReader,
 }
 
-/// Shared data about the current state of a file
+/// Shared data about the current state of a file.
 struct InnerFile<T: Storage + 'static> {
-    /// Number of weak references
+    /// Number of weak references.
     weak_count: usize,
-    /// Number of strong references
+    /// Number of strong references.
     reader_count: usize,
-    /// Number of writer references
+    /// Number of writer references.
     writer_count: usize,
-    // Reference to the storage
+    /// Reference to the storage.
     storage: &'static T,
-    // Reference to the address in storage
+    /// Reference to the address in storage.
     storage_address: u32,
-    // Offset from the base address; only used for writer
+    /// Offset from the base address; only used for writer.
     current_offset: u32,
-    /// Destructor that will be called when the last strong reference is dropped
+    /// Destructor that will be called when the last strong reference is dropped.
     transition: Box<dyn FnOnce(FileContentTransition) -> () + 'static + Send + Sync>,
     // We need to track this in memory because the flags in memory-mapped flash will be reset when a new file is created in the same place
     /// Set if the file has been deleted.
     has_been_deleted: bool,
 }
 
-impl<T: Storage + 'static> fmt::Debug for InnerFile<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<T: Storage + 'static> std::fmt::Debug for InnerFile<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileContentInfo")
             .field("weak_count", &self.weak_count)
             .field("reader_count", &self.reader_count)
@@ -107,16 +129,43 @@ impl<T: Storage + 'static> fmt::Debug for InnerFile<T> {
     }
 }
 
+/// Represents the state of a file.
+///
+/// See [File] for more information.
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Debug)]
 pub enum FileState {
-    /// Obtain a writer by creating a new file
+    /// Obtain a writer by creating a new file.
     Writer,
-    /// Can be obtained by upgrading a weak reference
+    /// Can be obtained by upgrading a weak reference.
     Reader,
-    /// Can always be obtained by downgrading
+    /// Can always be obtained by downgrading.
     Weak,
 }
 
+/// Provides a safe interface to read and write files.
+///
+/// The interface resembles a reference counted smart pointer, but for files.
+///
+/// Depending on the STATE parameter, the file can be read from or written to.
+///
+/// A file has possible states:
+/// - Reader: Can be read from, but not written to.
+/// - Writer: Can be written to, but not read from.
+/// - Weak: Can be upgraded to a reader.
+///
+/// It resembles a reference-counted smart pointer with an mutex inside. A writer can
+/// only be obtained by creating a new file. By calling [commit] on a writer, you
+/// finalize the file. From this point onwards you can only read from the file.
+/// If you want to edit the file, you need to erase it and create a new file.
+///
+/// # Safety
+///
+/// Files are backed by memory-mapped storage and readers provide direct access to that
+/// storage. This creates a potential problem when the file is deleted and readers suddenly
+/// point to storage that does not contain valid data anymore. To prevent this from happening,
+/// File resembles a reference-counted smart pointer. Only when the last reader is dropped,
+/// the file is deleted. After a file has been deleted it is no longer possible to upgrade a
+/// weak reference to a reader.
 pub struct File<T: Storage + 'static, const STATE: FileState = { FileState::Reader }> {
     content: &'static [u8],
     metadata: &'static FileMetadata,
@@ -124,9 +173,9 @@ pub struct File<T: Storage + 'static, const STATE: FileState = { FileState::Read
 }
 
 impl<T: Storage + 'static> File<T, { FileState::Reader }> {
-    /// Create a new file content with the given memory area
+    /// Create a new file content with the given memory area.
     ///
-    /// It is only safe to call this function if there are no other instances pointing to the file
+    /// It is only safe to call this function if there are no other instances pointing to the file.
     // TODO: Make this function unsafe or the argument a &'static [u8]
     fn new(
         data: &'static [u8],
@@ -179,7 +228,7 @@ impl<T: Storage + 'static> File<T, { FileState::Reader }> {
 
     /// Read a file from storage.
     ///
-    /// address is an address that can be used with storage
+    /// `address` is an address that can be used with storage.
     pub fn from_storage(
         storage: &'static T,
         address: u32,
@@ -194,13 +243,14 @@ impl<T: Storage + 'static> File<T, { FileState::Reader }> {
         return Ok(file_content);
     }
 
+    /// Get the name of the file as a string slice.
     pub fn name_str(&self) -> &str {
         return self.metadata.name_str();
     }
 }
 
 impl<T: Storage + 'static> File<T, { FileState::Writer }> {
-    /// Create a new file content with the given memory area
+    /// Create a new file writer with the given memory area.
     fn new_writer(
         data: &'static [u8],
         metadata: &'static FileMetadata,
@@ -244,7 +294,7 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
         });
     }
 
-    /// Create a new file and return a writer
+    /// Create a new file and return a writer.
     pub fn to_storage(
         storage: &'static T,
         address: u32,
@@ -266,6 +316,9 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
         return Ok(file_content);
     }
 
+    /// Commit the file content and convert it to a reader.
+    ///
+    /// This will finalize the file and make it read-only.
     pub fn commit(self) -> Result<File<T, { FileState::Reader }>, CommitFileContentError> {
         {
             let mut info = unsafe { (self.info.as_ref()).write().unwrap() };
@@ -287,7 +340,7 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
 }
 
 impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
-    /// Creates a new weak pointer to this data
+    /// Creates a new weak pointer to this data.
     pub fn downgrade(&self) -> File<T, { FileState::Weak }> {
         unsafe {
             self.info.as_ref().write().unwrap().weak_count += 1;
@@ -299,17 +352,17 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
         };
     }
 
-    /// Creates a new strong pointer to this data
+    /// Creates a new strong pointer to this data.
     ///
-    /// The file will not be deleted, while you hold any strong reference to it. For this reason it is best to only store the strong reference if you really need the file.
+    /// The file will not be deleted while you hold any strong reference to it. For this reason, it is best to only store the strong reference if you really need the file.
     ///
     /// Upgrading will always fail if the data has been marked for deletion.
     ///
     /// Upgrading weak references will fail if there are no strong references left.
     ///
-    /// Upgrading a writer will alwayse fail. Use commit instead.
+    /// Upgrading a writer will always fail. Use commit instead.
     ///
-    /// Upgrading will always fail while there is a writer alive
+    /// Upgrading will always fail while there is a writer alive.
     pub fn upgrade(&self) -> Option<File<T, { FileState::Reader }>> {
         if STATE == FileState::Writer {
             return None;
@@ -345,17 +398,22 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
         return false;
     }
 
+    /// Get the number of readers.
     pub fn reader_count(&self) -> usize {
         return unsafe { self.info.as_ref().read().unwrap().reader_count };
     }
 
+    /// Get the number of writers.
     pub fn writer_count(&self) -> usize {
         return unsafe { self.info.as_ref().read().unwrap().writer_count };
     }
 
+    /// Check if the file is marked for deletion.
     pub fn marked_for_deletion(&self) -> bool {
         return self.metadata.marked_for_deletion();
     }
+
+    /// Check if the file is deleted.
     pub fn deleted(&self) -> bool {
         let info = unsafe { self.info.as_ref().read().unwrap() };
         if info.has_been_deleted {
@@ -363,15 +421,17 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
         }
         return self.metadata.deleted();
     }
+
+    /// Check if the file is ready.
     pub fn ready(&self) -> bool {
         return self.metadata.ready();
     }
 
-    /// Mark this file for deletion
+    /// Mark this file for deletion.
     ///
-    /// No new strong references can be created to a file thats marked for deletion, except with clone on a strong reference.
+    /// No new strong references can be created to a file that's marked for deletion, except with clone on a strong reference.
     ///
-    /// If there are no strong references left, the file will be deleted right away
+    /// If there are no strong references left, the file will be deleted right away.
     pub fn mark_for_deletion(&self) -> Result<(), DeleteFileContentError> {
         let info = unsafe { self.info.as_ref().read().unwrap() };
 
@@ -421,9 +481,9 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
         unsafe { self.internal_delete() }
     }
 
-    /// Check if the backing storage for the file is completely zeroed out
+    /// Check if the backing storage for the file is completely zeroed out.
     ///
-    /// A valid file should never be zeroed, so I marked this as unsafe
+    /// A valid file should never be zeroed, so this is marked as unsafe.
     pub unsafe fn erased(&self) -> bool {
         let metadata_slice = FileMetadata::as_bytes(self.metadata);
         if metadata_slice.iter().any(|i| *i != 0xff) {
@@ -562,7 +622,7 @@ impl<T: Storage + 'static + Send + Sync> Seek for File<T, { FileState::Writer }>
 }
 
 impl<T: Storage + 'static + Send + Sync> Write for File<T, { FileState::Writer }> {
-    /// The same as [std::io::Write::write] but you can only flip bits from 0 to 1
+    /// The same as [std::io::Write::write] but you can only flip bits from 1 to 0.
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let length = self.content.len() as u32;
         let info = unsafe {

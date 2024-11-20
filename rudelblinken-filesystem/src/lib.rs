@@ -78,24 +78,6 @@ pub struct Filesystem<T: Storage + 'static + Send + Sync> {
     files: Vec<FileInformation<T>>,
 }
 
-///
-/// # Methods
-///
-/// * `get_first_block` - Retrieves the first block number from the storage metadata.
-/// * `set_first_block` - Sets the first block number in the storage metadata.
-/// * `new` - Initializes a new `Filesystem` instance, reading existing files from storage.
-/// * `get_storage` - Returns a reference to the underlying storage.
-/// * `read_file` - Reads a file by name and returns an optional `File` object.
-/// * `find_free_space` - Finds a free space in storage of at least the given length.
-/// * `write_file` - Writes a file with the given name, content, and hash.
-/// * `get_file_writer` - Returns a writer for writing a file over time.
-/// * `delete_file` - Deletes a file by name, marking it for deletion if necessary.
-/// * `cleanup_files` - Removes all files with no remaining strong pointers.
-///
-/// # File System Layout
-/// The filesystem maintains:
-/// - A "first_block" metadata entry for circular buffer management
-/// - Files stored sequentially in blocks, each with metadata header
 impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     /// Retrieves the first block number from the storage metadata.
     fn get_first_block(&self) -> Result<u16, std::io::Error> {
@@ -294,6 +276,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         self.files.push(file);
         Ok(writer)
     }
+
     /// Delete a file
     ///
     /// The file will only be deleted once there are no strong references to its content left. Strong references can be obtained by calling upgrade on the content of a file
