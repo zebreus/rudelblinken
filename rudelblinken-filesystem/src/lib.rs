@@ -19,6 +19,7 @@
 #![feature(box_as_ptr)]
 #![feature(box_vec_non_null)]
 #![feature(allocator_api)]
+#![feature(doc_cfg)]
 
 use file::{CommitFileContentError, File, FileState, WriteFileToStorageError};
 use file_information::FileInformation;
