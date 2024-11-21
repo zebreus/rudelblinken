@@ -2,6 +2,13 @@
 name = "rudelblinken-filesystem"
 version = "0.0.1"
 edition = "2021"
+license = "AGPL-3.0-only"
+keywords = ["filesystem", "esp32", "flash"]
+authors = ["zebreus <lennarteichhorn@googlemail.com>"]
+categories = ["filesystem", "embedded"]
+repository = "https://github.com/zebreus/rudelblinken-rs"
+homepage = "https://github.com/zebreus/rudelblinken-rs/tree/main/rudelblinken-filesystem"
+description = "Minimalistic zero-copy flash filesystem optimized for embedded systemse"
 
 [dependencies]
 thiserror = "2.0.3"
