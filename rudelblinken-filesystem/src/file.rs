@@ -652,7 +652,7 @@ impl<T: Storage + 'static + Send + Sync> Write for File<T, { FileState::Writer }
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{get_test_storage, SimulatedStorage};
+    use crate::storage::simulated::{get_test_storage, SimulatedStorage};
 
     use super::*;
 

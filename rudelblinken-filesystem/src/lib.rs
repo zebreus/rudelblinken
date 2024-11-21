@@ -322,7 +322,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::SimulatedStorage;
+    use crate::storage::simulated::SimulatedStorage;
 
     use super::*;
 

@@ -228,7 +228,7 @@ impl FileMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::SimulatedStorage;
+    use crate::storage::simulated::SimulatedStorage;
 
     #[test]
     fn storing_metadata_works() {
