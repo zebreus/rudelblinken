@@ -14,13 +14,32 @@
 //!
 //! Designed specifically for flash storage, the implementation uses block-aligned operations,
 //! respects write limitations, and implements basic wear leveling.
+//!
 #![warn(missing_docs)]
 #![feature(adt_const_params)]
 #![feature(box_as_ptr)]
 #![feature(box_vec_non_null)]
 #![feature(allocator_api)]
 #![feature(doc_cfg)]
+#[cfg_attr(
+    feature = "simulated",
+    doc = r##"
 
+# Examples
+
+Create an in-memory filesystem for testing:
+
+```
+use rudelblinken_filesystem::storage::simulated::SimulatedStorage;
+use rudelblinken_filesystem::Filesystem;
+
+let storage = SimulatedStorage::new();
+// TODO: Improve the interface to allow storages with lifetimes
+let static_storage_ref = unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&storage) };
+let mut filesystem = Filesystem::new(static_storage_ref);
+```
+"##
+)]
 use file::{CommitFileContentError, File, FileState, WriteFileToStorageError};
 use file_information::FileInformation;
 use file_metadata::FileMetadata;

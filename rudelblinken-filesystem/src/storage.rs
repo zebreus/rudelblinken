@@ -50,16 +50,6 @@ pub enum EraseStorageError {
 /// Filesystem metadata is not stored in the main storage block
 ///
 /// Storage must provide these functions to store metadata.
-///
-#[cfg_attr(
-    feature = "simulated",
-    doc = r##"
-/// ```
-/// use rudelblinken_filesystem::storage::get_test_storage;
-/// let storage = SimulatedStorage::new();
-/// ```
-"##
-)]
 pub trait Storage {
     /// Size in which blocks can be erased
     const BLOCK_SIZE: u32;

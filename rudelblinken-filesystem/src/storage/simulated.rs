@@ -15,19 +15,9 @@ struct AlignedBuffer<const SIZE: usize>([u8; SIZE]);
 /// A storage that is backed by a heap allocated buffer
 ///
 /// ```
-/// use rudelblinken_filesystem::storage::get_test_storage;
-/// let storageA = SimulatedStorage::new();
+/// use rudelblinken_filesystem::storage::simulated::SimulatedStorage;
+/// let storage = SimulatedStorage::new();
 /// ```
-///
-#[cfg_attr(
-    feature = "simulated",
-    doc = r##"
-/// ```
-/// use rudelblinken_filesystem::storage::get_test_storage;
-/// let storageB = SimulatedStorage::new();
-/// ```
-"##
-)]
 pub struct SimulatedStorage {
     pool: Box<AlignedBuffer<{ Self::SIZE as usize * 2 }>>,
     pool_ptr: *mut [u8; Self::SIZE as usize * 2],
