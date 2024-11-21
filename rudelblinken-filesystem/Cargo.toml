@@ -1,8 +1,13 @@
 [package]
 name = "rudelblinken-filesystem"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-thiserror = "2.0.0"
-zerocopy = { version = "0.8.9", features = ["derive"] }
+thiserror = "2.0.3"
+zerocopy = { version = "0.8.10", features = ["derive"] }
+
+[features]
+default = []
+simulated = []
+esp32 = []

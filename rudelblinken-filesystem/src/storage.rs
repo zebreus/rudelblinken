@@ -46,6 +46,16 @@ pub enum EraseStorageError {
 /// Filesystem metadata is not stored in the main storage block
 ///
 /// Storage must provide these functions to store metadata.
+///
+#[cfg_attr(
+    feature = "simulated",
+    doc = r##"
+/// ```
+/// use rudelblinken_filesystem::storage::get_test_storage;
+/// let storage = SimulatedStorage::new();
+/// ```
+"##
+)]
 pub trait Storage {
     /// Size in which blocks can be erased
     const BLOCK_SIZE: u32;
@@ -90,18 +100,18 @@ pub trait Storage {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "simulated"))]
 use std::{
     collections::HashMap,
     sync::{Arc, LazyLock, Mutex, RwLock},
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "simulated"))]
 #[derive(Debug)]
 #[repr(C, align(4096))]
 struct AlignedBuffer<const SIZE: usize>([u8; SIZE]);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "simulated"))]
 #[derive(Debug)]
 /// A storage that is backed by a heap allocated buffer
 pub struct SimulatedStorage {
@@ -110,12 +120,12 @@ pub struct SimulatedStorage {
     key_value: Arc<Mutex<HashMap<String, Box<[u8]>>>>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "simulated"))]
 unsafe impl Send for SimulatedStorage {}
-#[cfg(test)]
+#[cfg(any(test, feature = "simulated"))]
 unsafe impl Sync for SimulatedStorage {}
 
-#[cfg(test)]
+#[cfg(any(test, feature = "simulated"))]
 impl SimulatedStorage {
     /// Size of the storage
     pub const SIZE: u32 = Self::BLOCKS * Self::BLOCK_SIZE;
@@ -131,7 +141,7 @@ impl SimulatedStorage {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "simulated"))]
 /// Copies zeroes from src to dest and ignores ones in src.
 fn copy_zeroes_from_slice(dest: &mut [u8], src: &[u8]) {
     let new_data: Vec<u8> = src
@@ -142,7 +152,7 @@ fn copy_zeroes_from_slice(dest: &mut [u8], src: &[u8]) {
     dest.copy_from_slice(&new_data);
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "simulated"))]
 impl Storage for SimulatedStorage {
     const BLOCKS: u32 = 16;
     const BLOCK_SIZE: u32 = 4096;
