@@ -4,6 +4,10 @@ use thiserror::Error;
 #[cfg_attr(docsrs, doc(cfg(feature = "simulated")))]
 pub mod simulated;
 
+#[cfg(any(feature = "esp"))]
+#[cfg_attr(docsrs, doc(cfg(feature = "esp")))]
+pub mod esp;
+
 /// Some kind of error that can occur during a storage operation
 #[derive(Error, Debug)]
 pub enum StorageError {

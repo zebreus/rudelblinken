@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, LazyLock, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 
 use super::{EraseStorageError, Storage, StorageError};
@@ -139,6 +139,9 @@ impl Storage for SimulatedStorage {
         return Ok(());
     }
 }
+
+#[cfg(test)]
+use std::sync::{LazyLock, RwLock};
 
 #[cfg(test)]
 static STATIC_STORAGES: LazyLock<RwLock<Vec<Box<SimulatedStorage>>>> =

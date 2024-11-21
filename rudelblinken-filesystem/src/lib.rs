@@ -1,4 +1,4 @@
-//! A zero-copy flash filesystem optimized for embedded systems
+//! A minimalistic zero-copy flash filesystem optimized for the ESP32-C3
 //!
 //! `rudelblinken-filesystem` implements a flash-friendly filesystem designed for resource-constrained
 //! embedded devices. Key features include:
@@ -16,6 +16,7 @@
 //! respects write limitations, and implements basic wear leveling.
 //!
 #![warn(missing_docs)]
+#![allow(static_mut_refs)]
 #![feature(adt_const_params)]
 #![feature(box_as_ptr)]
 #![feature(box_vec_non_null)]
