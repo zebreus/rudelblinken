@@ -4,7 +4,7 @@ use thiserror::Error;
 #[cfg_attr(docsrs, doc(cfg(feature = "simulated")))]
 pub mod simulated;
 
-#[cfg(any(feature = "esp"))]
+#[cfg(feature = "esp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "esp")))]
 pub mod esp;
 

@@ -27,6 +27,12 @@ pub struct SimulatedStorage {
 unsafe impl Send for SimulatedStorage {}
 unsafe impl Sync for SimulatedStorage {}
 
+impl Default for SimulatedStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimulatedStorage {
     /// Size of the storage
     pub const SIZE: u32 = Self::BLOCKS * Self::BLOCK_SIZE;
@@ -34,11 +40,11 @@ impl SimulatedStorage {
     /// Create a new storage for testing purposes
     pub fn new() -> SimulatedStorage {
         let mut pool = Box::new(AlignedBuffer([0b11111111u8; Self::SIZE as usize * 2]));
-        return SimulatedStorage {
+        SimulatedStorage {
             pool_ptr: &mut (pool.0),
-            pool: pool,
+            pool,
             key_value: Default::default(),
-        };
+        }
     }
 }
 
@@ -69,7 +75,7 @@ impl Storage for SimulatedStorage {
             )
         };
 
-        return Ok(static_slice);
+        Ok(static_slice)
     }
 
     fn write(&self, address: u32, data: &[u8]) -> Result<(), StorageError> {
@@ -118,7 +124,7 @@ impl Storage for SimulatedStorage {
             pool[base_address as usize..(base_address + Self::BLOCK_SIZE) as usize]
                 .copy_from_slice(&[0b11111111u8; Self::BLOCK_SIZE as usize]);
         }
-        return Ok(());
+        Ok(())
     }
 
     fn read_metadata(&self, key: &str) -> Result<Box<[u8]>, std::io::Error> {
@@ -126,8 +132,7 @@ impl Storage for SimulatedStorage {
             .key_value
             .lock()
             .map_err(|_| std::io::Error::other("Failed to lock mutex"))?
-            .get(key)
-            .map(|m| m.clone())
+            .get(key).cloned()
             .ok_or(std::io::Error::other("Failed to get a key for that value"));
     }
 
@@ -136,7 +141,7 @@ impl Storage for SimulatedStorage {
             .lock()
             .map_err(|_| std::io::Error::other("Failed to lock mutex"))?
             .insert(key.into(), value.into());
-        return Ok(());
+        Ok(())
     }
 }
 
