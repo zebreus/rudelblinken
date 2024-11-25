@@ -91,6 +91,9 @@ pub enum FilesystemDeleteError {
     /// Error while erasing storage
     #[error(transparent)]
     EraseStorageError(#[from] EraseStorageError),
+    /// Some kind of io error
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
     /// The file does not exist
     #[error("The file does not exist")]
     FileNotFound,
@@ -117,7 +120,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         Ok(u16::from_le_bytes(*first_block_slice))
     }
     /// Sets the first block number in the storage metadata.
-    fn set_first_block(&mut self, first_block: u16) -> Result<(), std::io::Error> {
+    fn set_first_block(&self, first_block: u16) -> Result<(), std::io::Error> {
         self.storage
             .write_metadata("first_block", &first_block.to_le_bytes())?;
         Ok(())
@@ -137,18 +140,19 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     /// # Returns
     /// A new `Filesystem` instance with the reconstructed file list
     pub fn new(storage: &'static T) -> Self {
+        // Create a fs with an empty files table
         let mut filesystem = Self {
             storage,
             files: Vec::new(),
         };
+
+        // Find all files
         let first_block = filesystem.get_first_block();
         let first_block = first_block.unwrap_or_else(|_| {
             filesystem.set_first_block(0).unwrap();
             0
         });
-
         let mut block_number = 0;
-
         while block_number < T::BLOCKS {
             let current_block_number = (block_number + first_block as u32) % T::BLOCKS;
             let file_information = FileInformation::from_storage(
@@ -180,6 +184,14 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             };
             block_number += ((file_information.length + 64) / T::BLOCK_SIZE) + 1;
             filesystem.files.push(file_information);
+        }
+
+        // Fix the first block number, if the first file is marked for deletion or deleted
+        if let Some(first_file) = filesystem.files.first() {
+            if first_file.marked_for_deletion() || first_file.deleted() {
+                let new_first_block = filesystem.find_new_first_block();
+                filesystem.set_first_block(new_first_block).unwrap();
+            }
         }
 
         filesystem
@@ -321,10 +333,47 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         if !file.marked_for_deletion() {
             file.mark_for_deletion().unwrap();
         }
+
+        let file = &self.files[index];
+        let file_block = (file.address / T::BLOCK_SIZE) as u16;
+        let first_block = self.get_first_block().unwrap_or(0);
         if file.deleted() {
             self.files.swap_remove(index);
         }
+
+        if file_block == first_block {
+            let new_first_block = self.find_new_first_block() as u16;
+            if new_first_block != first_block {
+                self.set_first_block(new_first_block)?;
+            }
+        }
+
         Ok(())
+    }
+
+    fn find_new_first_block(&self) -> u16 {
+        let good_file = self
+            .files
+            .iter()
+            .find(|file| !file.deleted() && !file.marked_for_deletion());
+
+        if let Some(file) = good_file {
+            return (file.address / T::BLOCK_SIZE) as u16;
+        }
+
+        let acceptable_file = self.files.iter().find(|file| !file.deleted());
+
+        if let Some(file) = acceptable_file {
+            return (file.address / T::BLOCK_SIZE) as u16;
+        }
+
+        let any_file = self.files.first();
+
+        if let Some(file) = any_file {
+            return (file.address / T::BLOCK_SIZE) as u16;
+        }
+
+        return 0;
     }
 
     /// Remove all files with no remaining strong pointers
@@ -520,5 +569,25 @@ mod tests {
         let Err(_) = filesystem.write_file("fancy", &file, &[0u8; 32]) else {
             panic!("Should fail when there is not enough space");
         };
+    }
+
+    #[test]
+    fn deleting_the_first_file_moves_the_marker() {
+        let owned_storage = SimulatedStorage::new();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
+        let mut filesystem = Filesystem::new(storage);
+        let file = [0u8; SimulatedStorage::SIZE as usize
+            - size_of::<FileMetadata>()
+            - SimulatedStorage::BLOCK_SIZE as usize * 2];
+        filesystem.write_file("first", &file, &[0u8; 32]).unwrap();
+        assert_eq!(filesystem.get_first_block().unwrap(), 0);
+        let file2 = [0u8; SimulatedStorage::BLOCK_SIZE as usize - size_of::<FileMetadata>()];
+        filesystem.write_file("second", &file2, &[0u8; 32]).unwrap();
+        assert_eq!(filesystem.get_first_block().unwrap(), 0);
+        filesystem.delete_file("first").unwrap();
+        assert_ne!(filesystem.get_first_block().unwrap(), 0);
+        // drop(filesystem);
+        // let mut filesystem = Filesystem::new(storage);
     }
 }

@@ -433,7 +433,7 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
     /// No new strong references can be created to a file that's marked for deletion, except with clone on a strong reference.
     ///
     /// If there are no strong references left, the file will be deleted right away.
-    pub fn mark_for_deletion(&self) -> Result<(), DeleteFileContentError> {
+    pub(crate) fn mark_for_deletion(&self) -> Result<(), DeleteFileContentError> {
         let info = unsafe { self.info.as_ref().read().unwrap() };
 
         unsafe {
