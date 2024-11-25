@@ -1,3 +1,4 @@
+/// [File] provides a safe interface to read and write files.
 use crate::{
     file_metadata::{FileMetadata, ReadMetadataError, WriteMetadataError},
     storage::{EraseStorageError, Storage, StorageError},
@@ -99,7 +100,7 @@ pub enum FileContentTransition {
 }
 
 /// Shared data about the current state of a file.
-struct InnerFile<T: Storage + 'static> {
+struct InnerFile<T: Storage + 'static + Send + Sync> {
     /// Number of weak references.
     weak_count: usize,
     /// Number of strong references.
@@ -119,7 +120,7 @@ struct InnerFile<T: Storage + 'static> {
     has_been_deleted: bool,
 }
 
-impl<T: Storage + 'static> std::fmt::Debug for InnerFile<T> {
+impl<T: Storage + 'static + Send + Sync> std::fmt::Debug for InnerFile<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileContentInfo")
             .field("weak_count", &self.weak_count)
@@ -166,13 +167,17 @@ pub enum FileState {
 /// File resembles a reference-counted smart pointer. Only when the last reader is dropped,
 /// the file is deleted. After a file has been deleted it is no longer possible to upgrade a
 /// weak reference to a reader.
-pub struct File<T: Storage + 'static, const STATE: FileState = { FileState::Reader }> {
+pub struct File<T: Storage + 'static + Send + Sync, const STATE: FileState = { FileState::Reader }>
+{
     content: &'static [u8],
     metadata: &'static FileMetadata,
     info: NonNull<RwLock<InnerFile<T>>>,
 }
 
-impl<T: Storage + 'static> File<T, { FileState::Reader }> {
+unsafe impl<T: Storage + 'static + Send + Sync, const STATE: FileState> Send for File<T, STATE> {}
+unsafe impl<T: Storage + 'static + Send + Sync, const STATE: FileState> Sync for File<T, STATE> {}
+
+impl<T: Storage + 'static + Send + Sync> File<T, { FileState::Reader }> {
     /// Create a new file content with the given memory area.
     ///
     /// It is only safe to call this function if there are no other instances pointing to the file.
@@ -249,7 +254,7 @@ impl<T: Storage + 'static> File<T, { FileState::Reader }> {
     }
 }
 
-impl<T: Storage + 'static> File<T, { FileState::Writer }> {
+impl<T: Storage + 'static + Send + Sync> File<T, { FileState::Writer }> {
     /// Create a new file writer with the given memory area.
     fn new_writer(
         data: &'static [u8],
@@ -340,7 +345,7 @@ impl<T: Storage + 'static> File<T, { FileState::Writer }> {
     }
 }
 
-impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
+impl<T: Storage + 'static + Send + Sync, const STATE: FileState> File<T, STATE> {
     /// Creates a new weak pointer to this data.
     pub fn downgrade(&self) -> File<T, { FileState::Weak }> {
         unsafe {
@@ -497,7 +502,7 @@ impl<T: Storage + 'static, const STATE: FileState> File<T, STATE> {
     }
 }
 
-impl<T: Storage + 'static, const STATE: FileState> Debug for File<T, STATE> {
+impl<T: Storage + 'static + Send + Sync, const STATE: FileState> Debug for File<T, STATE> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FileContent")
             // .field("content", &self.content)
@@ -507,7 +512,7 @@ impl<T: Storage + 'static, const STATE: FileState> Debug for File<T, STATE> {
     }
 }
 
-impl<T: Storage + 'static> Deref for File<T, { FileState::Reader }> {
+impl<T: Storage + 'static + Send + Sync> Deref for File<T, { FileState::Reader }> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -515,13 +520,13 @@ impl<T: Storage + 'static> Deref for File<T, { FileState::Reader }> {
     }
 }
 
-impl<T: Storage + 'static> PartialEq<Self> for File<T, { FileState::Reader }> {
+impl<T: Storage + 'static + Send + Sync> PartialEq<Self> for File<T, { FileState::Reader }> {
     fn eq(&self, other: &Self) -> bool {
         self.content == other.content
     }
 }
 
-impl<T: Storage + 'static> Clone for File<T, { FileState::Reader }> {
+impl<T: Storage + 'static + Send + Sync> Clone for File<T, { FileState::Reader }> {
     fn clone(&self) -> Self {
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
         info.reader_count += 1;
@@ -533,7 +538,7 @@ impl<T: Storage + 'static> Clone for File<T, { FileState::Reader }> {
     }
 }
 
-impl<T: Storage + 'static> Clone for File<T, { FileState::Weak }> {
+impl<T: Storage + 'static + Send + Sync> Clone for File<T, { FileState::Weak }> {
     fn clone(&self) -> Self {
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
         info.weak_count += 1;
@@ -545,7 +550,7 @@ impl<T: Storage + 'static> Clone for File<T, { FileState::Weak }> {
     }
 }
 
-impl<T: Storage + 'static, const STATE: FileState> Drop for File<T, STATE> {
+impl<T: Storage + 'static + Send + Sync, const STATE: FileState> Drop for File<T, STATE> {
     fn drop(&mut self) {
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
 

@@ -48,7 +48,8 @@ use std::{collections::BTreeMap, io::Write, ops::Bound::Included};
 use storage::{EraseStorageError, Storage};
 use thiserror::Error;
 
-mod file;
+/// [file::File] provides a safe interface to read and write files.
+pub mod file;
 mod file_information;
 mod file_metadata;
 /// Storage traits and implementations
