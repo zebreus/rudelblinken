@@ -83,6 +83,9 @@ pub enum FilesystemWriteError {
     /// Error while committing file content
     #[error(transparent)]
     CommitFileContentError(#[from] CommitFileContentError),
+    /// There already exists a file with that name. Delete it first
+    #[error("There already exists a file with that name. Delete it first")]
+    NameAlreadyTaken,
 }
 
 /// Errors that can occur when deleting a file
@@ -186,23 +189,33 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             filesystem.files.push(file_information);
         }
 
-        // Fix the first block number, if the first file is marked for deletion or deleted
-        if let Some(first_file) = filesystem.files.first() {
-            if first_file.marked_for_deletion() || first_file.deleted() {
-                let new_first_block = filesystem.find_new_first_block();
-                filesystem.set_first_block(new_first_block).unwrap();
-            }
-        }
+        unsafe { filesystem.selfcheck() };
 
         filesystem
     }
 
+    /// Check the filesystem for errors and try to fix them
+    ///
+    /// Only safe, if none of the files have been read yet. This should only be called in new.
+    unsafe fn selfcheck(&mut self) {
+        // Fix the first block number, if the first file is marked for deletion or deleted
+        if let Some(first_file) = self.files.first() {
+            if first_file.marked_for_deletion() || first_file.deleted() {
+                let new_first_block = self.find_new_first_block();
+                self.set_first_block(new_first_block).unwrap();
+            }
+        }
+
+        // TODO: Find and remove files with a duplicate name
+
+        // TODO: Cleanup
+    }
+
     /// Finds a file by name and returns a reference to it.
     pub fn read_file(&self, name: &str) -> Option<File<T, { FileState::Weak }>> {
-        let file = self
-            .files
-            .iter()
-            .find(|file| file.name == name && file.valid())?;
+        let file = self.files.iter().find(|file| {
+            file.name == name && !file.marked_for_deletion() && !file.deleted() && file.valid()
+        })?;
         Some(file.read())
     }
 
@@ -309,6 +322,13 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         _hash: &[u8; 32],
     ) -> Result<File<T, { FileState::Writer }>, FilesystemWriteError> {
         self.cleanup_files();
+        if self
+            .files
+            .iter()
+            .any(|file| !file.deleted() && !file.marked_for_deletion() && file.name == name)
+        {
+            return Err(FilesystemWriteError::NameAlreadyTaken);
+        }
         let free_location = self.find_free_space(length + size_of::<FileMetadata>() as u32)?;
 
         let (file, writer) =
@@ -355,19 +375,22 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         let good_file = self
             .files
             .iter()
-            .find(|file| !file.deleted() && !file.marked_for_deletion());
+            .find(|file| file.valid() && !file.deleted() && !file.marked_for_deletion());
 
         if let Some(file) = good_file {
             return (file.address / T::BLOCK_SIZE) as u16;
         }
 
-        let acceptable_file = self.files.iter().find(|file| !file.deleted());
+        let acceptable_file = self
+            .files
+            .iter()
+            .find(|file| file.valid() && !file.deleted());
 
         if let Some(file) = acceptable_file {
             return (file.address / T::BLOCK_SIZE) as u16;
         }
 
-        let any_file = self.files.first();
+        let any_file = self.files.iter().find(|file| file.valid());
 
         if let Some(file) = any_file {
             return (file.address / T::BLOCK_SIZE) as u16;
@@ -503,7 +526,7 @@ mod tests {
         let file = filesystem.read_file("fancy").unwrap();
         let strong_ref = file.upgrade().unwrap();
         filesystem.delete_file("fancy").unwrap();
-        let None = filesystem.read_file("fancy").unwrap().upgrade() else {
+        let None = filesystem.read_file("fancy") else {
             panic!(
                 "Should not be able to create a new reference to a file marked for deletion file"
             );
@@ -589,5 +612,18 @@ mod tests {
         assert_ne!(filesystem.get_first_block().unwrap(), 0);
         // drop(filesystem);
         // let mut filesystem = Filesystem::new(storage);
+    }
+
+    #[test]
+    fn can_not_create_two_files_with_the_same_name() {
+        let owned_storage = SimulatedStorage::new();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
+        let mut filesystem = Filesystem::new(storage);
+        let file = [0u8; SimulatedStorage::BLOCK_SIZE as usize - size_of::<FileMetadata>()];
+        filesystem.write_file("cool", &file, &[0u8; 32]).unwrap();
+        filesystem
+            .write_file("cool", &file, &[0u8; 32])
+            .unwrap_err();
     }
 }
