@@ -229,7 +229,11 @@ impl FileUploadService {
             return Err(StartUploadError::LengthIncorrect);
         }
         let mut filesystem = get_filesystem().unwrap().write().unwrap();
-        let writer = filesystem.get_file_writer("toast", length, hash).unwrap();
+        // Delete previous file
+        let _ = filesystem.delete_file("firmware");
+        let writer = filesystem
+            .get_file_writer("firmware", length, hash)
+            .unwrap();
 
         self.currently_receiving = Some(IncompleteFile::new(
             *hash,
@@ -237,7 +241,7 @@ impl FileUploadService {
             chunk_length,
             length,
             writer,
-            "toast".into(),
+            "firmware".into(),
         ));
 
         Ok(())
