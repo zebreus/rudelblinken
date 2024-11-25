@@ -98,12 +98,12 @@ impl std::fmt::Debug for FileMetadata {
 
 impl FileMetadata {
     /// Create a new file metadata object in ram
-    fn new(name: &str, length: u32) -> Self {
+    fn new(name: &str, length: u32, hash: &[u8; 32]) -> Self {
         let mut metadata = FileMetadata {
             flags: u16::MAX ^ FileFlags::LOW_MARKERS,
             _reserved: [0; 2],
             length,
-            hash: [0; 32],
+            hash: *hash,
             name: [0; 16],
             _padding: [0; 8],
         };
@@ -199,8 +199,9 @@ impl FileMetadata {
         address: u32,
         name: &str,
         length: u32,
+        hash: &[u8; 32],
     ) -> Result<&'static Self, WriteMetadataError> {
-        let new_metadata = Self::new(name, length);
+        let new_metadata = Self::new(name, length, hash);
         let as_bytes = new_metadata.as_bytes();
         let memory_mapped_metadata = storage.write_checked(address, as_bytes)?;
         FileMetadata::ref_from_bytes(memory_mapped_metadata)
@@ -233,7 +234,8 @@ mod tests {
     #[test]
     fn storing_metadata_works() {
         let mut storage = SimulatedStorage::new();
-        let metadata = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300).unwrap();
+        let metadata =
+            FileMetadata::new_to_storage(&mut storage, 0, "toast", 300, &[0; 32]).unwrap();
         assert_eq!(metadata.length, 300);
         assert_eq!(metadata.name_str(), "toast");
     }
@@ -241,14 +243,15 @@ mod tests {
     #[test]
     fn marker_gets_set_for_new_metadata() {
         let mut storage = SimulatedStorage::new();
-        let metadata = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300).unwrap();
+        let metadata =
+            FileMetadata::new_to_storage(&mut storage, 0, "toast", 300, &[0; 32]).unwrap();
         assert!(metadata.valid_marker());
     }
 
     #[test]
     fn reading_metadata_works() {
         let mut storage = SimulatedStorage::new();
-        let _ = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300).unwrap();
+        let _ = FileMetadata::new_to_storage(&mut storage, 0, "toast", 300, &[0; 32]).unwrap();
         let read_metadata = FileMetadata::from_storage(&storage, 0).unwrap();
         assert_eq!(read_metadata.length, 300);
         assert_eq!(read_metadata.name_str(), "toast");

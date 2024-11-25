@@ -320,7 +320,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         &mut self,
         name: &str,
         length: u32,
-        _hash: &[u8; 32],
+        hash: &[u8; 32],
     ) -> Result<File<T, { FileState::Writer }>, FilesystemWriteError> {
         self.cleanup_files();
         if self
@@ -333,7 +333,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         let free_location = self.find_free_space(length + size_of::<FileMetadata>() as u32)?;
 
         let (file, writer) =
-            FileInformation::to_storage(self.storage, free_location, length, name)?;
+            FileInformation::to_storage(self.storage, free_location, length, name, hash)?;
         self.files.push(file);
         Ok(writer)
     }

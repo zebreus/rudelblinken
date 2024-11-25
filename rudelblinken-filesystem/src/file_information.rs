@@ -67,9 +67,10 @@ impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
         address: u32,
         length: u32,
         name: &str,
+        hash: &[u8; 32],
     ) -> Result<(Self, File<T, { FileState::Writer }>), WriteFileToStorageError> {
         let file_content =
-            File::<T, { FileState::Writer }>::to_storage(storage, address, length, name)?;
+            File::<T, { FileState::Writer }>::to_storage(storage, address, length, name, hash)?;
 
         let information = FileInformation {
             address,

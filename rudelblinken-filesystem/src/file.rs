@@ -305,8 +305,9 @@ impl<T: Storage + 'static + Send + Sync> File<T, { FileState::Writer }> {
         address: u32,
         length: u32,
         name: &str,
+        hash: &[u8; 32],
     ) -> Result<Self, WriteFileToStorageError> {
-        let metadata = FileMetadata::new_to_storage(storage, address, name, length)?;
+        let metadata = FileMetadata::new_to_storage(storage, address, name, length, &hash)?;
         let content = storage
             .read(address + size_of::<FileMetadata>() as u32, metadata.length)
             .map_err(WriteFileError::from)?;
@@ -671,7 +672,8 @@ mod tests {
             backing_storage,
             0,
             "toast",
-            100
+            100,
+            &[0; 32]
         ))
         .unwrap();
         unsafe { metadata.set_ready(backing_storage, 0) }.unwrap();
