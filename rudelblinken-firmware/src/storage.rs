@@ -15,7 +15,6 @@ use esp_idf_sys::{
     esp_partition_write_raw, ESP_OK,
 };
 use rudelblinken_filesystem::{
-    file::File,
     storage::{EraseStorageError, Storage, StorageError},
     Filesystem,
 };
@@ -303,7 +302,7 @@ pub fn setup_storage() -> Result<(), SetupStorageError> {
         FILESYSTEM_SINGLETON = Some(RwLock::new(Filesystem::new(
             STORAGE_SINGLETON.as_ref().unwrap(),
         )));
-        dbg!(&FILESYSTEM_SINGLETON.as_ref().unwrap().read().unwrap().files);
+        // dbg!(&FILESYSTEM_SINGLETON.as_ref().unwrap().read().unwrap().files);
     }
     return Ok(());
 }

@@ -9,7 +9,7 @@ use esp32_nimble::{
 };
 use esp_idf_sys as _;
 use rudelblinken_filesystem::{
-    file_content::{FileContent, FileContentState},
+    file::{File as FileContent, FileState},
     Filesystem,
 };
 use thiserror::Error;
@@ -36,12 +36,12 @@ const FILE_UPLOAD_SERVICE_CHUNK_LENGTH_UUID: BleUuid =
 pub struct File {
     hash: [u8; 32],
     name: String,
-    pub content: FileContent<FlashStorage, { FileContentState::Weak }>,
+    pub content: FileContent<FlashStorage, { FileState::Weak }>,
 }
 
 #[derive(Debug)]
 struct IncompleteFile {
-    incomplete_file: FileContent<FlashStorage, { FileContentState::Writer }>,
+    incomplete_file: FileContent<FlashStorage, { FileState::Writer }>,
     checksums: Vec<u8>,
     received_chunks: Vec<bool>,
     chunk_length: u16,
@@ -72,7 +72,7 @@ impl IncompleteFile {
         checksums: Vec<u8>,
         chunk_length: u16,
         length: u32,
-        writer: FileContent<FlashStorage, { FileContentState::Writer }>,
+        writer: FileContent<FlashStorage, { FileState::Writer }>,
         name: String,
     ) -> Self {
         Self {
@@ -134,7 +134,7 @@ impl IncompleteFile {
     pub fn verify_hash(
         self,
         filesystem: &Filesystem<FlashStorage>,
-    ) -> Result<FileContent<FlashStorage, { FileContentState::Weak }>, VerifyFileError> {
+    ) -> Result<FileContent<FlashStorage, { FileState::Weak }>, VerifyFileError> {
         if !self.is_complete() {
             return Err(VerifyFileError::NotComplete);
         }
@@ -159,7 +159,7 @@ impl IncompleteFile {
     pub fn into_file(
         self,
         filesystem: &Filesystem<FlashStorage>,
-    ) -> Result<FileContent<FlashStorage, { FileContentState::Weak }>, VerifyFileError> {
+    ) -> Result<FileContent<FlashStorage, { FileState::Weak }>, VerifyFileError> {
         let file = self.verify_hash(filesystem)?;
         Ok(file)
     }
