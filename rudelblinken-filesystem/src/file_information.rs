@@ -101,6 +101,13 @@ impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
         self.content.ready()
     }
 
+    /// Check if the file has this hash
+    ///
+    /// Returns false, if the file is not ready to be read
+    pub fn compare_hash(&self, hash: &[u8; 32]) -> bool {
+        self.content.compare_hash(hash)
+    }
+
     /// Read the file content
     pub fn read(&self) -> File<T, { FileState::Weak }> {
         self.content.clone()

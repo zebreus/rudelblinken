@@ -220,6 +220,17 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         Some(file.read())
     }
 
+    /// Finds a file by name and returns a reference to it.
+    pub fn read_file_by_hash(&self, hash: &[u8; 32]) -> Option<File<T, { FileState::Weak }>> {
+        let file = self.files.iter().find(|file| {
+            file.compare_hash(hash)
+                && !file.marked_for_deletion()
+                && !file.deleted()
+                && file.valid()
+        })?;
+        Some(file.read())
+    }
+
     /// Find a free space in storage of at least the given length.
     ///
     /// For now the space is guaranteed to start at a block boundary
@@ -443,6 +454,20 @@ mod tests {
         let filesystem = Filesystem::new(storage);
         let result = filesystem.read_file("fancy").unwrap();
         assert_eq!(result.upgrade().unwrap().as_ref(), file);
+    }
+
+    #[test]
+    fn can_read_a_file_by_hash() {
+        let owned_storage = SimulatedStorage::new();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
+        let file = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let mut filesystem = Filesystem::new(storage);
+        filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
+        filesystem.write_file("fancy2", &file, &[5u8; 32]).unwrap();
+        filesystem.read_file_by_hash(&[0u8; 32]).unwrap();
+        assert!(filesystem.read_file_by_hash(&[3u8; 32]).is_none());
+        filesystem.read_file_by_hash(&[5u8; 32]).unwrap();
     }
 
     #[test]

@@ -252,6 +252,11 @@ impl<T: Storage + 'static + Send + Sync> File<T, { FileState::Reader }> {
     pub fn name_str(&self) -> &str {
         self.metadata.name_str()
     }
+
+    /// Get the hash of the file
+    pub fn hash(&self) -> &[u8; 32] {
+        &self.metadata.hash
+    }
 }
 
 impl<T: Storage + 'static + Send + Sync> File<T, { FileState::Writer }> {
@@ -500,6 +505,27 @@ impl<T: Storage + 'static + Send + Sync, const STATE: FileState> File<T, STATE> 
             return false;
         }
         true
+    }
+
+    /// Check if the file has this hash
+    ///
+    /// Returns false if the file is not ready
+    pub fn compare_hash(&self, hash: &[u8; 32]) -> bool {
+        if STATE == FileState::Writer {
+            return false;
+        }
+        let info = unsafe { self.info.as_ref().read().unwrap() };
+        if info.has_been_deleted {
+            return false;
+        }
+        if !self.metadata.ready() {
+            return false;
+        }
+        if self.metadata.marked_for_deletion() {
+            return false;
+        }
+
+        &self.metadata.hash == hash
     }
 }
 
