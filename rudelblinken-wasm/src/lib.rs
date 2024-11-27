@@ -6,9 +6,16 @@ use rudelblinken_sdk::{
     },
     guest::host,
 };
+use talc::{ClaimOnOom, Span, Talc, Talck};
 
 const NUDGE_STRENGHT: u8 = 20;
-const MS_PER_STEP: u32 = 8;
+const MS_PER_STEP: u32 = 16;
+const HEAP_SIZE: usize = 36624;
+static mut HEAP: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
+
+#[global_allocator]
+static ALLOCATOR: Talck<spin::Mutex<()>, ClaimOnOom> =
+    Talc::new(unsafe { ClaimOnOom::new(Span::from_array((&raw const HEAP).cast_mut())) }).lock();
 
 #[derive(Debug, Clone)]
 struct CycleState {
@@ -31,13 +38,12 @@ impl CycleState {
     }
 
     fn update_progress(&mut self, timestamp: u32) {
-        if self.off_cnt == 0 {
-            return;
+        if self.off_cnt != 0 {
+            let div = self.off_cnt as i32 * NUDGE_STRENGHT as i32;
+            let nudge = self.off_sum + (self.nudge_rem as i32 * self.off_cnt as i32) / div;
+            self.nudge_rem = ((self.off_sum % div) / self.off_cnt as i32) as i8;
+            self.progress = self.progress.wrapping_add(nudge as u8);
         }
-        let div = self.off_cnt as i32 * NUDGE_STRENGHT as i32;
-        let nudge = self.off_sum + (self.nudge_rem as i32 * self.off_cnt as i32) / div;
-        self.nudge_rem = ((self.off_sum % div) / self.off_cnt as i32) as i8;
-        self.progress = self.progress.wrapping_add(nudge as u8);
 
         let dt = self.prog_time - timestamp;
         let t_off = dt % MS_PER_STEP;
@@ -78,7 +84,7 @@ extern "C" fn main() {
     });
 
     host::configure_ble_data(&BLEAdvData {
-        data: vec![0x00, 0x00, 0xca, 0x7e, 0xa2, 0],
+        data: vec![0x00, 0x00, 0xca, 0x7e, 0xa2, 1],
     });
 
     let s: &Mutex<_> = Box::leak(Box::new(Mutex::new(CycleState::new())));
@@ -101,6 +107,7 @@ extern "C" fn main() {
 
     loop {
         host::rt_yield(10_000);
+
         let t = host::get_time_millis();
         let prog = {
             let mut s = s.lock().unwrap();

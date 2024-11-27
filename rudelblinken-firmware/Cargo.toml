@@ -38,7 +38,8 @@ opt-level = "z"
 [dependencies]
 log = { version = "0.4", default-features = false }
 esp-idf-svc = { version = "0.49", default-features = false }
-wasmi = "0.38.0"
+wasmi = { version = "0.39.1", path = "../../rudelblinken-repos/wasmi/crates/wasmi" }
+# wasmi = { version = "0.39.1" }
 anyhow = "1.0.89"
 wat = "1.219.1"
 esp32-nimble = "=0.8.0"

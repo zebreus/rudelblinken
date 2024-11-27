@@ -7,14 +7,17 @@ use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
     BLEAdvertisementData, BLEAdvertising, BLEDevice, BLEServer, NimbleProperties,
 };
-use esp_idf_hal::ledc::LedcDriver;
+use esp_idf_hal::{
+    gpio::{self, PinDriver},
+    ledc::LedcDriver,
+};
 use esp_idf_sys as _;
 
 use rudelblinken_sdk::{
     common::{self, BLEAdvNotification},
     host::{self, BLEAdv, Host, HostBase, InstanceWithContext, LEDBrightness},
 };
-use wasmi::{Caller, Engine, Linker, Module, Store};
+use wasmi::{AsContext, Caller, Engine, Linker, Module, Store};
 
 use crate::file_upload_service::FileUploadService;
 
@@ -302,7 +305,7 @@ fn get_device_name() -> String {
 pub struct CatManagementService {
     program_hash: Option<[u8; 32]>,
     name: String,
-    // pub wasm_runner: mpsc::Sender<WasmHostMessage>,
+    pub wasm_runner: mpsc::Sender<WasmHostMessage>,
     file_upload_service: Arc<Mutex<FileUploadService>>,
 }
 
@@ -378,6 +381,14 @@ fn wasm_runner(mut state: HostState) {
             }
         };
 
+        /* for e in module.exports() {
+            ::log::info!("export {} {:?}", e.name(), e.ty());
+        }
+        let mem = module.get_export("memory").expect("where is the memory?");
+        if let Some(mem) = mem.memory() {
+            // mem.initial_pages().checked_add(^)
+        } */
+
         ::log::info!("preparing store and linker for wasm runtime");
         log_heap_stats();
         state.start = Instant::now();
@@ -402,6 +413,7 @@ fn wasm_runner(mut state: HostState) {
         let instance = pre_instance
             .start(&mut store)
             .expect("failed to start instance");
+        // let store = Store::new(&engine, store.into_data());
 
         let mut host: Host<_> = InstanceWithContext::new(store, instance).into();
 
@@ -420,41 +432,41 @@ impl CatManagementService {
     pub fn new(
         ble_device: &'static BLEDevice,
         files: Arc<Mutex<FileUploadService>>,
-        // led_driver: Mutex<LedcDriver<'static>>,
+        led_pin: Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>>,
     ) -> Arc<Mutex<CatManagementService>> {
         let name = get_device_name();
 
-        // let wasm_send = {
-        //     let (send, recv) = mpsc::channel();
+        let wasm_send = {
+            let (send, recv) = mpsc::channel();
 
-        //     let files = files.clone();
-        //     let name = name.clone();
+            let files = files.clone();
+            let name = name.clone();
 
-        //     std::thread::Builder::new()
-        //         .name("wasm-runner".to_owned())
-        //         .stack_size(0x2000)
-        //         .spawn(move || {
-        //             let wasm_host = HostState {
-        //                 files,
-        //                 name,
-        //                 recv,
-        //                 start: Instant::now(),
-        //                 next_wasm: Some([0u8; 32]),
-        //                 // ble_device,
-        //                 // led_driver,
-        //             };
+            std::thread::Builder::new()
+                .name("wasm-runner".to_owned())
+                .stack_size(0x2000)
+                .spawn(move || {
+                    let wasm_host = HostState {
+                        files,
+                        name,
+                        recv,
+                        start: Instant::now(),
+                        next_wasm: Some([0u8; 32]),
+                        ble_device,
+                        led_pin,
+                    };
 
-        //             wasm_runner(wasm_host);
-        //         })
-        //         .expect("failed to spawn wasm runner thread");
+                    wasm_runner(wasm_host);
+                })
+                .expect("failed to spawn wasm runner thread");
 
-        //     send
-        // };
+            send
+        };
 
         let cat_management_service = Arc::new(Mutex::new(CatManagementService {
             name,
             program_hash: None,
-            // wasm_runner: wasm_send,
+            wasm_runner: wasm_send,
             file_upload_service: files,
         }));
 
@@ -574,8 +586,9 @@ struct HostState {
     start: Instant,
     recv: mpsc::Receiver<WasmHostMessage>,
     next_wasm: Option<[u8; 32]>,
-    // ble_device: &'static BLEDevice,
+    ble_device: &'static BLEDevice,
     // led_driver: Mutex<LedcDriver<'static>>,
+    led_pin: Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>>,
 }
 
 impl HostState {
@@ -607,6 +620,7 @@ impl HostBase for HostState {
     }
 
     fn get_name(&mut self) -> String {
+        ::log::info!("get_name");
         self.name.clone()
     }
 
@@ -662,7 +676,13 @@ impl LEDBrightness for HostState {
         if let Err(err) = led_pin.set_duty(duty as u32) {
             ::log::error!("set_duty({}) failed: {:?}", duty, err)
         }; */
-        ::log::info!("guest set led bightness");
+        if b < 2 * 256 {
+            ::log::info!("guest set led bightness low");
+            self.led_pin.lock().set_low().unwrap();
+        } else {
+            ::log::info!("guest set led bightness high");
+            self.led_pin.lock().set_high().unwrap();
+        }
     }
 }
 
@@ -670,22 +690,22 @@ impl BLEAdv for HostState {
     fn configure_ble_adv(&mut self, settings: common::BLEAdvSettings) {
         let min_interval = settings.min_interval.clamp(400, 1000);
         let max_interval = settings.min_interval.clamp(min_interval, 1500);
-        /* self.ble_device
-        .get_advertising()
-        .lock()
-        .min_interval(min_interval)
-        .max_interval(max_interval); */
+        self.ble_device
+            .get_advertising()
+            .lock()
+            .min_interval(min_interval)
+            .max_interval(max_interval);
         ::log::info!("guest configured ble_adv");
     }
 
     fn configure_ble_data(&mut self, data: common::BLEAdvData) {
-        /* if let Err(err) = self.ble_device.get_advertising().lock().set_data(
+        if let Err(err) = self.ble_device.get_advertising().lock().set_data(
             BLEAdvertisementData::new()
                 .name(&self.name)
                 .manufacturer_data(&data.data),
         ) {
             ::log::error!("set manufacturer data ({:?}) failed: {:?}", data.data, err)
-        }; */
-        ::log::info!("guest set ble_adv data");
+        };
+        // ::log::info!("guest set ble_adv data {:?}", data);
     }
 }

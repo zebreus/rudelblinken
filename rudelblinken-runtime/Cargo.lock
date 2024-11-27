@@ -132,6 +132,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
+name = "lock_api"
+version = "0.4.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07af8b9cdd281b7915f413fa73f29ebd5d55d0d3f0155584dade1ff18cea1b17"
+dependencies = [
+ "autocfg",
+ "scopeguard",
+]
+
+[[package]]
 name = "log"
 version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -360,18 +370,26 @@ dependencies = [
  "rudelblinken-sdk",
  "tracing",
  "tracing-subscriber",
- "wasmi",
+ "wasmi 0.38.0",
 ]
 
 [[package]]
 name = "rudelblinken-sdk"
 version = "0.1.0"
 dependencies = [
+ "log",
  "rkyv",
+ "talc",
  "thiserror",
  "tracing",
- "wasmi",
+ "wasmi 0.39.1",
 ]
+
+[[package]]
+name = "scopeguard"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "serde"
@@ -440,6 +458,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "talc"
+version = "4.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fcad3be1cfe36eb7d716a04791eba36a197da9d9b6ea1e28e64ac569da3701d"
+dependencies = [
+ "lock_api",
 ]
 
 [[package]]
@@ -582,9 +609,23 @@ dependencies = [
  "multi-stash",
  "smallvec",
  "spin",
- "wasmi_collections",
- "wasmi_core",
- "wasmi_ir",
+ "wasmi_collections 0.38.0",
+ "wasmi_core 0.38.0",
+ "wasmi_ir 0.38.0",
+ "wasmparser-nostd",
+]
+
+[[package]]
+name = "wasmi"
+version = "0.39.1"
+dependencies = [
+ "arrayvec",
+ "multi-stash",
+ "smallvec",
+ "spin",
+ "wasmi_collections 0.39.1",
+ "wasmi_core 0.39.1",
+ "wasmi_ir 0.39.1",
  "wasmparser-nostd",
 ]
 
@@ -596,6 +637,13 @@ checksum = "0d0fd5f4f2c4fe0c98554bb7293108ed2b1d0c124dce0974f999de7d517d37bc"
 dependencies = [
  "ahash",
  "hashbrown 0.14.5",
+ "string-interner",
+]
+
+[[package]]
+name = "wasmi_collections"
+version = "0.39.1"
+dependencies = [
  "string-interner",
 ]
 
@@ -612,12 +660,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasmi_core"
+version = "0.39.1"
+dependencies = [
+ "downcast-rs",
+ "libm",
+]
+
+[[package]]
 name = "wasmi_ir"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a3345445247388df2b5b35250a30c9209c27c8d2c6db1bf4c89b65636264bf9"
 dependencies = [
- "wasmi_core",
+ "wasmi_core 0.38.0",
+]
+
+[[package]]
+name = "wasmi_ir"
+version = "0.39.1"
+dependencies = [
+ "wasmi_core 0.39.1",
 ]
 
 [[package]]

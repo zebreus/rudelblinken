@@ -59,7 +59,7 @@ pub struct Host<I> {
     on_ble_adv_recv_fn: OnceCell<Result<TypedFunc<u32, ()>, Error>>,
 }
 
-const RESET_FUEL: u64 = 1 << 14;
+const RESET_FUEL: u64 = 1 << 15;
 
 impl<I: HasExports + AsContextMut> From<I> for Host<I> {
     fn from(runtime_info: I) -> Self {

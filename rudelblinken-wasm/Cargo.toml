@@ -13,9 +13,10 @@ panic = "abort"
 codegen-units = 1
 
 [profile.dev]
-debug = true
 opt-level = "z"
 
 [dependencies]
 rkyv = "0.8.8"
 rudelblinken-sdk = { path = "../rudelblinken-sdk", features = ["guest"] }
+spin = "0.9.8"
+talc = "4.4.2"

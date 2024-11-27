@@ -7,6 +7,7 @@ use esp32_nimble::{
     BLEAdvertisementData, BLEDevice, BLEScan, BLEServer,
 };
 use esp_idf_hal::{
+    gpio::{self, PinDriver},
     ledc::{config::TimerConfig, LedcDriver, LedcTimerDriver},
     prelude::Peripherals,
     task,
@@ -164,28 +165,29 @@ fn main() {
 
     // // ::log::error!(target: "test-fs", "Print {} Pront {} Prant {}", test_string, new_string, new_string2);
 
-    /* let peripherals = Peripherals::take().unwrap();
+    let peripherals = Peripherals::take().unwrap();
     let timer_driver = LedcTimerDriver::new(
         peripherals.ledc.timer0,
         &TimerConfig::default().frequency(25.kHz().into()),
     )
     .unwrap();
-    let led_driver = Mutex::new(
+    /* let led_driver = Mutex::new(
         LedcDriver::new(
             peripherals.ledc.channel0,
             timer_driver,
             peripherals.pins.gpio8,
         )
         .unwrap(),
-    ); */
+    );
+    led_driver.lock().set_duty(0x1000).unwrap(); */
+    let led_pin =
+        Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
 
     let ble_device = BLEDevice::take();
 
     let file_upload_service = FileUploadService::new(ble_device.get_server());
-    let cat_management_service = CatManagementService::new(
-        ble_device,
-        file_upload_service.clone(), /*, led_driver */
-    );
+    let cat_management_service =
+        CatManagementService::new(ble_device, file_upload_service.clone(), led_pin);
 
     {
         let ble_advertising = ble_device.get_advertising();
@@ -211,10 +213,6 @@ fn main() {
             .unwrap();
     }
 
-    loop {
-        esp_idf_svc::hal::delay::FreeRtos::delay_ms(1000);
-    }
-
     let mut ble_scan = BLEScan::new();
     ble_scan.active_scan(false).interval(100).window(99);
 
@@ -223,14 +221,14 @@ fn main() {
             ble_scan
                 .start(ble_device, 1000, |dev, data| {
                     if let Some(md) = data.manufacture_data() {
-                        // cat_management_service
-                        //     .lock()
-                        //     .wasm_runner
-                        //     .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
-                        //         mac: dev.addr().as_be_bytes(),
-                        //         data: md.payload.into(),
-                        //     }))
-                        //     .expect("failed to send ble adv callback");
+                        cat_management_service
+                            .lock()
+                            .wasm_runner
+                            .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
+                                mac: dev.addr().as_be_bytes(),
+                                data: md.payload.into(),
+                            }))
+                            .expect("failed to send ble adv callback");
                     }
                     None::<()>
                 })
