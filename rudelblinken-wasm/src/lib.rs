@@ -101,26 +101,39 @@ extern "C" fn main() {
         let pl = &info.data;
         if pl.len() == 4 && pl[0] == 0x0ca && pl[1] == 0x7e && pl[2] == 0xa2 {
             host::host_log(&Log {
-                level: LogLevel::Info,
+                level: LogLevel::Debug,
                 message: format!("received rudelblinken adv: {:?}", info).to_owned(),
             });
-            let mut s = s.lock().unwrap();
-            s.off_cnt += 1;
-            // double cast for sign extension
-            s.off_sum += pl[3].wrapping_sub(s.progress) as i8 as i32;
+            if let Ok(mut s) = s.try_lock() {
+                s.off_cnt += 1;
+                // double cast for sign extension
+                s.off_sum += pl[3].wrapping_sub(s.progress) as i8 as i32;
+            } else {
+                host::host_log(&Log {
+                    level: LogLevel::Info,
+                    message: "failed to lock cycle state for callback".to_owned(),
+                });
+            }
         }
     }));
 
     let mut led_state = true;
 
     loop {
-        host::rt_yield(10_000);
+        host::rt_yield(500);
 
         let t = host::get_time_millis();
         let prog = {
-            let mut s = s.lock().unwrap();
-            s.update_progress(t);
-            s.progress
+            if let Ok(mut s) = s.try_lock() {
+                s.update_progress(t);
+                s.progress
+            } else {
+                host::host_log(&Log {
+                    level: LogLevel::Info,
+                    message: "failed to lock cycle state for update".to_owned(),
+                });
+                continue;
+            }
         };
 
         host::configure_ble_data(&BLEAdvData {

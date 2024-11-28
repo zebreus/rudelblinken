@@ -17,7 +17,7 @@ use rudelblinken_sdk::{
     common::{self, BLEAdvNotification},
     host::{self, BLEAdv, Host, HostBase, InstanceWithContext, LEDBrightness},
 };
-use tracing::{error, info, instrument, Level};
+use tracing::{debug, error, info, instrument, Level};
 use wasmi::{AsContext, Caller, Engine, Linker, Module, Store};
 
 use crate::file_upload_service::FileUploadService;
@@ -446,6 +446,7 @@ impl CatManagementService {
                         next_wasm: Some([0u8; 32]),
                         ble_device,
                         led_pin,
+                        callback_inhibited: false,
                     };
 
                     wasm_runner(wasm_host);
@@ -536,6 +537,7 @@ struct HostState {
     ble_device: &'static BLEDevice,
     // led_driver: Mutex<LedcDriver<'static>>,
     led_pin: Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>>,
+    callback_inhibited: bool,
 }
 
 impl HostState {
@@ -579,6 +581,12 @@ impl HostBase for HostState {
 
     #[instrument(level = Level::TRACE, skip(host), target = "cms::wasm::host_base::on_yield")]
     fn on_yield(host: &mut Host<Caller<'_, Self>>, timeout: u32) -> bool {
+        if host.state().callback_inhibited {
+            // FIXME(lmv): don't block termination if yiedling during a callback
+            debug!("on_yield inhibited");
+            return true;
+        }
+        host.state_mut().callback_inhibited = true;
         if 0 < timeout {
             let mut now = Instant::now();
             let deadline = now + Duration::from_micros(timeout as u64);
@@ -613,6 +621,8 @@ impl HostBase for HostState {
                 }
             }
         }
+
+        host.state_mut().callback_inhibited = false;
 
         true
     }
