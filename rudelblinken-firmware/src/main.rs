@@ -140,7 +140,12 @@ fn main() {
     }
 
     // Bind the log crate to the ESP Logging facilities
-    esp_idf_svc::log::EspLogger::initialize_default();
+    // esp_idf_svc::log::EspLogger::initialize_default();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_writer(std::io::stdout)
+        .init();
+
     fix_mac_address();
 
     setup_ble_server();
@@ -165,13 +170,13 @@ fn main() {
 
     // // ::log::error!(target: "test-fs", "Print {} Pront {} Prant {}", test_string, new_string, new_string2);
 
-    let peripherals = Peripherals::take().unwrap();
+    /* let peripherals = Peripherals::take().unwrap();
     let timer_driver = LedcTimerDriver::new(
         peripherals.ledc.timer0,
         &TimerConfig::default().frequency(25.kHz().into()),
     )
     .unwrap();
-    /* let led_driver = Mutex::new(
+    let led_driver = Mutex::new(
         LedcDriver::new(
             peripherals.ledc.channel0,
             timer_driver,
@@ -196,7 +201,6 @@ fn main() {
             .set_data(
                 BLEAdvertisementData::new()
                     .name("Rudelblinken")
-                    // .add_service_uuid(uuid128!("fafafafa-fafa-fafa-fafa-fafafafafafa"))
                     .add_service_uuid(FileUploadService::uuid())
                     .manufacturer_data(&[0, 0]),
             )

@@ -1,7 +1,7 @@
 use std::cell::OnceCell;
 
 use rkyv::Archive;
-use tracing::warn;
+use tracing::{trace, warn};
 use wasmi::{
     AsContext, AsContextMut, Caller, Extern, Instance, Memory, StoreContext, StoreContextMut,
     TypedFunc, WasmParams, WasmResults,
@@ -59,7 +59,7 @@ pub struct Host<I> {
     on_ble_adv_recv_fn: OnceCell<Result<TypedFunc<u32, ()>, Error>>,
 }
 
-const RESET_FUEL: u64 = 1 << 15;
+const RESET_FUEL: u64 = 1 << 14;
 
 impl<I: HasExports + AsContextMut> From<I> for Host<I> {
     fn from(runtime_info: I) -> Self {
@@ -230,7 +230,7 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
         self.reset_fuel();
         self.on_ble_adv_recv_fn()?
             .call(&mut self.runtime_info, arg)
-            .map_err(|_| Error::FunctionCallFailure)?;
+            .map_err(|err| Error::FunctionCallFailure(format!("{:?}", err)))?;
         Ok(())
     }
 
@@ -286,7 +286,7 @@ impl<HostState, I: HasExports + AsContextMut<Data = HostState>> Host<I> {
     pub fn reset_fuel(&mut self) {
         // FIXME(lmv): error handling
         let mut ctx = self.runtime_info.as_context_mut();
-        tracing::debug!(old_fuel = ?ctx.get_fuel(), "resetting fuel");
+        trace!(old_fuel = ?ctx.get_fuel(), "resetting fuel");
         ctx.set_fuel(RESET_FUEL).expect("failed to reset fuel");
     }
 
@@ -312,9 +312,8 @@ pub trait HostBase: Sized {
 
     fn get_time_millis(&mut self) -> u32;
 
-    // explicit is set if it was an explicit yield (i.e. the guest called yield)
-    // and cleared if it was an implicit yield (i.e. the guest called any other
-    // host function)
+    // Timeout (in microseconds) can be passed by the guest when explicitly
+    // yielding.  It is 0 for implicit yields.
     //
     // host is terminated if the function returns false
     fn on_yield(host: &mut Host<Caller<'_, Self>>, timeout: u32) -> bool {
@@ -647,8 +646,8 @@ pub enum Error {
     #[error("Read from an invalid pointer")]
     ReadFailure,
     // FIXME(lmv): include more info about the error?
-    #[error("Failed to call a function")]
-    FunctionCallFailure,
+    #[error("Failed to call a function: {0}")]
+    FunctionCallFailure(String),
     // FIXME(lmv): include more info about the error?
     #[error("Failed to allocate memory")]
     AllocFailure,

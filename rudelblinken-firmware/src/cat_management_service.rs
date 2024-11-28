@@ -17,6 +17,7 @@ use rudelblinken_sdk::{
     common::{self, BLEAdvNotification},
     host::{self, BLEAdv, Host, HostBase, InstanceWithContext, LEDBrightness},
 };
+use tracing::{error, info, instrument, Level};
 use wasmi::{AsContext, Caller, Engine, Linker, Module, Store};
 
 use crate::file_upload_service::FileUploadService;
@@ -319,16 +320,16 @@ const WASM_MOD: &[u8] = include_bytes!(
 );
 
 fn log_heap_stats() {
-    ::log::info!(
-        "free = {}, largest = {}",
-        unsafe { esp_idf_sys::esp_get_free_heap_size() },
-        unsafe {
+    info!(
+        free_heap = unsafe { esp_idf_sys::esp_get_free_heap_size() },
+        largest_block = unsafe {
             esp_idf_sys::heap_caps_get_largest_free_block(
                 esp_idf_sys::MALLOC_CAP_DMA
                     | esp_idf_sys::MALLOC_CAP_32BIT
                     | esp_idf_sys::MALLOC_CAP_DEFAULT,
             )
-        }
+        },
+        "heap stats",
     )
 }
 
@@ -351,7 +352,7 @@ fn wasm_runner(mut state: HostState) {
             match state.recv.recv() {
                 Ok(WasmHostMessage::StartModule(hash)) => state.next_wasm = Some(hash),
                 Ok(_) => {}
-                Err(err) => ::log::error!("wasm runner failed to recv: {:?}", err),
+                Err(err) => error!(err = ?err, "wasm runner failed to recv"),
             }
         }
 
@@ -370,26 +371,18 @@ fn wasm_runner(mut state: HostState) {
             // let wasm_bin = &wasm_file.content;
             let wasm_bin = WASM_MOD;
 
-            ::log::info!("creating new wasm module (size={}b)", wasm_bin.len());
+            info!(size = wasm_bin.len(), "creating new wasm module");
             log_heap_stats();
             match unsafe { Module::new_unchecked(&engine, wasm_bin) } {
                 Ok(m) => m,
                 Err(err) => {
-                    ::log::error!("failed to create module: {:?}", err);
+                    error!(err = ?err, "error during wasm module creation");
                     continue 'run_loop;
                 }
             }
         };
 
-        /* for e in module.exports() {
-            ::log::info!("export {} {:?}", e.name(), e.ty());
-        }
-        let mem = module.get_export("memory").expect("where is the memory?");
-        if let Some(mem) = mem.memory() {
-            // mem.initial_pages().checked_add(^)
-        } */
-
-        ::log::info!("preparing store and linker for wasm runtime");
+        info!("preparing store and linker for wasm runtime");
         log_heap_stats();
         state.start = Instant::now();
         let mut store = Store::new(&engine, state);
@@ -403,25 +396,24 @@ fn wasm_runner(mut state: HostState) {
         host::helper::prepare_link_stubs(&mut store, &mut linker, module.imports())
             .expect("failed to link stubs");
 
-        ::log::info!("instantiating wasm module");
+        info!("instantiating wasm module");
         log_heap_stats();
         let pre_instance = linker
             .instantiate(&mut store, &module)
             .expect("failed to instanciate module");
-        ::log::info!("starting wasm module");
+        info!("starting wasm module");
         log_heap_stats();
         let instance = pre_instance
             .start(&mut store)
             .expect("failed to start instance");
-        // let store = Store::new(&engine, store.into_data());
 
         let mut host: Host<_> = InstanceWithContext::new(store, instance).into();
 
-        ::log::info!("invoking wasm main");
+        info!("invoking wasm main");
         log_heap_stats();
         match host.main() {
-            Ok(()) => ::log::info!("wasm guest exited"),
-            Err(err) => ::log::info!("wasm guest failed: {:?}", err),
+            Ok(()) => info!("wasm guest exited"),
+            Err(err) => info!(err = ?err, "wasm guest failed"),
         }
 
         state = host.get_runtime_info().context.into_data();
@@ -488,7 +480,7 @@ impl CatManagementService {
         program_hash_characteristic.lock().on_write(move |args| {
             let mut service = cat_management_service_clone.lock();
             let Ok(hash): Result<[u8; 32], _> = args.recv_data().try_into() else {
-                ::log::error!("Wrong hash length");
+                error!("Wrong hash length");
                 return;
             };
 
@@ -515,16 +507,16 @@ impl CatManagementService {
             let mut service = cat_management_service_clone.lock();
             let data = args.recv_data();
             if data.len() <= 3 {
-                ::log::error!("Name too short");
+                error!("Name too short");
                 return;
             }
             if data.len() > 32 {
-                ::log::error!("Name too long");
+                error!("Name too long");
                 return;
             }
 
             let Ok(new_name) = String::from_utf8(data.into()) else {
-                ::log::error!("Name not UTF 8");
+                error!("Name not UTF 8");
                 return;
             };
 
@@ -533,51 +525,6 @@ impl CatManagementService {
 
         cat_management_service
     }
-
-    /* fn run_wasm_module(&mut self, wasm_module: &[u8]) -> anyhow::Result<()> {
-        let module = Module::new(&self.wasm_engine, wasm_module)?;
-
-        match self.wasm_host {
-            WasmHost::Uninitialized(store) => {
-                let mut linker = <Linker<HostState>>::new(&self.wasm_engine);
-
-                host::helper::prepare_link_host_base(&mut store, &mut linker)
-                    .expect("failed to link hos base");
-                host::helper::prepare_link_led_brightness(&mut store, &mut linker)
-                    .expect("failed to link led brightness");
-                host::helper::prepare_link_ble_adv(&mut store, &mut linker)
-                    .expect("failed to link ble adv");
-                host::helper::prepare_link_stubs(&mut store, &mut linker, module.imports())
-                    .expect("failed to link stubs");
-
-                let pre_instance = linker.instantiate(&mut store, &module)?;
-                let instance = pre_instance.start(&mut store)?;
-
-                self.wasm_host =
-                    WasmHost::Initialized(linker, InstanceWithContext::new(store, instance).into());
-            }
-            WasmHost::Initialized(linker, host) => {
-                let info = host.get_runtime_info();
-                info.context
-                    .data_mut()
-                    .callbacks
-                    .lock()
-                    .termination_callback = Some(Box::new(move |store| {
-                    let pre_instance = linker
-                        .instantiate(&mut store, &module)
-                        .expect("failed to init");
-                    let instance = pre_instance.start(&mut store).expect("failed to start");
-
-                    self.wasm_host = WasmHost::Initialized(
-                        linker,
-                        InstanceWithContext::new(store, instance).into(),
-                    );
-                }))
-            }
-        };
-
-        Ok(())
-    } */
 }
 
 struct HostState {
@@ -609,25 +556,28 @@ impl HostState {
 }
 
 impl HostBase for HostState {
+    #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_base::host_log")]
     fn host_log(&mut self, log: common::Log) {
         match log.level {
-            common::LogLevel::Error => ::log::error!("guest logged: {}", &log.message),
-            common::LogLevel::Warn => ::log::warn!("guest logged: {}", &log.message),
-            common::LogLevel::Info => ::log::info!("guest logged: {}", &log.message),
-            common::LogLevel::Debug => ::log::debug!("guest logged: {}", &log.message),
-            common::LogLevel::Trace => ::log::trace!("guest logged: {}", &log.message),
+            common::LogLevel::Error => ::tracing::error!(msg = &log.message, "guest logged"),
+            common::LogLevel::Warn => ::tracing::warn!(msg = &log.message, "guest logged"),
+            common::LogLevel::Info => ::tracing::info!(msg = &log.message, "guest logged"),
+            common::LogLevel::Debug => ::tracing::debug!(msg = &log.message, "guest logged"),
+            common::LogLevel::Trace => ::tracing::trace!(msg = &log.message, "guest logged"),
         }
     }
 
+    #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_base::get_name")]
     fn get_name(&mut self) -> String {
-        ::log::info!("get_name");
         self.name.clone()
     }
 
+    #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_base::get_time_millis")]
     fn get_time_millis(&mut self) -> u32 {
         self.start.elapsed().as_millis() as u32
     }
 
+    #[instrument(level = Level::TRACE, skip(host), target = "cms::wasm::host_base::on_yield")]
     fn on_yield(host: &mut Host<Caller<'_, Self>>, timeout: u32) -> bool {
         if 0 < timeout {
             let mut now = Instant::now();
@@ -641,7 +591,7 @@ impl HostBase for HostState {
                     }
                     Err(mpsc::RecvTimeoutError::Timeout) => break,
                     Err(err) => {
-                        ::log::error!("recv on_yield failed: {:?}", err);
+                        error!(err = ?err, "recv on_yield failed");
                         break;
                     }
                 }
@@ -658,7 +608,7 @@ impl HostBase for HostState {
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(err) => {
-                    ::log::error!("recv on_yield failed: {:?}", err);
+                    error!(err = ?err, "recv on_yield failed");
                     break;
                 }
             }
@@ -669,24 +619,26 @@ impl HostBase for HostState {
 }
 
 impl LEDBrightness for HostState {
+    #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_led::set_led_brightness")]
     fn set_led_brightness(&mut self, settings: common::LEDBrightnessSettings) {
         let b = settings.rgb[0] as u16 + settings.rgb[1] as u16 + settings.rgb[2] as u16;
         /* let mut led_pin = self.led_driver.lock();
         let duty = (led_pin.get_max_duty() as u64) * (b as u64) / (3 * 255);
         if let Err(err) = led_pin.set_duty(duty as u32) {
-            ::log::error!("set_duty({}) failed: {:?}", duty, err)
+            error!(duty = duty, err = ?err "set_duty failed")
         }; */
         if b < 2 * 256 {
-            ::log::info!("guest set led bightness low");
+            info!("guest set led bightness low");
             self.led_pin.lock().set_low().unwrap();
         } else {
-            ::log::info!("guest set led bightness high");
+            info!("guest set led bightness high");
             self.led_pin.lock().set_high().unwrap();
         }
     }
 }
 
 impl BLEAdv for HostState {
+    #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_ble::configure_ble_adv")]
     fn configure_ble_adv(&mut self, settings: common::BLEAdvSettings) {
         let min_interval = settings.min_interval.clamp(400, 1000);
         let max_interval = settings.min_interval.clamp(min_interval, 1500);
@@ -695,17 +647,16 @@ impl BLEAdv for HostState {
             .lock()
             .min_interval(min_interval)
             .max_interval(max_interval);
-        ::log::info!("guest configured ble_adv");
     }
 
+    #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_ble::configure_ble_data")]
     fn configure_ble_data(&mut self, data: common::BLEAdvData) {
         if let Err(err) = self.ble_device.get_advertising().lock().set_data(
             BLEAdvertisementData::new()
                 .name(&self.name)
                 .manufacturer_data(&data.data),
         ) {
-            ::log::error!("set manufacturer data ({:?}) failed: {:?}", data.data, err)
+            error!("set manufacturer data ({:?}) failed: {:?}", data.data, err)
         };
-        // ::log::info!("guest set ble_adv data {:?}", data);
     }
 }

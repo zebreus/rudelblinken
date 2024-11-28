@@ -40,9 +40,17 @@ impl CycleState {
     fn update_progress(&mut self, timestamp: u32) {
         if self.off_cnt != 0 {
             let div = self.off_cnt as i32 * NUDGE_STRENGHT as i32;
-            let nudge = self.off_sum + (self.nudge_rem as i32 * self.off_cnt as i32) / div;
-            self.nudge_rem = ((self.off_sum % div) / self.off_cnt as i32) as i8;
+            let nudge_base = self.off_sum + self.nudge_rem as i32;
+            let nudge = nudge_base / div;
+            self.nudge_rem = (nudge_base % div) as i8;
+
+            host::host_log(&Log {
+                level: LogLevel::Info,
+                message: format!("nudging progress ({} advs) = {}", self.off_cnt, nudge).to_owned(),
+            });
             self.progress = self.progress.wrapping_add(nudge as u8);
+            self.off_sum = 0;
+            self.off_cnt = 0;
         }
 
         let dt = self.prog_time - timestamp;
@@ -90,16 +98,16 @@ extern "C" fn main() {
     let s: &Mutex<_> = Box::leak(Box::new(Mutex::new(CycleState::new())));
 
     host::set_on_ble_adv_recv_callback(Some(move |info: BLEAdvNotification| {
-        host::host_log(&Log {
-            level: LogLevel::Info,
-            message: format!("callback_recv'ed: {:?}", info).to_owned(),
-        });
         let pl = &info.data;
         if pl.len() == 4 && pl[0] == 0x0ca && pl[1] == 0x7e && pl[2] == 0xa2 {
+            host::host_log(&Log {
+                level: LogLevel::Info,
+                message: format!("received rudelblinken adv: {:?}", info).to_owned(),
+            });
             let mut s = s.lock().unwrap();
             s.off_cnt += 1;
             // double cast for sign extension
-            s.off_sum = pl[3].wrapping_sub(s.progress) as i8 as i32;
+            s.off_sum += pl[3].wrapping_sub(s.progress) as i8 as i32;
         }
     }));
 
