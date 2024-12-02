@@ -67,7 +67,7 @@ fn setup_ble_server() -> &'static mut BLEServer {
 
     let server = ble_device.get_server();
     server.on_connect(|server, desc| {
-        ::log::info!("Client connected: {:?}", desc);
+        ::tracing::info!("Client connected: {:?}", desc);
 
         // Black magic
         //
@@ -92,7 +92,7 @@ fn setup_ble_server() -> &'static mut BLEServer {
     });
 
     server.on_disconnect(|desc, _| {
-        ::log::info!("Client disconnected: {:?}", desc);
+        ::tracing::info!("Client disconnected: {:?}", desc);
     });
 
     server.ble_gatts_show_local();

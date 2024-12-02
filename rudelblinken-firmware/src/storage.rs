@@ -46,13 +46,13 @@ pub fn print_partitions() {
         if partition_iterator == std::ptr::null_mut() {
             panic!("No partitions found!");
         }
-        ::log::info!(target: "partition-info", "type, subtype, label, address, name");
+        ::tracing::info!(target: "partition-info", "type, subtype, label, address, name");
 
         while partition_iterator != std::ptr::null_mut() {
             let partition = *esp_partition_get(partition_iterator);
             let label = String::from_utf8(std::mem::transmute(partition.label.to_vec()));
             // label.copy_from_slice(&partition.label.);
-            ::log::info!(target: "partition-info", "{}, {}, {:?}, {:0x}, {}", partition.type_, partition.subtype,  label, partition.address, partition.size);
+            ::tracing::info!(target: "partition-info", "{}, {}, {:?}, {:0x}, {}", partition.type_, partition.subtype,  label, partition.address, partition.size);
             partition_iterator = esp_partition_next(partition_iterator);
         }
     }
@@ -142,13 +142,13 @@ impl FlashStorage {
                 std::ptr::addr_of_mut!(storage_handle_c),
             );
             if err != 0 {
-                ::log::error!("Errorcode: {}", err);
+                ::tracing::error!("Errorcode: {}", err);
                 let error: &std::ffi::CStr = std::ffi::CStr::from_ptr(esp_err_to_name(err));
-                ::log::error!("Error description: {}", error.to_string_lossy());
+                ::tracing::error!("Error description: {}", error.to_string_lossy());
                 return Err(CreateStorageError::FailedToMmapSecrets);
             }
 
-            ::log::info!("Got out_ptr: {:0x?}", first_pointer);
+            ::tracing::info!("Got out_ptr: {:0x?}", first_pointer);
             memory_mapped_flash = first_pointer as _;
 
             let nvs_default_partition: EspNvsPartition<NvsDefault> =
@@ -185,12 +185,12 @@ impl Storage for FlashStorage {
         }
         let thing: &[u8];
         unsafe {
-            // ::log::info!("Reading {} bytes at {}", length, address);
+            // ::tracing::info!("Reading {} bytes at {}", length, address);
             thing = std::slice::from_raw_parts(
                 self.storage_arena.offset(address as isize),
                 length as usize,
             );
-            // ::log::info!("Read data");
+            // ::tracing::info!("Read data");
         }
         return Ok(thing);
     }
@@ -198,7 +198,7 @@ impl Storage for FlashStorage {
     fn write(&self, address: u32, data: &[u8]) -> Result<(), StorageError> {
         // TODO: Make this actually safe
         let data_ptr = data.as_ptr() as *const c_void;
-        ::log::info!(
+        ::tracing::info!(
             "STORAGE: {:0x?}, INPUT: {:0x?}",
             self.storage_arena,
             data_ptr
@@ -210,16 +210,16 @@ impl Storage for FlashStorage {
             let error_code =
                 esp_partition_write_raw(self.partition, address as usize, data_ptr, data.len());
             if error_code != ESP_OK {
-                ::log::error!("Failed to write to flash with code {}", error_code);
+                ::tracing::error!("Failed to write to flash with code {}", error_code);
                 let error: &std::ffi::CStr = std::ffi::CStr::from_ptr(esp_err_to_name(error_code));
-                ::log::error!("Description: {}", error.to_string_lossy());
+                ::tracing::error!("Description: {}", error.to_string_lossy());
                 return Err(StorageError::Other(error.to_string_lossy().into()));
             }
         };
         // unsafe {
         //     std::ptr::copy_nonoverlapping(data_ptr, self.storage_arena, data.len());
         // }
-        ::log::info!("Copied data");
+        ::tracing::info!("Copied data");
         return Ok(());
     }
 
@@ -242,7 +242,7 @@ impl Storage for FlashStorage {
         }
 
         unsafe {
-            ::log::info!(
+            ::tracing::info!(
                 "Erasing {} blocks starting from {}",
                 length / Self::BLOCK_SIZE,
                 address / Self::BLOCK_SIZE
@@ -250,9 +250,9 @@ impl Storage for FlashStorage {
             let error_code =
                 esp_partition_erase_range(self.partition, address as usize, length as usize);
             if error_code != ESP_OK {
-                ::log::error!("Failed to erase flash with code {}", error_code);
+                ::tracing::error!("Failed to erase flash with code {}", error_code);
                 let error: &std::ffi::CStr = std::ffi::CStr::from_ptr(esp_err_to_name(error_code));
-                ::log::info!("Description: {}", error.to_string_lossy());
+                ::tracing::info!("Description: {}", error.to_string_lossy());
                 return Err(StorageError::Other(error.to_string_lossy().into()).into());
             }
         }

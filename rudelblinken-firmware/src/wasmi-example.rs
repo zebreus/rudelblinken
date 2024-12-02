@@ -7,7 +7,7 @@ fn main() -> Result<()> {
     esp_idf_svc::sys::link_patches();
 
     // Bind the log crate to the ESP Logging facilities
-    esp_idf_svc::log::EspLogger::initialize_default();
+    esp_idf_svc::tracing::EspLogger::initialize_default();
 
     // First step is to create the Wasm execution engine with some config.
     // In this example we are using the default configuration.

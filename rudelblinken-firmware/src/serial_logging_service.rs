@@ -10,19 +10,19 @@ use esp32_nimble::{
     uuid128, BLEServer, DescriptorProperties, NimbleProperties,
 };
 // use esp_idf_sys::esp_log_timestamp;
-// use log::{Level, LevelFilter};
+// use tracing::{Level, LevelFilter};
 
 // pub struct BleLogger;
 // static LOGGER: BleLogger = BleLogger;
 // impl BleLogger {
 //     pub fn initialize_default() {
-//         ::log::set_logger(&LOGGER)
+//         ::tracing::set_logger(&LOGGER)
 //             .map(|()| LOGGER.initialize())
 //             .unwrap();
 //     }
 
 //     pub fn initialize(&self) {
-//         ::log::set_max_level(LevelFilter::max());
+//         ::tracing::set_max_level(LevelFilter::max());
 //     }
 
 //     fn get_marker(level: Level) -> &'static str {
@@ -47,12 +47,12 @@ use esp32_nimble::{
 //     }
 // }
 
-// impl ::log::Log for BleLogger {
-//     fn enabled(&self, metadata: &::log::Metadata) -> bool {
-//         metadata.level() <= ::log::Level::Error
+// impl ::tracing::Log for BleLogger {
+//     fn enabled(&self, metadata: &::tracing::Metadata) -> bool {
+//         metadata.level() <= ::tracing::Level::Error
 //     }
 
-//     fn log(&self, record: &::log::Record) {
+//     fn log(&self, record: &::tracing::Record) {
 //         let metadata = record.metadata();
 //         let marker = Self::get_marker(metadata.level());
 //         let timestamp = unsafe { esp_log_timestamp() };
@@ -187,7 +187,7 @@ impl SerialConnection {
         let local_credits = self.credits();
         let credits_diff = local_credits.abs_diff(remote_credits);
         if credits_diff == 0 || (credits_diff < 10 && remote_credits > 2) {
-            // log::debug!("Credits diff is less than 10; not updating credits");
+            // tracing::debug!("Credits diff is less than 10; not updating credits");
             return;
         }
         self.notify_credits();
@@ -212,8 +212,8 @@ impl SerialConnection {
     fn ble_receive_line(&mut self, data: &[u8]) {
         let read_length = std::cmp::min(data.len(), self.buffer.len() - self.buffer_length);
         if read_length != data.len() {
-            log::error!("Received more data than we can store in the buffer; truncating");
-            log::error!("Maybe your client doesn't respect the credits?");
+            tracing::error!("Received more data than we can store in the buffer; truncating");
+            tracing::error!("Maybe your client doesn't respect the credits?");
         }
         self.buffer[self.buffer_length..self.buffer_length + read_length]
             .copy_from_slice(&data[0..read_length]);
@@ -348,7 +348,7 @@ impl SerialLoggingService {
         rx_credits_characteristic.lock().on_write(move |args| {
             let received_data = args.recv_data();
             if received_data.len() != 1 {
-                ::log::error!(
+                ::tracing::error!(
                     "Received invalid data for RX credits: {} bytes, expected 1",
                     received_data.len()
                 );
@@ -358,13 +358,13 @@ impl SerialLoggingService {
 
             {
                 let Ok(mut rx_credits) = RX_CREDITS.write() else {
-                    ::log::error!("Failed to acquire lock on the write credits store.");
+                    ::tracing::error!("Failed to acquire lock on the write credits store.");
                     return;
                 };
                 *rx_credits = *new_credits;
             }
 
-            ::log::debug!("Received {} credits", new_credits);
+            ::tracing::debug!("Received {} credits", new_credits);
         });
         let cc = file_upload_service.clone();
         tx_credits_characteristic
@@ -385,7 +385,7 @@ impl SerialLoggingService {
             esp_idf_sys::esp_log_set_vprintf(Some(logger));
         }
         std::panic::set_hook(Box::new(|args| {
-            ::log::error!(target: "panic", "{}", args);
+            ::tracing::error!(target: "panic", "{}", args);
         }));
         // BleLogger::initialize_default();
 

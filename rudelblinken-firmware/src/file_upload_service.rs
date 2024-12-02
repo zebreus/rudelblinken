@@ -104,7 +104,7 @@ impl IncompleteFile {
         let checksum = crc8_generator.checksum(data);
 
         if self.checksums[index as usize] != checksum {
-            ::log::error!(target: "file-upload", "Received chunk with invalid checksum");
+            ::tracing::error!(target: "file-upload", "Received chunk with invalid checksum");
             return Err(ReceiveChunkError::WrongChecksum);
         }
 
@@ -148,10 +148,10 @@ impl IncompleteFile {
         hash.copy_from_slice(hasher.finalize().as_bytes());
 
         if hash != self.hash {
-            ::log::warn!(target: "file-upload", "Hashes dont match.\nExpected: {:?}\nGot     : {:?}", self.hash, hash);
+            ::tracing::warn!(target: "file-upload", "Hashes dont match.\nExpected: {:?}\nGot     : {:?}", self.hash, hash);
             return Err(VerifyFileError::HashMismatch);
         }
-        ::log::info!(target: "file-upload", "Hashes match");
+        ::tracing::info!(target: "file-upload", "Hashes match");
 
         Ok(file)
     }
@@ -259,7 +259,7 @@ impl FileUploadService {
     }
 
     fn log_error(&mut self, error: FileUploadError) {
-        ::log::error!(target: "file-upload", "{}", error);
+        ::tracing::error!(target: "file-upload", "{}", error);
         self.last_error = Some(error);
     }
 
@@ -276,10 +276,10 @@ impl FileUploadService {
         args: &mut esp32_nimble::OnWriteArgs<'_>,
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
-        ::log::info!(target: "file-upload", "chunk length {}", received_data.len());
+        ::tracing::info!(target: "file-upload", "chunk length {}", received_data.len());
 
         if received_data.len() < 3 {
-            ::log::info!(target: "file-upload", "data length is too short {}", received_data.len());
+            ::tracing::info!(target: "file-upload", "data length is too short {}", received_data.len());
 
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
@@ -287,7 +287,7 @@ impl FileUploadService {
         let index = u16::from_le_bytes([received_data[0], received_data[1]]);
         let data = &received_data[2..];
 
-        ::log::info!(target: "file-upload", "Received data chunk {}", index);
+        ::tracing::info!(target: "file-upload", "Received data chunk {}", index);
         self.ensure_upload()?;
 
         let Some(current_upload) = &mut self.currently_receiving else {
@@ -321,13 +321,13 @@ impl FileUploadService {
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
         if received_data.len() != 32 {
-            ::log::info!(target: "file-upload", "hash length is too short {}", received_data.len());
+            ::tracing::info!(target: "file-upload", "hash length is too short {}", received_data.len());
 
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
 
         let new_hash: [u8; 32] = received_data.try_into().unwrap();
-        ::log::info!(target: "file-upload", "Received hash {:?}", new_hash);
+        ::tracing::info!(target: "file-upload", "Received hash {:?}", new_hash);
         if self.latest_hash.as_ref() == Some(&new_hash) {
             return Ok(());
         }
@@ -348,14 +348,14 @@ impl FileUploadService {
         args: &mut esp32_nimble::OnWriteArgs<'_>,
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
-        ::log::info!(target: "file-upload", "Received checksums with length {}", received_data.len());
+        ::tracing::info!(target: "file-upload", "Received checksums with length {}", received_data.len());
 
         if received_data.len() < 32 {
             let new_checksums = received_data.to_vec();
             if self.latest_checksums.as_ref() == Some(&new_checksums) {
                 return Ok(());
             }
-            ::log::info!(target: "file-upload", "Directly set checksums");
+            ::tracing::info!(target: "file-upload", "Directly set checksums");
             self.latest_checksums = Some(new_checksums);
             self.currently_receiving = None;
             return Ok(());
@@ -370,13 +370,13 @@ impl FileUploadService {
             if self.latest_checksums.as_ref() == Some(&new_checksums) {
                 return Ok(());
             }
-            ::log::info!(target: "file-upload", "Loaded checksums from file");
+            ::tracing::info!(target: "file-upload", "Loaded checksums from file");
             self.latest_checksums = Some(new_checksums);
             self.currently_receiving = None;
             return Ok(());
         }
 
-        ::log::info!(target: "file-upload", "checksums write length is too short {}", received_data.len());
+        ::tracing::info!(target: "file-upload", "checksums write length is too short {}", received_data.len());
 
         Err(FileUploadError::ReceivedChunkWayTooShort)
     }
@@ -390,7 +390,7 @@ impl FileUploadService {
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
         if received_data.len() != 4 {
-            ::log::info!(target: "file-upload", "length is too short {}", received_data.len());
+            ::tracing::info!(target: "file-upload", "length is too short {}", received_data.len());
 
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
@@ -401,7 +401,7 @@ impl FileUploadService {
             received_data[2],
             received_data[3],
         ]);
-        ::log::info!(target: "file-upload", "Received length {}", new_length);
+        ::tracing::info!(target: "file-upload", "Received length {}", new_length);
 
         if self
             .latest_length
@@ -426,13 +426,13 @@ impl FileUploadService {
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
         if received_data.len() != 2 {
-            ::log::info!(target: "file-upload", "chunk length is too short {}", received_data.len());
+            ::tracing::info!(target: "file-upload", "chunk length is too short {}", received_data.len());
 
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
 
         let new_chunk_length = u16::from_le_bytes([received_data[0], received_data[1]]);
-        ::log::info!(target: "file-upload", "Received chunk length {}", new_chunk_length);
+        ::tracing::info!(target: "file-upload", "Received chunk length {}", new_chunk_length);
 
         if self.latest_chunk_length.map_or(false, |old_chunk_length| {
             old_chunk_length == new_chunk_length

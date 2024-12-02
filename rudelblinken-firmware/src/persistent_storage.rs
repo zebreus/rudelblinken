@@ -1,9 +1,9 @@
-use esp_idf_svc::log::EspLogger;
+use esp_idf_svc::tracing::EspLogger;
 use esp_idf_svc::nvs::*;
 
 // use serde::{Deserialize, Serialize};
 
-use log::info;
+use tracing::info;
 
 // #[derive(Serialize, Deserialize, Debug)]
 // struct StructToBeStored<'a> {
