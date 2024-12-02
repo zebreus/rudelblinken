@@ -1,6 +1,6 @@
 use std::{
     ffi::CStr,
-    io::{BufRead, Read},
+    io::{self, BufRead, Read},
     sync::Arc,
     u8,
 };
@@ -9,74 +9,74 @@ use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
     uuid128, BLEServer, DescriptorProperties, NimbleProperties,
 };
-use esp_idf_sys::esp_log_timestamp;
-use log::{Level, LevelFilter};
+// use esp_idf_sys::esp_log_timestamp;
+// use log::{Level, LevelFilter};
 
-pub struct BleLogger;
-static LOGGER: BleLogger = BleLogger;
-impl BleLogger {
-    pub fn initialize_default() {
-        ::log::set_logger(&LOGGER)
-            .map(|()| LOGGER.initialize())
-            .unwrap();
-    }
+// pub struct BleLogger;
+// static LOGGER: BleLogger = BleLogger;
+// impl BleLogger {
+//     pub fn initialize_default() {
+//         ::log::set_logger(&LOGGER)
+//             .map(|()| LOGGER.initialize())
+//             .unwrap();
+//     }
 
-    pub fn initialize(&self) {
-        ::log::set_max_level(LevelFilter::max());
-    }
+//     pub fn initialize(&self) {
+//         ::log::set_max_level(LevelFilter::max());
+//     }
 
-    fn get_marker(level: Level) -> &'static str {
-        match level {
-            Level::Error => "E",
-            Level::Warn => "W",
-            Level::Info => "I",
-            Level::Debug => "D",
-            Level::Trace => "V",
-        }
-    }
+//     fn get_marker(level: Level) -> &'static str {
+//         match level {
+//             Level::Error => "E",
+//             Level::Warn => "W",
+//             Level::Info => "I",
+//             Level::Debug => "D",
+//             Level::Trace => "V",
+//         }
+//     }
 
-    fn get_color(level: Level) -> Option<u8> {
-        {
-            match level {
-                Level::Error => Some(31), // LOG_COLOR_RED
-                Level::Warn => Some(33),  // LOG_COLOR_BROWN
-                Level::Info => Some(32),  // LOG_COLOR_GREEN,
-                _ => None,
-            }
-        }
-    }
-}
+//     fn get_color(level: Level) -> Option<u8> {
+//         {
+//             match level {
+//                 Level::Error => Some(31), // LOG_COLOR_RED
+//                 Level::Warn => Some(33),  // LOG_COLOR_BROWN
+//                 Level::Info => Some(32),  // LOG_COLOR_GREEN,
+//                 _ => None,
+//             }
+//         }
+//     }
+// }
 
-impl ::log::Log for BleLogger {
-    fn enabled(&self, metadata: &::log::Metadata) -> bool {
-        metadata.level() <= ::log::Level::Error
-    }
+// impl ::log::Log for BleLogger {
+//     fn enabled(&self, metadata: &::log::Metadata) -> bool {
+//         metadata.level() <= ::log::Level::Error
+//     }
 
-    fn log(&self, record: &::log::Record) {
-        let metadata = record.metadata();
-        let marker = Self::get_marker(metadata.level());
-        let timestamp = unsafe { esp_log_timestamp() };
-        let target = record.metadata().target();
-        let args = record.args();
-        let color = Self::get_color(record.level());
+//     fn log(&self, record: &::log::Record) {
+//         let metadata = record.metadata();
+//         let marker = Self::get_marker(metadata.level());
+//         let timestamp = unsafe { esp_log_timestamp() };
+//         let target = record.metadata().target();
+//         let args = record.args();
+//         let color = Self::get_color(record.level());
 
-        // let mut stdout = EspStdout::new();
-        let text: String;
-        if let Some(color) = color {
-            text = format!(
-                "\x1b[0;{}m{} ({}) {}: {}\x1b[0m\n",
-                color, marker, timestamp, target, args
-            );
-        } else {
-            text = format!("{} ({}) {}: {}\n", marker, timestamp, target, args);
-        }
+//         // let mut stdout = EspStdout::new();
+//         let text: String;
+//         if let Some(color) = color {
+//             text = format!(
+//                 "\x1b[0;{}m{} ({}) {}: {}\x1b[0m\n",
+//                 color, marker, timestamp, target, args
+//             );
+//         } else {
+//             text = format!("{} ({}) {}: {}\n", marker, timestamp, target, args);
+//         }
 
-        write_ble(text.as_bytes());
-        print!("{}", text);
-    }
+//         write_ble(text.as_bytes());
+//         print!("{}", text);
+//     }
 
-    fn flush(&self) {}
-}
+//     fn flush(&self) {}
+// }
 
 extern "C" fn logger(format_string_pointer: *const i8, va_args: *mut core::ffi::c_void) -> i32 {
     let format_string = unsafe { CStr::from_ptr(format_string_pointer) };
@@ -251,6 +251,18 @@ impl BufRead for SerialConnection {
         self.update_credits();
     }
 }
+struct SerialWriter {}
+impl std::io::Write for SerialWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        write_ble(buf);
+        print!("{}", String::from_utf8_lossy(buf));
+        return Ok(buf.len());
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        return Ok(());
+    }
+}
 
 impl SerialLoggingService {
     pub fn new(server: &mut BLEServer) -> Arc<Mutex<SerialLoggingService>> {
@@ -375,7 +387,12 @@ impl SerialLoggingService {
         std::panic::set_hook(Box::new(|args| {
             ::log::error!(target: "panic", "{}", args);
         }));
-        BleLogger::initialize_default();
+        // BleLogger::initialize_default();
+
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(|| SerialWriter {})
+            .init();
 
         file_upload_service
     }
