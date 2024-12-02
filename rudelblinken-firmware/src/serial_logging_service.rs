@@ -1,53 +1,19 @@
 use std::{
-    backtrace::Backtrace,
-    borrow::BorrowMut,
     ffi::CStr,
-    io::{Read, Seek, Stdout, Write},
-    os::fd::AsRawFd,
+    io::{BufRead, Read},
     sync::Arc,
+    u8,
 };
 
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
     uuid128, BLEServer, DescriptorProperties, NimbleProperties,
 };
-use esp_idf_sys::{
-    esp_log_timestamp, esp_log_write, fclose, funopen, fwrite, snprintf, sprintf,
-    CONFIG_LOG_MAXIMUM_LEVEL,
-};
-use log::{Level, LevelFilter, Record};
-use rudelblinken_filesystem::{
-    file::{File as FileContent, FileState},
-    Filesystem,
-};
-use thiserror::Error;
-
-use crate::storage::{get_filesystem, FlashStorage};
-
-// https://play.google.com/store/apps/details?id=com.telit.tiosample
-// https://web.archive.org/web/20190121050719/https://www.telit.com/wp-content/uploads/2017/09/TIO_Implementation_Guide_r6.pdf
-const SERIAL_LOGGING_TIO_SERVICE: BleUuid = uuid128!("0000FEFB-0000-1000-8000-00805F9B34FB");
-const SERIAL_LOGGING_TIO_CHAR_RX: BleUuid = uuid128!("00000001-0000-1000-8000-008025000000"); // N
-const SERIAL_LOGGING_TIO_CHAR_TX: BleUuid = uuid128!("00000002-0000-1000-8000-008025000000"); // WNR
-const SERIAL_LOGGING_TIO_CHAR_RX_CREDITS: BleUuid =
-    uuid128!("00000003-0000-1000-8000-008025000000"); // I
-const SERIAL_LOGGING_TIO_CHAR_TX_CREDITS: BleUuid =
-    uuid128!("00000004-0000-1000-8000-008025000000"); // W
-
-pub struct SerialLoggingService {
-    last_error: Option<SerialLoggingError>,
-}
-
-#[derive(Error, Debug, Clone)]
-pub enum SerialLoggingError {
-    #[error("There is no checksum file with the supplied hash")]
-    ChecksumFileDoesNotExist,
-}
+use esp_idf_sys::esp_log_timestamp;
+use log::{Level, LevelFilter};
 
 pub struct BleLogger;
-
 static LOGGER: BleLogger = BleLogger;
-
 impl BleLogger {
     pub fn initialize_default() {
         ::log::set_logger(&LOGGER)
@@ -56,11 +22,7 @@ impl BleLogger {
     }
 
     pub fn initialize(&self) {
-        ::log::set_max_level(self.get_max_level());
-    }
-
-    pub fn get_max_level(&self) -> LevelFilter {
-        LevelFilter::max()
+        ::log::set_max_level(LevelFilter::max());
     }
 
     fn get_marker(level: Level) -> &'static str {
@@ -83,34 +45,6 @@ impl BleLogger {
             }
         }
     }
-
-    // fn should_log(record: &Record) -> bool {
-
-    //     // esp-idf function `esp_log_level_get` builds a cache using the address
-    //     // of the target and not doing a string compare.  This means we need to
-    //     // build a cache of our own mapping the str value to a consistant
-    //     // Cstr value.
-    //     static TARGET_CACHE: Mutex<BTreeMap<alloc::string::String, CString>> =
-    //         Mutex::new(BTreeMap::new());
-    //     let level = Newtype::<esp_log_level_t>::from(record.level()).0;
-
-    //     let mut cache = TARGET_CACHE.lock();
-
-    //     let ctarget = loop {
-    //         if let Some(ctarget) = cache.get(record.target()) {
-    //             break ctarget;
-    //         }
-
-    //         if let Ok(ctarget) = to_cstring_arg(record.target()) {
-    //             cache.insert(record.target().into(), ctarget);
-    //         } else {
-    //             return true;
-    //         }
-    //     };
-
-    //     let max_level = unsafe { esp_log_level_get(ctarget.as_c_str().as_ptr()) };
-    //     level <= max_level
-    // }
 }
 
 impl ::log::Log for BleLogger {
@@ -120,40 +54,30 @@ impl ::log::Log for BleLogger {
 
     fn log(&self, record: &::log::Record) {
         let metadata = record.metadata();
-        if true {
-            let marker = Self::get_marker(metadata.level());
-            let timestamp = unsafe { esp_log_timestamp() };
-            let target = record.metadata().target();
-            let args = record.args();
-            let color = Self::get_color(record.level());
+        let marker = Self::get_marker(metadata.level());
+        let timestamp = unsafe { esp_log_timestamp() };
+        let target = record.metadata().target();
+        let args = record.args();
+        let color = Self::get_color(record.level());
 
-            // let mut stdout = EspStdout::new();
-            let text: String;
-            if let Some(color) = color {
-                text = format!(
-                    "\x1b[0;{}m{} ({}) {}: {}\x1b[0m\n",
-                    color, marker, timestamp, target, args
-                );
-            } else {
-                text = format!("{} ({}) {}: {}\n", marker, timestamp, target, args);
-            }
-
-            write_ble(text.as_bytes());
-            print!("{}", text);
+        // let mut stdout = EspStdout::new();
+        let text: String;
+        if let Some(color) = color {
+            text = format!(
+                "\x1b[0;{}m{} ({}) {}: {}\x1b[0m\n",
+                color, marker, timestamp, target, args
+            );
+        } else {
+            text = format!("{} ({}) {}: {}\n", marker, timestamp, target, args);
         }
+
+        write_ble(text.as_bytes());
+        print!("{}", text);
     }
 
     fn flush(&self) {}
 }
 
-static mut RX_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
-static mut TX_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
-static mut RX_CREDITS_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
-static mut TX_CREDITS_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
-static TX_CREDITS: std::sync::RwLock<u8> = std::sync::RwLock::new(0);
-static RX_CREDITS: std::sync::RwLock<u8> = std::sync::RwLock::new(0);
-
-// unsafe extern "C" fn(_: *const i8, _: *mut c_void) -> i32
 extern "C" fn logger(format_string_pointer: *const i8, va_args: *mut core::ffi::c_void) -> i32 {
     let format_string = unsafe { CStr::from_ptr(format_string_pointer) };
     let format_string = format_string.to_bytes();
@@ -208,13 +132,131 @@ fn write_ble(content: &[u8]) -> usize {
     return sent_bytes;
 }
 
-// struct MyCookie {
-//     old_stdout: *mut esp_idf_sys::__sFILE,
-// }
+// https://play.google.com/store/apps/details?id=com.telit.tiosample
+// https://web.archive.org/web/20190121050719/https://www.telit.com/wp-content/uploads/2017/09/TIO_Implementation_Guide_r6.pdf
+const SERIAL_LOGGING_TIO_SERVICE: BleUuid = uuid128!("0000FEFB-0000-1000-8000-00805F9B34FB");
+const SERIAL_LOGGING_TIO_CHAR_RX: BleUuid = uuid128!("00000001-0000-1000-8000-008025000000"); // Notify
+const SERIAL_LOGGING_TIO_CHAR_TX: BleUuid = uuid128!("00000002-0000-1000-8000-008025000000"); // Write no response
+const SERIAL_LOGGING_TIO_CHAR_RX_CREDITS: BleUuid =
+    uuid128!("00000003-0000-1000-8000-008025000000"); // Indicate
+const SERIAL_LOGGING_TIO_CHAR_TX_CREDITS: BleUuid =
+    uuid128!("00000004-0000-1000-8000-008025000000"); // Write
+
+const BUFFER_SIZE: usize = 512;
+
+static mut RX_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
+static mut TX_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
+static mut RX_CREDITS_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
+static mut TX_CREDITS_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
+static RX_CREDITS: std::sync::RwLock<u8> = std::sync::RwLock::new(0);
+
+pub struct SerialLoggingService {
+    connection: SerialConnection,
+}
+
+#[derive(Debug, Clone)]
+struct SerialConnection {
+    /// The buffer for the serial connection
+    buffer: [u8; 512],
+    /// The number of bytes in the buffer
+    buffer_length: usize,
+    /// How many credits the remote device has
+    remote_credits: u8,
+}
+
+impl SerialConnection {
+    fn new() -> SerialConnection {
+        SerialConnection {
+            buffer: [0u8; BUFFER_SIZE],
+            buffer_length: 0,
+            remote_credits: 0,
+        }
+    }
+
+    /// Get the amount of credits that we can give
+    fn credits(&self) -> u8 {
+        let remaining_bytes = BUFFER_SIZE - self.buffer_length;
+        let remaining_credits = remaining_bytes / 20;
+        let remaining_credits: u8 = remaining_credits.try_into().unwrap_or(u8::MAX);
+        return remaining_credits;
+    }
+
+    /// Update the credits on all remote devices, if necessary
+    fn update_credits(&mut self) {
+        let remote_credits = self.remote_credits;
+        let local_credits = self.credits();
+        let credits_diff = local_credits.abs_diff(remote_credits);
+        if credits_diff == 0 || (credits_diff < 10 && remote_credits > 2) {
+            // log::debug!("Credits diff is less than 10; not updating credits");
+            return;
+        }
+        self.notify_credits();
+    }
+
+    /// Update all connected devices with the current amount of credits
+    fn notify_credits(&mut self) {
+        let local_credits = self.credits();
+        let Some(tx_credits_characteristic) = (unsafe { TX_CREDITS_CHARACTERISTIC.as_ref() })
+        else {
+            return;
+        };
+        let mut tx_credits_characteristic = tx_credits_characteristic.lock();
+        tx_credits_characteristic.set_value(&[local_credits]);
+        tx_credits_characteristic.notify();
+        self.remote_credits = local_credits;
+    }
+
+    /// Adds a line of data to the buffer
+    ///
+    /// This function gets called when the BLE device sends us a line of data
+    fn ble_receive_line(&mut self, data: &[u8]) {
+        let read_length = std::cmp::min(data.len(), self.buffer.len() - self.buffer_length);
+        if read_length != data.len() {
+            log::error!("Received more data than we can store in the buffer; truncating");
+            log::error!("Maybe your client doesn't respect the credits?");
+        }
+        self.buffer[self.buffer_length..self.buffer_length + read_length]
+            .copy_from_slice(&data[0..read_length]);
+        self.buffer_length += read_length;
+        self.update_credits();
+    }
+
+    fn reset(&mut self) {
+        self.buffer_length = 0;
+        self.update_credits();
+    }
+}
+
+impl Read for SerialConnection {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read_length = std::cmp::min(buf.len(), self.buffer_length);
+        if read_length == 0 {
+            return Ok(0);
+        }
+
+        buf[0..read_length].copy_from_slice(&self.buffer[0..read_length]);
+        self.consume(read_length);
+        return Ok(read_length);
+    }
+}
+impl BufRead for SerialConnection {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        return Ok(&self.buffer[0..self.buffer_length]);
+    }
+
+    fn consume(&mut self, amt: usize) {
+        let read_length = std::cmp::min(amt, self.buffer_length);
+        self.buffer.copy_within(read_length.., 0);
+        self.buffer_length -= read_length;
+        self.update_credits();
+    }
+}
 
 impl SerialLoggingService {
     pub fn new(server: &mut BLEServer) -> Arc<Mutex<SerialLoggingService>> {
-        let file_upload_service = Arc::new(Mutex::new(SerialLoggingService { last_error: None }));
+        let file_upload_service = Arc::new(Mutex::new(SerialLoggingService {
+            connection: SerialConnection::new(),
+        }));
 
         let service = server.create_service(SERIAL_LOGGING_TIO_SERVICE);
 
@@ -287,14 +329,9 @@ impl SerialLoggingService {
             .lock()
             .set_value("UART credits RX".as_bytes());
 
+        let cc = file_upload_service.clone();
         rx_characteristic.lock().on_write(move |args| {
-            ::log::error!("RX write {:?}", args.recv_data());
-        });
-        tx_characteristic.lock().on_write(move |args| {
-            ::log::error!("TX write {:?}", args.recv_data());
-        });
-        rx_credits_characteristic.lock().on_write(move |args| {
-            ::log::error!("RX credits write {:?}", args.recv_data());
+            cc.lock().connection.ble_receive_line(args.recv_data());
         });
         rx_credits_characteristic.lock().on_write(move |args| {
             let received_data = args.recv_data();
@@ -315,21 +352,18 @@ impl SerialLoggingService {
                 *rx_credits = *new_credits;
             }
 
-            ::log::info!("Received {} credits", new_credits);
+            ::log::debug!("Received {} credits", new_credits);
         });
-
-        tx_credits_characteristic.lock().on_read(|_, _| {
-            ::log::error!("TX credits read");
-        });
-        rx_credits_characteristic.lock().on_read(|_, _| {
-            ::log::error!("RX credits read");
-        });
-        tx_characteristic.lock().on_read(|_, _| {
-            ::log::error!("TX read");
-        });
-        rx_characteristic.lock().on_read(|_, _| {
-            ::log::error!("RX read");
-        });
+        let cc = file_upload_service.clone();
+        tx_credits_characteristic
+            .lock()
+            .on_subscribe(move |this, _, _| {
+                if this.subscribed_count() == 0 {
+                    cc.lock().connection.reset();
+                    return;
+                }
+                cc.lock().connection.notify_credits();
+            });
 
         unsafe {
             RX_CHARACTERISTIC = Some(rx_characteristic);
@@ -343,90 +377,6 @@ impl SerialLoggingService {
         }));
         BleLogger::initialize_default();
 
-        // // Replace stdout and stderr with a function
-        // unsafe {
-        //     let reent = esp_idf_sys::__getreent();
-        //     let old_stdout = (*reent)._stdout;
-        //     let old_stderr = (*reent)._stderr;
-        //     OLD_STDOUT = Some(old_stdout);
-        //     OLD_STDERR = Some(old_stderr);
-        //     let new_stdout = funopen(
-        //         "a".as_ptr() as *mut core::ffi::c_void,
-        //         None,
-        //         Some(write_to_stdout_and_ble),
-        //         None,
-        //         None,
-        //     );
-        //     let new_stderr = funopen(
-        //         "a".as_ptr() as *mut core::ffi::c_void,
-        //         None,
-        //         Some(write_to_stdout_and_ble),
-        //         None,
-        //         None,
-        //     );
-        //     (*reent)._stdout = new_stdout;
-        //     (*reent)._stderr = new_stderr;
-        // }
-
         file_upload_service
     }
 }
-
-// static mut OLD_STDOUT: Option<*mut esp_idf_sys::__sFILE> = None;
-// static mut OLD_STDERR: Option<*mut esp_idf_sys::__sFILE> = None;
-
-// extern "C" fn write_to_stdout_and_ble(
-//     _cookie: *mut core::ffi::c_void,
-//     buffer: *const core::ffi::c_char,
-//     length: core::ffi::c_int,
-// ) -> ::core::ffi::c_int {
-//     let bytes = unsafe { std::slice::from_raw_parts(buffer as *const u8, length as usize) };
-
-//     for chunk in bytes.chunks(20) {
-//         if let Some(rx_characteristic) = unsafe { RX_CHARACTERISTIC.as_ref() } {
-//             let mut rx_characteristic = rx_characteristic.lock();
-//             rx_characteristic.set_value(chunk);
-//             rx_characteristic.notify();
-//         }
-//         if let Some(old_stdout) = unsafe { OLD_STDOUT.as_ref() } {
-//             unsafe {
-//                 esp_idf_sys::fwrite(
-//                     chunk.as_ptr() as *const core::ffi::c_void,
-//                     chunk.len() as u32,
-//                     1,
-//                     *old_stdout,
-//                 );
-//             }
-//         }
-//     }
-
-//     return bytes.len() as i32;
-// }
-
-// extern "C" fn write_to_stderr_and_ble(
-//     _cookie: *mut core::ffi::c_void,
-//     buffer: *const core::ffi::c_char,
-//     length: core::ffi::c_int,
-// ) -> ::core::ffi::c_int {
-//     let bytes = unsafe { std::slice::from_raw_parts(buffer as *const u8, length as usize) };
-
-//     for chunk in bytes.chunks(20) {
-//         if let Some(rx_characteristic) = unsafe { RX_CHARACTERISTIC.as_ref() } {
-//             let mut rx_characteristic = rx_characteristic.lock();
-//             rx_characteristic.set_value(chunk);
-//             rx_characteristic.notify();
-//         }
-//         if let Some(old_stderr) = unsafe { OLD_STDERR.as_ref() } {
-//             unsafe {
-//                 esp_idf_sys::fwrite(
-//                     chunk.as_ptr() as *const core::ffi::c_void,
-//                     chunk.len() as u32,
-//                     1,
-//                     *old_stderr,
-//                 );
-//             }
-//         }
-//     }
-
-//     return bytes.len() as i32;
-// }
