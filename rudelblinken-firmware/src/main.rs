@@ -16,10 +16,12 @@ use esp_idf_hal::{
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
 use rudelblinken_sdk::common::BLEAdvNotification;
+use serial_logging_service::SerialLoggingService;
 use storage::setup_storage;
 
 mod cat_management_service;
 mod file_upload_service;
+mod serial_logging_service;
 pub mod storage;
 
 /// Changes the OUI of the base mac address to 24:ec:4b which is not assigned
@@ -141,14 +143,17 @@ fn main() {
 
     // Bind the log crate to the ESP Logging facilities
     // esp_idf_svc::log::EspLogger::initialize_default();
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_writer(std::io::stdout)
-        .init();
+    // tracing_subscriber::fmt()
+    //     .with_max_level(tracing::Level::INFO)
+    //     .with_writer(std::io::stdout)
+    //     .init();
 
     fix_mac_address();
 
     setup_ble_server();
+
+    let ble_device = BLEDevice::take();
+    let serial_logging_service = SerialLoggingService::new(ble_device.get_server());
 
     setup_storage();
 
@@ -187,8 +192,6 @@ fn main() {
     led_driver.lock().set_duty(0x1000).unwrap(); */
     let led_pin =
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
-
-    let ble_device = BLEDevice::take();
 
     let file_upload_service = FileUploadService::new(ble_device.get_server());
     let cat_management_service =
