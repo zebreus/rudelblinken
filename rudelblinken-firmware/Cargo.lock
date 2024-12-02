@@ -1491,7 +1491,6 @@ dependencies = [
  "esp-idf-sys",
  "esp32-nimble",
  "itertools 0.13.0",
- "log",
  "rudelblinken-filesystem",
  "rudelblinken-sdk",
  "thiserror 1.0.64",
