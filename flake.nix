@@ -4,6 +4,7 @@
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.url = "github:nixos/nixpkgs";
+    nixpkgs-wit-bindgen.url = "github:nixos/nixpkgs/563c21191ff0600457bd85dc531462c073a1574b";
     nixpkgs-esp-dev = {
       url = "github:mirrexagon/nixpkgs-esp-dev/c25c658e2648bf71316c0389752ae9fc155e8b83";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -18,6 +19,7 @@
     {
       self,
       nixpkgs,
+      nixpkgs-wit-bindgen,
       fenix,
       flake-utils,
       nixpkgs-esp-dev,
@@ -25,16 +27,20 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-
+        pkgs-wit-bindgen = import nixpkgs-wit-bindgen {
+          inherit system;
+        };
         pkgs = import nixpkgs {
           inherit system;
           overlays = [
             (final: prev: {
               esp-idf-esp32c3 = nixpkgs-esp-dev.packages.${system}.esp-idf-esp32c3;
+              wit-bindgen = pkgs-wit-bindgen.wit-bindgen;
             })
             fenix.overlays.default
           ];
         };
+
         esp-idf-esp32c3 = nixpkgs-esp-dev.packages.${system}.esp-idf-esp32c3;
         fenixPkgs = fenix.packages.${system};
         rustToolchain = fenixPkgs.combine [

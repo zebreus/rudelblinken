@@ -94,12 +94,29 @@
         "type": "github"
       }
     },
+    "nixpkgs-wit-bindgen": {
+      "locked": {
+        "lastModified": 1733680247,
+        "narHash": "sha256-BH18KTZ8jLsv/fBuqM81jHs0lRvkWz2ybwcNWyUQbVM=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "563c21191ff0600457bd85dc531462c073a1574b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "563c21191ff0600457bd85dc531462c073a1574b",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "fenix": "fenix",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
-        "nixpkgs-esp-dev": "nixpkgs-esp-dev"
+        "nixpkgs-esp-dev": "nixpkgs-esp-dev",
+        "nixpkgs-wit-bindgen": "nixpkgs-wit-bindgen"
       }
     },
     "rust-analyzer-src": {
