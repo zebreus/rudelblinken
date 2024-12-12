@@ -1,0 +1,137 @@
+package rudel:base@0.0.1;
+
+/// base is the interface for all basic functionality of the rudelblinken system
+@since(version = 0.0.1)
+interface base {
+    /// Sleep for a given amount of time.
+    ///
+    /// You need to call sleep periodically, as the watchdog will kill you if you dont
+    @since(version = 0.0.1)
+    yield-now: func(micros: u64);
+
+    /// Returns the number of microseconds that have passed since boot
+    @since(version = 0.0.1)
+    time: func() -> u64;
+
+
+    @since(version = 0.0.1)
+    has-host-base: func() -> bool;
+
+    /// The semantic version of a module
+    record semantic-version {
+        major: u8,
+        minor: u8,
+        patch: u8,
+    }
+
+    /// Get the version of the rudel base
+    /// 
+    /// If your module requests newer versions of the modules than the host implements, it will attempt to link its old ones anyways and make them conforme to the requested signatures. You can use this function to get the actual version of the host functions.
+    /// 
+    /// If your module requests older versions of the host modules, the host will link compatible functions if available, or abort during linking.
+    ///
+    /// The host will mock out all functions it can not link.
+    @since(version = 0.0.1)
+    get-base-version: func() -> semantic-version;
+
+    /// Level of a log entry
+    @since(version = 0.0.1)
+    enum log-level {
+        error,
+        warning,
+        info,
+        debug,
+        trace,
+    }
+
+    /// Log a message
+    @since(version = 0.0.1)
+    log: func(level: log-level, message: string)  -> ();
+
+    /// The name of this host. It is guaranteed to be unique, and will not change during the lifetime of the host.
+    /// 
+    /// The name is returned as a list of 16 bytes to avoid the need for allocations on the host side, as the buffer will be allocated by the guest. The name is UTF-8 encoded, and the buffer will be zero padded after the end of the string.
+    /// 
+    /// Once fixed size lists gets stabilized in WIT, this will be changed to a list<u8, 16>. That should not affect the ABI as the representation of a tuple and a fixed size list is the same.
+    /// 
+    /// Your host bindings should provide a wrapper for this that converts the list to a string.
+    @since(version = 0.0.1)
+    get-name: func() -> tuple<u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8>;
+}
+
+@since(version = 0.0.1)
+interface run {
+  /// Run the program.
+  @since(version = 0.0.1)
+  run: func();
+}
+
+world rudel {
+    import base;
+    export run;
+}
+
+world rudel-host {
+    export base;
+    import run;
+}
+
+/// Use this interface to control the LED brightness
+@since(version = 0.0.1)
+interface led {
+    /// Check if the led module is implemented
+    ///
+    /// The rudelblinken runtime will mock out all functions the it can not link.
+    /// If this function returns false you should not use any of the other functions
+    @since(version = 0.0.1)
+    has-led: func() -> bool;
+    
+    /// Lowlevel function to set the intensities of a single LED
+    ///
+    /// The values are in lux in the main direction of the LED
+    ///
+    /// You should probably not use this function directly, but use a higher level abstraction instead
+    @since(version = 0.0.1)
+    set-led: func(id: u16, lux: u16) -> ();
+
+
+    /// Get information about the number of LEDs
+    @since(version = 0.0.1)
+    led-count: func() -> u32;
+}
+
+/// Control ble stuff
+@since(version = 0.0.1)
+interface ble {
+    /// Check if the ble module is implemented
+    ///
+    /// The rudelblinken runtime will mock out all functions the it can not link.
+    /// If this function returns false you should not use any of the other functions
+    @since(version = 0.0.1)
+    has-ble: func() -> bool;
+
+    /// Configure the BLE advertisments
+    @since(version = 0.0.1)
+    record advertisment-settings {
+        min-interval: u16,
+        max-interval: u16,
+    }
+    /// The data to be sent in the advertisment
+    @since(version = 0.0.1)
+    type advertisment-data = list<u8>;
+
+    @since(version = 0.0.1)
+    configure-ble-advertisment: func(settings: advertisment-settings) -> ();
+    @since(version = 0.0.1)
+    configure-ble-advertisment-data: func(settings: advertisment-data) -> ();
+}
+
+@since(version = 0.0.1)
+interface ble-guest {
+    /// Check if the ble module is implemented
+    ///
+    /// The rudelblinken runtime will mock out all functions the it can not link.
+    /// If this function returns false you should not use any of the other functions
+    @since(version = 0.0.1)
+    has-ble-guest: func() -> bool;
+}
