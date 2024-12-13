@@ -28,18 +28,24 @@ pub use wasmi::Error;
 
 #[cfg(test)]
 mod tests {
+    use super::emulated_host::EmulatedHost;
+    use super::linker::setup;
 
     #[test]
-    fn test() {
-        use super::emulated_host::EmulatedHost;
-        use super::linker::setup;
-
-        const WASM_MOD: &[u8] = include_bytes!(
-            "../../rudelblinken-wasm/target/wasm32-unknown-unknown/release/rudelblinken_wasm.wasm"
-        );
+    fn can_execute_helloworld() {
+        let module_bytes = std::fs::read("../wasm-binaries/binaries/hello_world.wasm").unwrap();
 
         let host = EmulatedHost::new();
-        let mut instance = setup(WASM_MOD, host).unwrap();
+        let mut instance = setup(&module_bytes, host).unwrap();
+        instance.run().unwrap();
+    }
+
+    #[test]
+    fn logging_works() {
+        let module_bytes = std::fs::read("../wasm-binaries/binaries/test_logging.wasm").unwrap();
+
+        let host = EmulatedHost::new();
+        let mut instance = setup(&module_bytes, host).unwrap();
         instance.run().unwrap();
     }
 }

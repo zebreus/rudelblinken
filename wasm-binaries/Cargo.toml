@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["hello-world", "test-logging"]
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+panic = "abort"
+codegen-units = 1
+
+[profile.dev]
+opt-level = "z"
+
+[workspace.dependencies]
+rudelblinken-sdk = { path = "../rudelblinken-sdk" }
+spin = "0.9.8"
+talc = "4.4.2"

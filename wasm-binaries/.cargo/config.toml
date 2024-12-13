@@ -1,0 +1,6 @@
+[build]
+target = "wasm32-unknown-unknown"
+rustflags = ["-C", "link-args=-zstack-size=16384"]
+
+[unstable]
+build-std = ["std", "panic_abort"]
