@@ -48,4 +48,26 @@ mod tests {
         let mut instance = setup(&module_bytes, host).unwrap();
         instance.run().unwrap();
     }
+
+    #[test]
+    fn infinite_loop_gets_killed() {
+        let module_bytes = std::fs::read("../wasm-binaries/binaries/infinite_loop.wasm").unwrap();
+
+        let host = EmulatedHost::new();
+        let mut instance = setup(&module_bytes, host).unwrap();
+        let error: wasmi::Error = instance.run().unwrap_err();
+        assert_eq!(
+            error.as_trap_code().unwrap(),
+            wasmi::core::TrapCode::OutOfFuel
+        );
+    }
+    // // How would I even test this?
+    // #[test]
+    // fn infinite_loop_does_not_get_killed_if_it_yields() {
+    //     let module_bytes = std::fs::read("../wasm-binaries/binaries/infinite_loop.wasm").unwrap();
+
+    //     let host = EmulatedHost::new();
+    //     let mut instance = setup(&module_bytes, host).unwrap();
+    //     instance.run().unwrap();
+    // }
 }

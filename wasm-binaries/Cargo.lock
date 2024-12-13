@@ -92,6 +92,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "infinite-loop"
+version = "0.1.0"
+dependencies = [
+ "rudelblinken-sdk",
+ "spin",
+ "talc",
+]
+
+[[package]]
+name = "infinite-loop-yielding"
+version = "0.1.0"
+dependencies = [
+ "rudelblinken-sdk",
+ "spin",
+ "talc",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

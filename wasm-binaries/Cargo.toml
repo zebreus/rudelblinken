@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["hello-world", "test-logging"]
+members = [
+    "hello-world",
+    "infinite-loop",
+    "infinite-loop-yielding",
+    "test-logging",
+]
 
 [profile.release]
 opt-level = "s"
