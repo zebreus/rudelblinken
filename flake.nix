@@ -116,6 +116,7 @@
             pkgs.wasm-tools
             pkgs.wit-bindgen
             pkgs.cargo-rdme
+            pkgs.jq
             # For the cli:
             pkgs.dbus
           ];
