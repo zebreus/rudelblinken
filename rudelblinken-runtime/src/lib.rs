@@ -23,6 +23,9 @@ pub mod emulated_host;
 pub mod host;
 pub mod linker;
 
+/// This crate uses wasmi::Error as its main error type.
+pub use wasmi::Error;
+
 #[cfg(test)]
 mod tests {
 
