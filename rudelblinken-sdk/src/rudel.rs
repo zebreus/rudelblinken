@@ -71,15 +71,30 @@ pub mod rudel {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            /// Sleep for a given amount of time.
-            ///
-            /// You need to call sleep periodically, as the watchdog will kill you if you dont
-            pub fn yield_now(micros: u64) {
+            /// You need to yield periodically, as the watchdog will kill you if you dont
+            pub fn yield_now() {
                 unsafe {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "rudel:base/base@0.0.1")]
                     extern "C" {
                         #[link_name = "yield-now"]
+                        fn wit_import();
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import() {
+                        unreachable!()
+                    }
+                    wit_import();
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Sleep for a given amount of time.
+            pub fn sleep(micros: u64) {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/base@0.0.1")]
+                    extern "C" {
+                        #[link_name = "sleep"]
                         fn wit_import(_: i64);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
@@ -363,19 +378,19 @@ macro_rules! __export_rudel_impl {
         $($path_to_types_root)*:: exports::rudel::base::run); const _ : () = {
         #[cfg(target_arch = "wasm32")] #[link_section =
         "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel:imports and exports"]
-        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 478] = *
+        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 493] = *
         b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xe2\x02\x01A\x02\x01\
-A\x04\x01B\x11\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf1\x02\x01A\x02\x01\
+A\x04\x01B\x13\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
-\0\x02\x01@\x01\x06microsw\x01\0\x04\0\x09yield-now\x01\x04\x01@\0\0w\x04\0\x04t\
-ime\x01\x05\x01@\0\0\x7f\x04\0\x0dhas-host-base\x01\x06\x01@\0\0\x01\x04\0\x10ge\
-t-base-version\x01\x07\x01@\x02\x05level\x03\x07messages\x01\0\x04\0\x03log\x01\x08\
-\x01o\x10}}}}}}}}}}}}}}}}\x01@\0\0\x09\x04\0\x08get-name\x01\x0a\x03\0\x15rudel:\
-base/base@0.0.1\x05\0\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\0\x04\0\x14rudel:ba\
-se/run@0.0.1\x05\x01\x04\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\x0b\x01\0\x05rude\
-l\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10\
-wit-bindgen-rust\x060.36.0";
+\0\x02\x01@\0\x01\0\x04\0\x09yield-now\x01\x04\x01@\x01\x06microsw\x01\0\x04\0\x05\
+sleep\x01\x05\x01@\0\0w\x04\0\x04time\x01\x06\x01@\0\0\x7f\x04\0\x0dhas-host-bas\
+e\x01\x07\x01@\0\0\x01\x04\0\x10get-base-version\x01\x08\x01@\x02\x05level\x03\x07\
+messages\x01\0\x04\0\x03log\x01\x09\x01o\x10}}}}}}}}}}}}}}}}\x01@\0\0\x0a\x04\0\x08\
+get-name\x01\x0b\x03\0\x15rudel:base/base@0.0.1\x05\0\x01B\x02\x01@\0\x01\0\x04\0\
+\x03run\x01\0\x04\0\x14rudel:base/run@0.0.1\x05\x01\x04\0\x16rudel:base/rudel@0.\
+0.1\x04\0\x0b\x0b\x01\0\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\
+\x0dwit-component\x070.220.0\x10wit-bindgen-rust\x060.36.0";
         };
     };
 }
@@ -384,15 +399,15 @@ pub use __export_rudel_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel-with-all-of-its-exports-removed:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 501] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd9\x02\x01A\x02\x01\
-A\x02\x01B\x11\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 516] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xe8\x02\x01A\x02\x01\
+A\x02\x01B\x13\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
-\0\x02\x01@\x01\x06microsw\x01\0\x04\0\x09yield-now\x01\x04\x01@\0\0w\x04\0\x04t\
-ime\x01\x05\x01@\0\0\x7f\x04\0\x0dhas-host-base\x01\x06\x01@\0\0\x01\x04\0\x10ge\
-t-base-version\x01\x07\x01@\x02\x05level\x03\x07messages\x01\0\x04\0\x03log\x01\x08\
-\x01o\x10}}}}}}}}}}}}}}}}\x01@\0\0\x09\x04\0\x08get-name\x01\x0a\x03\0\x15rudel:\
-base/base@0.0.1\x05\0\x04\06rudel:base/rudel-with-all-of-its-exports-removed@0.0\
-.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-exports-removed\x03\0\0\0G\x09producer\
-s\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bindgen-rust\x060.3\
-6.0";
+\0\x02\x01@\0\x01\0\x04\0\x09yield-now\x01\x04\x01@\x01\x06microsw\x01\0\x04\0\x05\
+sleep\x01\x05\x01@\0\0w\x04\0\x04time\x01\x06\x01@\0\0\x7f\x04\0\x0dhas-host-bas\
+e\x01\x07\x01@\0\0\x01\x04\0\x10get-base-version\x01\x08\x01@\x02\x05level\x03\x07\
+messages\x01\0\x04\0\x03log\x01\x09\x01o\x10}}}}}}}}}}}}}}}}\x01@\0\0\x0a\x04\0\x08\
+get-name\x01\x0b\x03\0\x15rudel:base/base@0.0.1\x05\0\x04\06rudel:base/rudel-wit\
+h-all-of-its-exports-removed@0.0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-export\
+s-removed\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.\
+220.0\x10wit-bindgen-rust\x060.36.0";

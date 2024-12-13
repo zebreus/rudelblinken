@@ -15,6 +15,8 @@ impl EmulatedHost {
 }
 
 impl Host for EmulatedHost {
+    fn yield_now(&mut self) -> () {}
+
     fn sleep(&mut self, micros: u64) -> () {
         std::thread::sleep(Duration::from_micros(micros));
     }

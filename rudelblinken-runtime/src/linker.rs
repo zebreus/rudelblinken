@@ -142,6 +142,18 @@ pub fn setup_linker<T: Host>(
 
     linker.define(
         "rudel:base/base@0.0.1",
+        "yield-now",
+        Func::wrap(
+            &mut store,
+            |mut caller: Caller<'_, T>| -> Result<(), wasmi::Error> {
+                caller.data_mut().yield_now();
+                return Ok(());
+            },
+        ),
+    )?;
+
+    linker.define(
+        "rudel:base/base@0.0.1",
         "has-host-base",
         Func::wrap(
             &mut store,

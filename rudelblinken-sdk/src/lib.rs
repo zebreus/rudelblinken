@@ -3,7 +3,7 @@ mod rudel;
 pub use rudel::{
     export, exports,
     exports::rudel::base::run::Guest,
-    rudel::base::base::{has_host_base, log, time, yield_now, LogLevel},
+    rudel::base::base::{has_host_base, log, sleep, time, yield_now, LogLevel},
 };
 
 pub fn get_name() -> String {

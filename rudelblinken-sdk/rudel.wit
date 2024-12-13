@@ -3,16 +3,17 @@ package rudel:base@0.0.1;
 /// base is the interface for all basic functionality of the rudelblinken system
 @since(version = 0.0.1)
 interface base {
-    /// Sleep for a given amount of time.
-    ///
-    /// You need to call sleep periodically, as the watchdog will kill you if you dont
+    /// You need to yield periodically, as the watchdog will kill you if you dont
     @since(version = 0.0.1)
-    yield-now: func(micros: u64);
+    yield-now: func();
+
+    /// Sleep for a given amount of time.
+    @since(version = 0.0.1)
+    sleep: func(micros: u64);
 
     /// Returns the number of microseconds that have passed since boot
     @since(version = 0.0.1)
     time: func() -> u64;
-
 
     @since(version = 0.0.1)
     has-host-base: func() -> bool;

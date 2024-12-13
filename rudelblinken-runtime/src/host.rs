@@ -51,9 +51,9 @@ impl SemanticVersion {
 }
 
 pub trait Host {
+    #[doc = "You need to yield periodically, as the watchdog will kill you if you dont"]
+    fn yield_now(&mut self) -> ();
     #[doc = " Sleep for a given amount of time."]
-    #[doc = " "]
-    #[doc = " You need to call sleep periodically, as the watchdog will kill you if you dont"]
     fn sleep(&mut self, micros: u64) -> ();
 
     #[doc = " Returns the number of microseconds that have passed since boot"]
