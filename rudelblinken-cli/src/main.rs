@@ -1,10 +1,11 @@
 #![feature(async_closure)]
 //! Connects to our Bluetooth GATT service and exercises the characteristic.
 
+mod emulator;
 mod update_target;
-
 use bluer::{AdapterEvent, Device};
 use clap::{Parser, Subcommand};
+use emulator::Emulator;
 use futures::{
     pin_mut,
     stream::{AbortHandle, Abortable},
@@ -107,6 +108,11 @@ enum Commands {
         #[arg(short, long, default_value = "5")]
         timeout: f32,
     },
+    /// Scan for cats
+    Emulate {
+        /// WASM file to run
+        file: PathBuf,
+    },
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -193,6 +199,11 @@ async fn main() -> bluer::Result<()> {
             )
             .await
             .unwrap();
+        }
+        Commands::Emulate { file } => {
+            eprintln!("Emulating WASM file: {:?}", file);
+            let emulator = Emulator::new(file);
+            emulator.emulate().unwrap();
         }
     };
 
