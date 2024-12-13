@@ -1,25 +1,27 @@
 use std::sync::Arc;
 
-use cat_management_service::{CatManagementService, WasmHostMessage};
 use esp32_nimble::{
     enums::{ConnMode, DiscMode, PowerLevel, PowerType},
     utilities::mutex::Mutex,
     BLEAdvertisementData, BLEDevice, BLEScan, BLEServer,
 };
+// use esp_idf_hal::timer::TimerConfig;
+use boot_config_service::BootConfigService;
 use esp_idf_hal::{
+    delay::FreeRtos,
     gpio::{self, PinDriver},
     ledc::{config::TimerConfig, LedcDriver, LedcTimerDriver},
+    peripheral::Peripheral,
     prelude::Peripherals,
     task,
     units::FromValueType,
 };
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
-use rudelblinken_sdk::common::BLEAdvNotification;
 use serial_logging_service::SerialLoggingService;
 use storage::setup_storage;
 
-mod cat_management_service;
+mod boot_config_service;
 mod file_upload_service;
 mod serial_logging_service;
 pub mod storage;
@@ -130,17 +132,12 @@ pub fn print_memory_info() {
 }
 
 fn main() {
-    unsafe {
-        esp_idf_sys::sleep(2);
-    }
+    // unsafe {
+    //     esp_idf_sys::sleep(2);
+    // }
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
     esp_idf_svc::sys::link_patches();
-
-    unsafe {
-        esp_idf_sys::sleep(2);
-    }
-
     // Bind the log crate to the ESP Logging facilities
     // esp_idf_svc::log::EspLogger::initialize_default();
     // tracing_subscriber::fmt()
@@ -154,6 +151,7 @@ fn main() {
 
     let ble_device = BLEDevice::take();
     let serial_logging_service = SerialLoggingService::new(ble_device.get_server());
+    let boot_config_service = BootConfigService::new(ble_device.get_server());
 
     setup_storage();
 
@@ -190,12 +188,12 @@ fn main() {
         .unwrap(),
     );
     led_driver.lock().set_duty(0x1000).unwrap(); */
-    let led_pin =
-        Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
+    // let red_pin =
+    //     Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
+    // let blue_pin =
+    //     Mutex::new(PinDriver::output(unsafe { gpio::Gpio6::new() }).expect("pin init failed"));
 
     let file_upload_service = FileUploadService::new(ble_device.get_server());
-    let cat_management_service =
-        CatManagementService::new(ble_device, file_upload_service.clone(), led_pin);
 
     {
         let ble_advertising = ble_device.get_advertising();
@@ -203,7 +201,7 @@ fn main() {
             .lock()
             .set_data(
                 BLEAdvertisementData::new()
-                    .name("Rudelblinken")
+                    .name("Blinkenboots")
                     .add_service_uuid(FileUploadService::uuid())
                     .manufacturer_data(&[0, 0]),
             )
@@ -220,27 +218,228 @@ fn main() {
             .unwrap();
     }
 
-    let mut ble_scan = BLEScan::new();
-    ble_scan.active_scan(false).interval(100).window(99);
+    // red_pin.lock().set_high().unwrap();
+    // blue_pin.lock().set_high().unwrap();
 
-    loop {
-        task::block_on(async {
-            ble_scan
-                .start(ble_device, 1000, |dev, data| {
-                    if let Some(md) = data.manufacture_data() {
-                        cat_management_service
-                            .lock()
-                            .wasm_runner
-                            .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
-                                mac: dev.addr().as_be_bytes(),
-                                data: md.payload.into(),
-                            }))
-                            .expect("failed to send ble adv callback");
-                    }
-                    None::<()>
-                })
-                .await
-                .expect("scan failed");
-        });
+    let mut peripherals = Peripherals::take().unwrap();
+    let BootConfigService {
+        red_pin,
+        blue_pin,
+        switch_colors,
+        ..
+    } = boot_config_service.lock().clone();
+
+    let mut channel_a = LedcDriver::new(
+        unsafe { peripherals.ledc.channel0.clone_unchecked() },
+        LedcTimerDriver::new(
+            unsafe { peripherals.ledc.timer0.clone_unchecked() },
+            &TimerConfig::new().frequency(25.kHz().into()),
+        )
+        .unwrap(),
+        unsafe { peripherals.pins.gpio6.clone_unchecked() },
+    )
+    .unwrap();
+
+    let mut channel_b = LedcDriver::new(
+        peripherals.ledc.channel1,
+        LedcTimerDriver::new(
+            unsafe { peripherals.ledc.timer0.clone_unchecked() },
+            &TimerConfig::new().frequency(25.kHz().into()),
+        )
+        .unwrap(),
+        unsafe { peripherals.pins.gpio8.clone_unchecked() },
+    )
+    .unwrap();
+
+    let (red, blue) = match switch_colors {
+        true => (&mut channel_a, &mut channel_b),
+        false => (&mut channel_b, &mut channel_a),
+    };
+    match red_pin {
+        0 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio0.clone_unchecked() })
+            .unwrap(),
+        1 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio1.clone_unchecked() })
+            .unwrap(),
+        2 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio2.clone_unchecked() })
+            .unwrap(),
+        3 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio3.clone_unchecked() })
+            .unwrap(),
+        4 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio4.clone_unchecked() })
+            .unwrap(),
+        5 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio5.clone_unchecked() })
+            .unwrap(),
+        6 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio6.clone_unchecked() })
+            .unwrap(),
+        7 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio7.clone_unchecked() })
+            .unwrap(),
+        8 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio8.clone_unchecked() })
+            .unwrap(),
+        9 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio9.clone_unchecked() })
+            .unwrap(),
+        10 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio10.clone_unchecked() })
+            .unwrap(),
+        11 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio11.clone_unchecked() })
+            .unwrap(),
+        12 => channel_a
+            .config_with_pin(unsafe { peripherals.pins.gpio12.clone_unchecked() })
+            .unwrap(),
+        _ => panic!("Invalid red pin"),
+    };
+    match blue_pin {
+        0 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio0.clone_unchecked() })
+            .unwrap(),
+        1 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio1.clone_unchecked() })
+            .unwrap(),
+        2 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio2.clone_unchecked() })
+            .unwrap(),
+        3 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio3.clone_unchecked() })
+            .unwrap(),
+        4 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio4.clone_unchecked() })
+            .unwrap(),
+        5 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio5.clone_unchecked() })
+            .unwrap(),
+        6 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio6.clone_unchecked() })
+            .unwrap(),
+        7 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio7.clone_unchecked() })
+            .unwrap(),
+        8 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio8.clone_unchecked() })
+            .unwrap(),
+        9 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio9.clone_unchecked() })
+            .unwrap(),
+        10 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio10.clone_unchecked() })
+            .unwrap(),
+        11 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio11.clone_unchecked() })
+            .unwrap(),
+        12 => channel_b
+            .config_with_pin(unsafe { peripherals.pins.gpio12.clone_unchecked() })
+            .unwrap(),
+        _ => panic!("Invalid blue pin"),
     }
+
+    let max_duty = channel_a.get_max_duty();
+    // for numerator in [0, 1, 2, 3, 4, 5].iter().cycle() {
+    //     println!("Duty {numerator}/5");
+    //     channel_a.set_duty(max_duty * numerator / 5).unwrap();
+    //     channel_b.set_duty(max_duty * (5 - numerator) / 5).unwrap();
+    //     FreeRtos::delay_ms(50);
+    // }
+    let mut time: u64 = 0;
+    loop {
+        let BootConfigService {
+            mode,
+            speed,
+            switch_colors,
+            blue_brightness,
+            red_brightness,
+            red_pin,
+            blue_pin,
+        } = boot_config_service.lock().clone();
+        let (red, blue) = match switch_colors {
+            true => (&mut channel_a, &mut channel_b),
+            false => (&mut channel_b, &mut channel_a),
+        };
+
+        match mode {
+            0 => {
+                let numerator = (time % 6) as u32;
+                red.set_duty(max_duty * numerator / 5 * red_brightness as u32 / 255)
+                    .unwrap();
+                blue.set_duty(max_duty * numerator / 5 * blue_brightness as u32 / 255)
+                    .unwrap();
+            }
+            1 => {
+                let numerator = (time % (6)) as u32;
+                let state = numerator;
+                red.set_duty(0).unwrap();
+                match state {
+                    0 | 2 => {
+                        blue.set_duty(max_duty * blue_brightness as u32 / 255)
+                            .unwrap();
+                    }
+                    _ => {
+                        blue.set_duty(0).unwrap();
+                    }
+                }
+            }
+            2 => {
+                let numerator = (time % (10)) as u32;
+                let state = numerator;
+                red.set_duty(0).unwrap();
+                match state {
+                    5 | 7 => {
+                        red.set_duty(max_duty * blue_brightness as u32 / 255)
+                            .unwrap();
+                    }
+                    _ => {
+                        red.set_duty(0).unwrap();
+                    }
+                }
+                match state {
+                    0 | 2 => {
+                        blue.set_duty(max_duty * blue_brightness as u32 / 255)
+                            .unwrap();
+                    }
+                    _ => {
+                        blue.set_duty(0).unwrap();
+                    }
+                }
+            }
+            _ => {
+                red.set_duty(max_duty * red_brightness as u32 / 255)
+                    .unwrap();
+                blue.set_duty(max_duty * blue_brightness as u32 / 255)
+                    .unwrap();
+            }
+        }
+        time += 1;
+        FreeRtos::delay_ms(speed as u32);
+    }
+
+    // let mut ble_scan = BLEScan::new();
+    // ble_scan.active_scan(false).interval(100).window(99);
+
+    // loop {
+    //     task::block_on(async {
+    //         ble_scan
+    //             .start(ble_device, 1000, |dev, data| {
+    //                 if let Some(md) = data.manufacture_data() {
+    //                     cat_management_service
+    //                         .lock()
+    //                         .wasm_runner
+    //                         .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
+    //                             mac: dev.addr().as_be_bytes(),
+    //                             data: md.payload.into(),
+    //                         }))
+    //                         .expect("failed to send ble adv callback");
+    //                 }
+    //                 None::<()>
+    //             })
+    //             .await
+    //             .expect("scan failed");
+    //     });
+    // }
 }
