@@ -408,6 +408,26 @@ fn main() {
                     }
                 }
             }
+            3 => {
+                let numerator = (time % 20) as u32;
+                let value = if numerator > 10 {
+                    20 - numerator
+                } else {
+                    numerator
+                };
+                red.set_duty(max_duty * value / 10 * red_brightness as u32 / 255)
+                    .unwrap();
+                blue.set_duty(max_duty * (10 - value) / 10 * blue_brightness as u32 / 255)
+                    .unwrap();
+            }
+            4 => {
+                let numerator = (time % 10) as u32;
+                let numerator_b = ((time + 5) % 10) as u32;
+                red.set_duty(max_duty * numerator / 10 * red_brightness as u32 / 255)
+                    .unwrap();
+                blue.set_duty(max_duty * numerator_b / 10 * blue_brightness as u32 / 255)
+                    .unwrap();
+            }
             _ => {
                 red.set_duty(max_duty * red_brightness as u32 / 255)
                     .unwrap();
