@@ -3,7 +3,12 @@ mod rudel;
 pub use rudel::{
     export, exports,
     exports::rudel::base::run::Guest,
-    rudel::base::base::{has_host_base, log, sleep, time, yield_now, LogLevel},
+    rudel::base::base::{get_base_version, log, sleep, time, yield_now, LogLevel, SemanticVersion},
+    rudel::base::hardware::{
+        get_ambient_light, get_ambient_light_type, get_hardware_version, get_led_info,
+        get_vibration, get_vibration_sensor_type, led_count, set_leds, set_rgb, AmbientLightType,
+        LedColor, LedInfo, VibrationSensorType,
+    },
 };
 
 pub fn get_name() -> String {
