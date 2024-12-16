@@ -71,6 +71,41 @@ pub mod rudel {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
+            /// Get the version of the rudel base
+            ///
+            /// If your module requests newer versions of the modules than the host implements, it will attempt to link its old ones anyways and make them conforme to the requested signatures. You can use this function to get the actual version of the host functions.
+            ///
+            /// If your module requests older versions of the host modules, the host will link compatible functions if available, or abort during linking.
+            ///
+            /// The host will mock out all functions it can not link.
+            pub fn get_base_version() -> SemanticVersion {
+                unsafe {
+                    #[repr(align(1))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 3]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 3]);
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/base@0.0.1")]
+                    extern "C" {
+                        #[link_name = "get-base-version"]
+                        fn wit_import(_: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0);
+                    let l1 = i32::from(*ptr0.add(0).cast::<u8>());
+                    let l2 = i32::from(*ptr0.add(1).cast::<u8>());
+                    let l3 = i32::from(*ptr0.add(2).cast::<u8>());
+                    SemanticVersion {
+                        major: l1 as u8,
+                        minor: l2 as u8,
+                        patch: l3 as u8,
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
             /// You need to yield periodically, as the watchdog will kill you if you dont
             pub fn yield_now() {
                 unsafe {
@@ -120,58 +155,6 @@ pub mod rudel {
                     }
                     let ret = wit_import();
                     ret as u64
-                }
-            }
-            #[allow(unused_unsafe, clippy::all)]
-            pub fn has_host_base() -> bool {
-                unsafe {
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "rudel:base/base@0.0.1")]
-                    extern "C" {
-                        #[link_name = "has-host-base"]
-                        fn wit_import() -> i32;
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import() -> i32 {
-                        unreachable!()
-                    }
-                    let ret = wit_import();
-                    _rt::bool_lift(ret as u8)
-                }
-            }
-            #[allow(unused_unsafe, clippy::all)]
-            /// Get the version of the rudel base
-            ///
-            /// If your module requests newer versions of the modules than the host implements, it will attempt to link its old ones anyways and make them conforme to the requested signatures. You can use this function to get the actual version of the host functions.
-            ///
-            /// If your module requests older versions of the host modules, the host will link compatible functions if available, or abort during linking.
-            ///
-            /// The host will mock out all functions it can not link.
-            pub fn get_base_version() -> SemanticVersion {
-                unsafe {
-                    #[repr(align(1))]
-                    struct RetArea([::core::mem::MaybeUninit<u8>; 3]);
-                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 3]);
-                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
-                    #[cfg(target_arch = "wasm32")]
-                    #[link(wasm_import_module = "rudel:base/base@0.0.1")]
-                    extern "C" {
-                        #[link_name = "get-base-version"]
-                        fn wit_import(_: *mut u8);
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8) {
-                        unreachable!()
-                    }
-                    wit_import(ptr0);
-                    let l1 = i32::from(*ptr0.add(0).cast::<u8>());
-                    let l2 = i32::from(*ptr0.add(1).cast::<u8>());
-                    let l3 = i32::from(*ptr0.add(2).cast::<u8>());
-                    SemanticVersion {
-                        major: l1 as u8,
-                        minor: l2 as u8,
-                        patch: l3 as u8,
-                    }
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
@@ -273,6 +256,333 @@ pub mod rudel {
                 }
             }
         }
+        /// Use this interface to control the hardware
+        #[allow(dead_code, clippy::all)]
+        pub mod hardware {
+            use super::super::super::_rt;
+            pub type SemanticVersion = super::super::super::rudel::base::base::SemanticVersion;
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct LedColor {
+                pub red: u8,
+                pub green: u8,
+                pub blue: u8,
+            }
+            impl ::core::fmt::Debug for LedColor {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("LedColor")
+                        .field("red", &self.red)
+                        .field("green", &self.green)
+                        .field("blue", &self.blue)
+                        .finish()
+                }
+            }
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct LedInfo {
+                pub color: LedColor,
+                pub max_lux: u16,
+            }
+            impl ::core::fmt::Debug for LedInfo {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("LedInfo")
+                        .field("color", &self.color)
+                        .field("max-lux", &self.max_lux)
+                        .finish()
+                }
+            }
+            /// Information about the ambient light sensor.
+            ///
+            /// This could be extended in the future to indicate more types of sensors in future hardware revisions.
+            #[repr(u8)]
+            #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+            pub enum AmbientLightType {
+                None,
+                Basic,
+            }
+            impl ::core::fmt::Debug for AmbientLightType {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    match self {
+                        AmbientLightType::None => {
+                            f.debug_tuple("AmbientLightType::None").finish()
+                        }
+                        AmbientLightType::Basic => {
+                            f.debug_tuple("AmbientLightType::Basic").finish()
+                        }
+                    }
+                }
+            }
+            impl AmbientLightType {
+                #[doc(hidden)]
+                pub unsafe fn _lift(val: u8) -> AmbientLightType {
+                    if !cfg!(debug_assertions) {
+                        return ::core::mem::transmute(val);
+                    }
+                    match val {
+                        0 => AmbientLightType::None,
+                        1 => AmbientLightType::Basic,
+                        _ => panic!("invalid enum discriminant"),
+                    }
+                }
+            }
+            /// Information about the vibration sensor.
+            ///
+            /// This could be extended in the future to indicate more types of sensors in future hardware revisions.
+            #[repr(u8)]
+            #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+            pub enum VibrationSensorType {
+                None,
+                Basic,
+            }
+            impl ::core::fmt::Debug for VibrationSensorType {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    match self {
+                        VibrationSensorType::None => {
+                            f.debug_tuple("VibrationSensorType::None").finish()
+                        }
+                        VibrationSensorType::Basic => {
+                            f.debug_tuple("VibrationSensorType::Basic").finish()
+                        }
+                    }
+                }
+            }
+            impl VibrationSensorType {
+                #[doc(hidden)]
+                pub unsafe fn _lift(val: u8) -> VibrationSensorType {
+                    if !cfg!(debug_assertions) {
+                        return ::core::mem::transmute(val);
+                    }
+                    match val {
+                        0 => VibrationSensorType::None,
+                        1 => VibrationSensorType::Basic,
+                        _ => panic!("invalid enum discriminant"),
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Get the version of the hardware interface provided by the runtime.
+            ///
+            /// The rudelblinken runtime will mock out all functions the it can not link. If this function returns a version that is lower than the version you requested, you should probably not use any of the functions that are not available in that version.
+            pub fn get_hardware_version() -> SemanticVersion {
+                unsafe {
+                    #[repr(align(1))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 3]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 3]);
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
+                    extern "C" {
+                        #[link_name = "get-hardware-version"]
+                        fn wit_import(_: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0);
+                    let l1 = i32::from(*ptr0.add(0).cast::<u8>());
+                    let l2 = i32::from(*ptr0.add(1).cast::<u8>());
+                    let l3 = i32::from(*ptr0.add(2).cast::<u8>());
+                    super::super::super::rudel::base::base::SemanticVersion {
+                        major: l1 as u8,
+                        minor: l2 as u8,
+                        patch: l3 as u8,
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Lowlevel function to set the intensities of multiple LEDs
+            ///
+            /// The values are in lux in the main direction of the LED
+            ///
+            /// You should probably not use this function directly, but use a higher level abstraction instead
+            ///
+            /// The first-id is the index of the first LED to set. If the lux list is shorter than the number of LEDs, the remaining LEDs will not be modified. If the lux list is longer than the number of LEDs, the remaining values will be ignored.
+            pub fn set_leds(first_id: u16, lux: &[u16]) {
+                unsafe {
+                    let vec0 = lux;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
+                    extern "C" {
+                        #[link_name = "set-leds"]
+                        fn wit_import(_: i32, _: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32, _: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    wit_import(_rt::as_i32(&first_id), ptr0.cast_mut(), len0);
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Convenience function to set all LEDs
+            pub fn set_rgb(color: LedColor, lux: u32) {
+                unsafe {
+                    let LedColor { red: red0, green: green0, blue: blue0 } = color;
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
+                    extern "C" {
+                        #[link_name = "set-rgb"]
+                        fn wit_import(_: i32, _: i32, _: i32, _: i32);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32, _: i32, _: i32, _: i32) {
+                        unreachable!()
+                    }
+                    wit_import(
+                        _rt::as_i32(red0),
+                        _rt::as_i32(green0),
+                        _rt::as_i32(blue0),
+                        _rt::as_i32(&lux),
+                    );
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Get information about the number of LEDs
+            pub fn led_count() -> u32 {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
+                    extern "C" {
+                        #[link_name = "led-count"]
+                        fn wit_import() -> i32;
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import() -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import();
+                    ret as u32
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Get information about a specific LED
+            ///
+            /// If the id does not exist, the function will return a led-info with all values set to 0
+            pub fn get_led_info(id: u16) -> LedInfo {
+                unsafe {
+                    #[repr(align(2))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 6]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 6]);
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
+                    extern "C" {
+                        #[link_name = "get-led-info"]
+                        fn wit_import(_: i32, _: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32, _: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(_rt::as_i32(&id), ptr0);
+                    let l1 = i32::from(*ptr0.add(0).cast::<u8>());
+                    let l2 = i32::from(*ptr0.add(1).cast::<u8>());
+                    let l3 = i32::from(*ptr0.add(2).cast::<u8>());
+                    let l4 = i32::from(*ptr0.add(4).cast::<u16>());
+                    LedInfo {
+                        color: LedColor {
+                            red: l1 as u8,
+                            green: l2 as u8,
+                            blue: l3 as u8,
+                        },
+                        max_lux: l4 as u16,
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Information about the ambient light sensor.
+            ///
+            /// This could be extended in the future to indicate more types of sensors in future hardware revisions.
+            pub fn get_ambient_light_type() -> AmbientLightType {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
+                    extern "C" {
+                        #[link_name = "get-ambient-light-type"]
+                        fn wit_import() -> i32;
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import() -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import();
+                    AmbientLightType::_lift(ret as u8)
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Get the current ambient light level
+            ///
+            /// The value is in lux
+            pub fn get_ambient_light() -> u32 {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
+                    extern "C" {
+                        #[link_name = "get-ambient-light"]
+                        fn wit_import() -> i32;
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import() -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import();
+                    ret as u32
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Vibration sensor type.
+            pub fn get_vibration_sensor_type() -> VibrationSensorType {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
+                    extern "C" {
+                        #[link_name = "get-vibration-sensor-type"]
+                        fn wit_import() -> i32;
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import() -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import();
+                    VibrationSensorType::_lift(ret as u8)
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Get a measure of the vibration level
+            ///
+            /// TODO: Figure out what this should return
+            pub fn get_vibration() -> u32 {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
+                    extern "C" {
+                        #[link_name = "get-vibration"]
+                        fn wit_import() -> i32;
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import() -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import();
+                    ret as u32
+                }
+            }
+        }
     }
 }
 #[rustfmt::skip]
@@ -333,15 +643,63 @@ mod _rt {
             self as i64
         }
     }
-    pub unsafe fn bool_lift(val: u8) -> bool {
-        if cfg!(debug_assertions) {
-            match val {
-                0 => false,
-                1 => true,
-                _ => panic!("invalid bool discriminant"),
-            }
-        } else {
-            val != 0
+    pub fn as_i32<T: AsI32>(t: T) -> i32 {
+        t.as_i32()
+    }
+    pub trait AsI32 {
+        fn as_i32(self) -> i32;
+    }
+    impl<'a, T: Copy + AsI32> AsI32 for &'a T {
+        fn as_i32(self) -> i32 {
+            (*self).as_i32()
+        }
+    }
+    impl AsI32 for i32 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for u32 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for i16 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for u16 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for i8 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for u8 {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for char {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
+        }
+    }
+    impl AsI32 for usize {
+        #[inline]
+        fn as_i32(self) -> i32 {
+            self as i32
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -378,19 +736,29 @@ macro_rules! __export_rudel_impl {
         $($path_to_types_root)*:: exports::rudel::base::run); const _ : () = {
         #[cfg(target_arch = "wasm32")] #[link_section =
         "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel:imports and exports"]
-        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 493] = *
+        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 946] = *
         b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf1\x02\x01A\x02\x01\
-A\x04\x01B\x13\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb6\x06\x01A\x02\x01\
+A\x07\x01B\x11\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
-\0\x02\x01@\0\x01\0\x04\0\x09yield-now\x01\x04\x01@\x01\x06microsw\x01\0\x04\0\x05\
-sleep\x01\x05\x01@\0\0w\x04\0\x04time\x01\x06\x01@\0\0\x7f\x04\0\x0dhas-host-bas\
-e\x01\x07\x01@\0\0\x01\x04\0\x10get-base-version\x01\x08\x01@\x02\x05level\x03\x07\
-messages\x01\0\x04\0\x03log\x01\x09\x01o\x10}}}}}}}}}}}}}}}}\x01@\0\0\x0a\x04\0\x08\
-get-name\x01\x0b\x03\0\x15rudel:base/base@0.0.1\x05\0\x01B\x02\x01@\0\x01\0\x04\0\
-\x03run\x01\0\x04\0\x14rudel:base/run@0.0.1\x05\x01\x04\0\x16rudel:base/rudel@0.\
-0.1\x04\0\x0b\x0b\x01\0\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\
-\x0dwit-component\x070.220.0\x10wit-bindgen-rust\x060.36.0";
+\0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\0\x01\0\x04\0\x09yiel\
+d-now\x01\x05\x01@\x01\x06microsw\x01\0\x04\0\x05sleep\x01\x06\x01@\0\0w\x04\0\x04\
+time\x01\x07\x01@\x02\x05level\x03\x07messages\x01\0\x04\0\x03log\x01\x08\x01o\x10\
+}}}}}}}}}}}}}}}}\x01@\0\0\x09\x04\0\x08get-name\x01\x0a\x03\0\x15rudel:base/base\
+@0.0.1\x05\0\x02\x03\0\0\x10semantic-version\x01B\x1b\x02\x03\x02\x01\x01\x04\0\x10\
+semantic-version\x03\0\0\x01r\x03\x03red}\x05green}\x04blue}\x04\0\x09led-color\x03\
+\0\x02\x01r\x02\x05color\x03\x07max-lux{\x04\0\x08led-info\x03\0\x04\x01m\x02\x04\
+none\x05basic\x04\0\x12ambient-light-type\x03\0\x06\x01m\x02\x04none\x05basic\x04\
+\0\x15vibration-sensor-type\x03\0\x08\x01@\0\0\x01\x04\0\x14get-hardware-version\
+\x01\x0a\x01p{\x01@\x02\x08first-id{\x03lux\x0b\x01\0\x04\0\x08set-leds\x01\x0c\x01\
+@\x02\x05color\x03\x03luxy\x01\0\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led\
+-count\x01\x0e\x01@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\
+\0\x16get-ambient-light-type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\
+\x09\x04\0\x19get-vibration-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\
+\0\x19rudel:base/hardware@0.0.1\x05\x02\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\0\
+\x04\0\x14rudel:base/run@0.0.1\x05\x03\x04\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\
+\x0b\x01\0\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-compo\
+nent\x070.220.0\x10wit-bindgen-rust\x060.36.0";
         };
     };
 }
@@ -399,15 +767,25 @@ pub use __export_rudel_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel-with-all-of-its-exports-removed:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 516] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xe8\x02\x01A\x02\x01\
-A\x02\x01B\x13\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 969] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xad\x06\x01A\x02\x01\
+A\x05\x01B\x11\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
-\0\x02\x01@\0\x01\0\x04\0\x09yield-now\x01\x04\x01@\x01\x06microsw\x01\0\x04\0\x05\
-sleep\x01\x05\x01@\0\0w\x04\0\x04time\x01\x06\x01@\0\0\x7f\x04\0\x0dhas-host-bas\
-e\x01\x07\x01@\0\0\x01\x04\0\x10get-base-version\x01\x08\x01@\x02\x05level\x03\x07\
-messages\x01\0\x04\0\x03log\x01\x09\x01o\x10}}}}}}}}}}}}}}}}\x01@\0\0\x0a\x04\0\x08\
-get-name\x01\x0b\x03\0\x15rudel:base/base@0.0.1\x05\0\x04\06rudel:base/rudel-wit\
-h-all-of-its-exports-removed@0.0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-export\
-s-removed\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.\
-220.0\x10wit-bindgen-rust\x060.36.0";
+\0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\0\x01\0\x04\0\x09yiel\
+d-now\x01\x05\x01@\x01\x06microsw\x01\0\x04\0\x05sleep\x01\x06\x01@\0\0w\x04\0\x04\
+time\x01\x07\x01@\x02\x05level\x03\x07messages\x01\0\x04\0\x03log\x01\x08\x01o\x10\
+}}}}}}}}}}}}}}}}\x01@\0\0\x09\x04\0\x08get-name\x01\x0a\x03\0\x15rudel:base/base\
+@0.0.1\x05\0\x02\x03\0\0\x10semantic-version\x01B\x1b\x02\x03\x02\x01\x01\x04\0\x10\
+semantic-version\x03\0\0\x01r\x03\x03red}\x05green}\x04blue}\x04\0\x09led-color\x03\
+\0\x02\x01r\x02\x05color\x03\x07max-lux{\x04\0\x08led-info\x03\0\x04\x01m\x02\x04\
+none\x05basic\x04\0\x12ambient-light-type\x03\0\x06\x01m\x02\x04none\x05basic\x04\
+\0\x15vibration-sensor-type\x03\0\x08\x01@\0\0\x01\x04\0\x14get-hardware-version\
+\x01\x0a\x01p{\x01@\x02\x08first-id{\x03lux\x0b\x01\0\x04\0\x08set-leds\x01\x0c\x01\
+@\x02\x05color\x03\x03luxy\x01\0\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led\
+-count\x01\x0e\x01@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\
+\0\x16get-ambient-light-type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\
+\x09\x04\0\x19get-vibration-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\
+\0\x19rudel:base/hardware@0.0.1\x05\x02\x04\06rudel:base/rudel-with-all-of-its-e\
+xports-removed@0.0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-exports-removed\x03\0\
+\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bi\
+ndgen-rust\x060.36.0";
