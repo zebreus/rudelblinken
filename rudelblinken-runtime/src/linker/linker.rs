@@ -87,8 +87,8 @@ pub fn link_base<T: Host>(
     linker: &mut Linker<T>,
     mut store: &mut Store<T>,
 ) -> Result<(), wasmi::Error> {
-    // __attribute__((__import_module__("rudel:base/hardware@0.0.1"), __import_name__("get-hardware-version")))
-    // extern void __wasm_import_rudel_base_hardware_get_hardware_version(uint8_t *);
+    // __attribute__((__import_module__("rudel:base/base@0.0.1"), __import_name__("get-base-version")))
+    // extern void __wasm_import_rudel_base_base_get_base_version(uint8_t *);
     link_function(
         linker,
         "rudel:base/base",
@@ -255,7 +255,7 @@ pub fn link_hardware<T: Host>(
     link_function(
         linker,
         "rudel:base/hardware",
-        "set-leds",
+        "set-rgb",
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>,
@@ -293,7 +293,7 @@ pub fn link_hardware<T: Host>(
     link_function(
         linker,
         "rudel:base/hardware",
-        "get-hardware-version",
+        "get-led-info",
         Func::wrap(
             &mut store,
             |mut caller: Caller<'_, T>, id: i32, offset: i32| -> Result<(), wasmi::Error> {
