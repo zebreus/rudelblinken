@@ -1,7 +1,7 @@
 use rudelblinken_sdk::{
     export,
     exports::{self},
-    get_name, led_count, log, sleep, time, yield_now, Advertisment, BleGuest, Guest, LogLevel,
+    get_name, led_count, log, sleep, time, yield_now, Advertisement, BleGuest, Guest, LogLevel,
 };
 use talc::{ClaimOnOom, Span, Talc, Talck};
 
@@ -48,18 +48,18 @@ impl Guest for Test {
 }
 
 impl BleGuest for Test {
-    fn on_advertisment(advertisment: Advertisment) {
+    fn on_advertisement(advertisement: Advertisement) {
         log(
             LogLevel::Debug,
-            format!("Received advertisment at: {}", advertisment.received_at).as_str(),
+            format!("Received advertisement at: {}", advertisement.received_at).as_str(),
         );
         log(
             LogLevel::Debug,
-            format!("Address bytes: {:?}", advertisment.get_address()).as_str(),
+            format!("Address bytes: {:?}", advertisement.get_address()).as_str(),
         );
         log(
             LogLevel::Debug,
-            format!("Data bytes: {:?}", advertisment.get_data()).as_str(),
+            format!("Data bytes: {:?}", advertisement.get_data()).as_str(),
         );
     }
 }

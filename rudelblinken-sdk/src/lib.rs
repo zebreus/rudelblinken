@@ -3,12 +3,12 @@
 mod rudel;
 pub use rudel::{
     export, exports,
-    exports::rudel::base::ble_guest::{Advertisment, Guest as BleGuest},
+    exports::rudel::base::ble_guest::{Advertisement, Guest as BleGuest},
     exports::rudel::base::run::Guest,
     rudel::base::base::{get_base_version, log, sleep, time, yield_now, LogLevel, SemanticVersion},
     rudel::base::ble::{
-        configure_advertisment, get_ble_version, set_advertisment_data, AdvertismentData,
-        AdvertismentSettings,
+        configure_advertisement, get_ble_version, set_advertisement_data, AdvertisementData,
+        AdvertisementSettings,
     },
     rudel::base::hardware::{
         get_ambient_light, get_ambient_light_type, get_hardware_version, get_led_info,
@@ -33,7 +33,7 @@ pub fn get_name() -> String {
     String::from_utf8_lossy(array).to_string()
 }
 
-impl exports::rudel::base::ble_guest::Advertisment {
+impl exports::rudel::base::ble_guest::Advertisement {
     /// Get the manufacturer data as a byte array.
     ///
     /// Only the first self.data_length bytes are valid. You should probably use `get_data` instead.

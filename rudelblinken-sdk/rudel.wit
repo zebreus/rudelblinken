@@ -181,29 +181,29 @@ interface ble {
     @since(version = 0.0.1)
     get-ble-version: func() -> semantic-version;
 
-    /// Configure the BLE advertisments
+    /// Configure the BLE advertisements
     @since(version = 0.0.1)
-    record advertisment-settings {
+    record advertisement-settings {
         min-interval: u16,
         max-interval: u16,
     }
-    /// The data to be sent in the advertisment
+    /// The data to be sent in the advertisement
     /// 
     /// Up to 32 bytes of data
     @since(version = 0.0.1)
-    type advertisment-data = list<u8>;
+    type advertisement-data = list<u8>;
 
     @since(version = 0.0.1)
-    configure-advertisment: func(settings: advertisment-settings) -> ();
+    configure-advertisement: func(settings: advertisement-settings) -> ();
     @since(version = 0.0.1)
-    set-advertisment-data: func(data: advertisment-data) -> ();
+    set-advertisement-data: func(data: advertisement-data) -> ();
 }
 
 
 @since(version = 0.0.1)
 interface ble-guest {
     @since(version = 0.0.1)
-    record advertisment {
+    record advertisement {
         address: u64,
         // 32 byte of data
         data: tuple<u32, u32, u32, u32, u32, u32, u32, u32>,
@@ -217,5 +217,5 @@ interface ble-guest {
     /// The rudelblinken runtime will mock out all functions the it can not link.
     /// If this function returns false you should not use any of the other functions
     @since(version = 0.0.1)
-    on-advertisment: func(advertisment: advertisment) -> ();
+    on-advertisement: func(advertisement: advertisement) -> ();
 }
