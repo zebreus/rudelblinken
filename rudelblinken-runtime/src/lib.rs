@@ -35,7 +35,7 @@ mod tests {
     fn can_execute_helloworld() {
         let module_bytes = std::fs::read("../wasm-binaries/binaries/hello_world.wasm").unwrap();
 
-        let host = EmulatedHost::new();
+        let (_, host) = EmulatedHost::new();
         let mut instance = setup(&module_bytes, host).unwrap();
         instance.run().unwrap();
     }
@@ -44,7 +44,7 @@ mod tests {
     fn logging_works() {
         let module_bytes = std::fs::read("../wasm-binaries/binaries/test_logging.wasm").unwrap();
 
-        let host = EmulatedHost::new();
+        let (_, host) = EmulatedHost::new();
         let mut instance = setup(&module_bytes, host).unwrap();
         instance.run().unwrap();
     }
@@ -53,7 +53,7 @@ mod tests {
     fn infinite_loop_gets_killed() {
         let module_bytes = std::fs::read("../wasm-binaries/binaries/infinite_loop.wasm").unwrap();
 
-        let host = EmulatedHost::new();
+        let (_, host) = EmulatedHost::new();
         let mut instance = setup(&module_bytes, host).unwrap();
         let error: wasmi::Error = instance.run().unwrap_err();
         assert_eq!(

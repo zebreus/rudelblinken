@@ -1,5 +1,5 @@
-mod glue;
-mod linker;
+pub mod glue;
+pub mod linker;
 
 use crate::host::Host;
 use linker::{link_base, link_hardware};

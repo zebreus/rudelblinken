@@ -1,7 +1,90 @@
-use crate::host::{Host, LedColor, LedInfo, LogLevel, SemanticVersion};
+use crate::host::{Advertisement, Host, LedColor, LedInfo, LogLevel, SemanticVersion};
 use wasmi::{Caller, Extern, Func, Linker, Memory, Store};
 
 use super::glue;
+
+#[repr(transparent)]
+pub struct WrappedCaller<'a, T: Host + Sized>(Caller<'a, T>);
+
+impl<'a, T: Host> WrappedCaller<'a, T> {
+    pub fn new(caller: Caller<'a, T>) -> WrappedCaller<'a, T> {
+        return WrappedCaller(caller);
+    }
+    pub fn into_inner(self) -> Caller<'a, T> {
+        return self.0;
+    }
+    pub fn data(&self) -> &T {
+        return self.0.data();
+    }
+    pub fn data_mut(&mut self) -> &mut T {
+        return self.0.data_mut();
+    }
+
+    pub fn run(&mut self) -> Result<(), wasmi::Error> {
+        let Some(run) = self.0.get_export("rudel:base/run@0.0.1#run") else {
+            return Err(wasmi::Error::new("run not found"));
+        };
+        let Extern::Func(run) = run else {
+            return Err(wasmi::Error::new("run is not a function"));
+        };
+        let Ok(run) = run.typed::<(), ()>(&self.0) else {
+            return Err(wasmi::Error::new(
+                "run does not have a matching function signature",
+            ));
+        };
+        run.call(&mut self.0, ())?;
+        return Ok(());
+    }
+    pub fn on_advertisement(&mut self, advertisement: Advertisement) -> Result<(), wasmi::Error> {
+        let Some(run) = self
+            .0
+            .get_export("rudel:base/ble-guest@0.0.1#on-advertisement")
+        else {
+            return Err(wasmi::Error::new("on-advertisement not found"));
+        };
+        let Extern::Func(run) = run else {
+            return Err(wasmi::Error::new("on-advertisement is not a function"));
+        };
+        let Ok(run) =
+            run.typed::<(u64, u32, u32, u32, u32, u32, u32, u32, u32, u32, u64), ()>(&self.0)
+        else {
+            return Err(wasmi::Error::new(
+                "on-advertisement does not have a matching function signature",
+            ));
+        };
+
+        let address = u64::from_le_bytes(advertisement.address);
+        let data = unsafe { std::mem::transmute::<[u8; 32], [u32; 8]>(advertisement.data) };
+        run.call(
+            &mut self.0,
+            (
+                address,
+                data[0],
+                data[1],
+                data[2],
+                data[3],
+                data[4],
+                data[5],
+                data[6],
+                data[7],
+                advertisement.data_length as u32,
+                advertisement.received_at,
+            ),
+        )?;
+        return Ok(());
+    }
+}
+
+impl<'a, T: Host> AsRef<Caller<'a, T>> for WrappedCaller<'a, T> {
+    fn as_ref(&self) -> &Caller<'a, T> {
+        return &self.0;
+    }
+}
+impl<'a, T: Host> AsMut<Caller<'a, T>> for WrappedCaller<'a, T> {
+    fn as_mut(&mut self) -> &mut Caller<'a, T> {
+        return &mut self.0;
+    }
+}
 
 fn get_memory<'a, T: Host>(caller: &Caller<'a, T>) -> Result<Memory, wasmi::Error> {
     match caller.get_export("memory") {
@@ -95,9 +178,10 @@ pub fn link_base<T: Host>(
         "get-base-version",
         Func::wrap(
             &mut store,
-            |mut caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
-                let memory = get_memory(&caller)?;
-                let slice = get_mut_slice(&memory, &mut caller, offset, 4)?;
+            |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
+                let mut caller = WrappedCaller(caller);
+                let memory = get_memory(caller.as_ref())?;
+                let slice = get_mut_slice(&memory, caller.as_mut(), offset, 4)?;
                 // SAFETY: Should be safe because the layout should match
                 let version = unsafe {
                     std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())
@@ -119,6 +203,7 @@ pub fn link_base<T: Host>(
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>| -> Result<(), wasmi::Error> {
+                let caller = WrappedCaller(caller);
                 return glue::yield_now(caller);
             },
         ),
@@ -133,6 +218,7 @@ pub fn link_base<T: Host>(
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>, micros: u64| -> Result<(), wasmi::Error> {
+                let caller = WrappedCaller(caller);
                 return glue::sleep(caller, micros);
             },
         ),
@@ -147,6 +233,7 @@ pub fn link_base<T: Host>(
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>| -> Result<u64, wasmi::Error> {
+                let caller = WrappedCaller(caller);
                 return glue::time(caller);
             },
         ),
@@ -165,10 +252,12 @@ pub fn link_base<T: Host>(
              message_offset: i32,
              message_length: i32|
              -> Result<(), wasmi::Error> {
+                let caller = WrappedCaller(caller);
+
                 let log_level = LogLevel::lift(level);
 
-                let memory = get_memory(&caller)?;
-                let data = get_slice(&memory, &caller, message_offset, message_length)?;
+                let memory = get_memory(caller.as_ref())?;
+                let data = get_slice(&memory, caller.as_ref(), message_offset, message_length)?;
                 let message = match std::str::from_utf8(data) {
                     Ok(s) => s,
                     Err(_) => return Err(wasmi::Error::new("invalid utf-8")),
@@ -186,9 +275,10 @@ pub fn link_base<T: Host>(
         "get-name",
         Func::wrap(
             &mut store,
-            |mut caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
-                let memory = get_memory(&caller)?;
-                let data = get_mut_array::<T, 16>(&memory, &mut caller, offset)?;
+            |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
+                let mut caller = WrappedCaller(caller);
+                let memory = get_memory(caller.as_ref())?;
+                let data = get_mut_array::<T, 16>(&memory, caller.as_mut(), offset)?;
                 return glue::get_name(caller, data);
             },
         ),
@@ -212,9 +302,10 @@ pub fn link_hardware<T: Host>(
         "get-hardware-version",
         Func::wrap(
             &mut store,
-            |mut caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
-                let memory = get_memory(&caller)?;
-                let slice = get_mut_slice(&memory, &mut caller, offset, 4)?;
+            |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
+                let mut caller = WrappedCaller(caller);
+                let memory = get_memory(caller.as_ref())?;
+                let slice = get_mut_slice(&memory, caller.as_mut(), offset, 4)?;
                 // SAFETY: Should be safe because the layout should match
                 let version = unsafe {
                     std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())
@@ -235,14 +326,16 @@ pub fn link_hardware<T: Host>(
         "set-leds",
         Func::wrap(
             &mut store,
-            |mut caller: Caller<'_, T>, offset: i32, length: i32| -> Result<(), wasmi::Error> {
-                let memory = get_memory(&caller)?;
-                let slice = get_slice(&memory, &mut caller, offset, length * 2)?;
+            |caller: Caller<'_, T>, offset: i32, length: i32| -> Result<(), wasmi::Error> {
+                let mut caller = WrappedCaller(caller);
+                let memory = get_memory(caller.as_ref())?;
+                let slice = get_slice(&memory, caller.as_mut(), offset, length * 2)?;
                 // SAFETY: Should be safe because the layout should match
                 let led_values =
                     unsafe { std::mem::transmute::<*const u8, *const u16>(slice.as_ptr()) };
                 let values_slice =
                     unsafe { std::slice::from_raw_parts(led_values, length as usize) };
+
                 glue::set_leds(caller, values_slice)?;
 
                 return Ok(());
@@ -264,11 +357,13 @@ pub fn link_hardware<T: Host>(
              blue: i32,
              lux: i32|
              -> Result<(), wasmi::Error> {
+                let caller = WrappedCaller(caller);
                 let color = LedColor {
                     red: red.to_le_bytes()[0],
                     green: green.to_le_bytes()[0],
                     blue: blue.to_le_bytes()[0],
                 };
+
                 return glue::set_rgb(caller, &color, lux as u32);
             },
         ),
@@ -283,6 +378,7 @@ pub fn link_hardware<T: Host>(
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
+                let caller = WrappedCaller(caller);
                 return glue::led_count(caller).map(|result| result as i32);
             },
         ),
@@ -296,9 +392,10 @@ pub fn link_hardware<T: Host>(
         "get-led-info",
         Func::wrap(
             &mut store,
-            |mut caller: Caller<'_, T>, id: i32, offset: i32| -> Result<(), wasmi::Error> {
-                let memory = get_memory(&caller)?;
-                let slice = get_mut_slice(&memory, &mut caller, offset, 6)?;
+            |caller: Caller<'_, T>, id: i32, offset: i32| -> Result<(), wasmi::Error> {
+                let mut caller = WrappedCaller(caller);
+                let memory = get_memory(caller.as_ref())?;
+                let slice = get_mut_slice(&memory, caller.as_mut(), offset, 6)?;
                 // Layout in memory is
                 // 0: red
                 // 1: green
@@ -324,6 +421,7 @@ pub fn link_hardware<T: Host>(
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
+                let caller = WrappedCaller(caller);
                 return glue::get_ambient_light_type(caller).map(|result| result.lower());
             },
         ),
@@ -338,6 +436,7 @@ pub fn link_hardware<T: Host>(
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
+                let caller = WrappedCaller(caller);
                 return glue::get_ambient_light(caller).map(|result| result as i32);
             },
         ),
@@ -352,6 +451,7 @@ pub fn link_hardware<T: Host>(
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
+                let caller = WrappedCaller(caller);
                 return glue::get_vibration_sensor_type(caller).map(|result| result.lower());
             },
         ),
@@ -366,6 +466,7 @@ pub fn link_hardware<T: Host>(
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
+                let caller = WrappedCaller(caller);
                 return glue::get_vibration(caller).map(|result| result as i32);
             },
         ),

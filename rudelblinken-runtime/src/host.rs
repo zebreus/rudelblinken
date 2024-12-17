@@ -1,3 +1,5 @@
+use crate::linker::linker::WrappedCaller;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(i32)]
 pub enum LogLevel {
@@ -112,31 +114,60 @@ impl VibrationSensorType {
     }
 }
 
-pub trait Host {
+#[repr(C, align(4))]
+#[derive(Clone, Copy)]
+pub struct Advertisement {
+    pub address: [u8; 8],
+    /// 32 byte of data
+    pub data: [u8; 32],
+    /// how many of the data bytes are actually used
+    pub data_length: u8,
+    pub received_at: u64,
+}
+
+pub enum Event {
+    AdvertisementReceived(Advertisement),
+}
+
+pub trait Host
+where
+    Self: Sized,
+{
     #[doc = "You need to yield periodically, as the watchdog will kill you if you dont"]
-    fn yield_now(&mut self) -> Result<(), wasmi::Error>;
+    fn yield_now(context: &mut WrappedCaller<'_, Self>) -> Result<(), wasmi::Error>;
     #[doc = " Sleep for a given amount of time."]
-    fn sleep(&mut self, micros: u64) -> Result<(), wasmi::Error>;
+    fn sleep(context: &mut WrappedCaller<'_, Self>, micros: u64) -> Result<(), wasmi::Error>;
 
     #[doc = " Returns the number of microseconds that have passed since boot"]
-    fn time(&mut self) -> Result<u64, wasmi::Error>;
+    fn time(context: &mut WrappedCaller<'_, Self>) -> Result<u64, wasmi::Error>;
 
     #[doc = " Log a message"]
-    fn log(&mut self, level: LogLevel, message: &str) -> Result<(), wasmi::Error>;
+    fn log(
+        context: &mut WrappedCaller<'_, Self>,
+        level: LogLevel,
+        message: &str,
+    ) -> Result<(), wasmi::Error>;
 
     #[doc = " The name for this host. You can assume that this is unique"]
-    fn get_name(&self) -> Result<String, wasmi::Error>;
+    fn get_name(context: &mut WrappedCaller<'_, Self>) -> Result<String, wasmi::Error>;
 
-    fn set_leds(&mut self, lux: &[u16]) -> Result<(), wasmi::Error>;
-    fn set_rgb(&mut self, color: &LedColor, lux: u32) -> Result<(), wasmi::Error>;
-    fn led_count(&mut self) -> Result<u16, wasmi::Error>;
-    fn get_led_info(&mut self, id: u16) -> Result<LedInfo, wasmi::Error>;
+    fn set_leds(context: &mut WrappedCaller<'_, Self>, lux: &[u16]) -> Result<(), wasmi::Error>;
+    fn set_rgb(
+        context: &mut WrappedCaller<'_, Self>,
+        color: &LedColor,
+        lux: u32,
+    ) -> Result<(), wasmi::Error>;
+    fn led_count(context: &mut WrappedCaller<'_, Self>) -> Result<u16, wasmi::Error>;
+    fn get_led_info(
+        context: &mut WrappedCaller<'_, Self>,
+        id: u16,
+    ) -> Result<LedInfo, wasmi::Error>;
 
     /// Check if this board has an ambient light sensor
-    fn has_ambient_light(&mut self) -> Result<bool, wasmi::Error>;
+    fn has_ambient_light(context: &mut WrappedCaller<'_, Self>) -> Result<bool, wasmi::Error>;
     /// Get the ambient light in lux
-    fn get_ambient_light(&mut self) -> Result<u32, wasmi::Error>;
+    fn get_ambient_light(context: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error>;
 
-    fn has_vibration_sensor(&mut self) -> Result<bool, wasmi::Error>;
-    fn get_vibration(&mut self) -> Result<u32, wasmi::Error>;
+    fn has_vibration_sensor(context: &mut WrappedCaller<'_, Self>) -> Result<bool, wasmi::Error>;
+    fn get_vibration(context: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error>;
 }
