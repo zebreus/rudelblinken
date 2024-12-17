@@ -583,6 +583,104 @@ pub mod rudel {
                 }
             }
         }
+        /// Control ble stuff
+        #[allow(dead_code, clippy::all)]
+        pub mod ble {
+            use super::super::super::_rt;
+            pub type SemanticVersion = super::super::super::rudel::base::base::SemanticVersion;
+            /// Configure the BLE advertisments
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct AdvertismentSettings {
+                pub min_interval: u16,
+                pub max_interval: u16,
+            }
+            impl ::core::fmt::Debug for AdvertismentSettings {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("AdvertismentSettings")
+                        .field("min-interval", &self.min_interval)
+                        .field("max-interval", &self.max_interval)
+                        .finish()
+                }
+            }
+            /// The data to be sent in the advertisment
+            ///
+            /// Up to 32 bytes of data
+            pub type AdvertismentData = _rt::Vec<u8>;
+            #[allow(unused_unsafe, clippy::all)]
+            /// Get the version of the hardware interface provided by the runtime.
+            ///
+            /// The rudelblinken runtime will mock out all functions the it can not link. If this function returns a version that is lower than the version you requested, you should probably not use any of the functions that are not available in that version.
+            pub fn get_ble_version() -> SemanticVersion {
+                unsafe {
+                    #[repr(align(1))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 3]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 3]);
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/ble@0.0.1")]
+                    extern "C" {
+                        #[link_name = "get-ble-version"]
+                        fn wit_import(_: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0);
+                    let l1 = i32::from(*ptr0.add(0).cast::<u8>());
+                    let l2 = i32::from(*ptr0.add(1).cast::<u8>());
+                    let l3 = i32::from(*ptr0.add(2).cast::<u8>());
+                    super::super::super::rudel::base::base::SemanticVersion {
+                        major: l1 as u8,
+                        minor: l2 as u8,
+                        patch: l3 as u8,
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn configure_advertisment(settings: AdvertismentSettings) {
+                unsafe {
+                    let AdvertismentSettings {
+                        min_interval: min_interval0,
+                        max_interval: max_interval0,
+                    } = settings;
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/ble@0.0.1")]
+                    extern "C" {
+                        #[link_name = "configure-advertisment"]
+                        fn wit_import(_: i32, _: i32);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32, _: i32) {
+                        unreachable!()
+                    }
+                    wit_import(_rt::as_i32(min_interval0), _rt::as_i32(max_interval0));
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            pub fn set_advertisment_data(data: &AdvertismentData) {
+                unsafe {
+                    let vec0 = data;
+                    let ptr0 = vec0.as_ptr().cast::<u8>();
+                    let len0 = vec0.len();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/ble@0.0.1")]
+                    extern "C" {
+                        #[link_name = "set-advertisment-data"]
+                        fn wit_import(_: *mut u8, _: usize);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8, _: usize) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0.cast_mut(), len0);
+                }
+            }
+        }
     }
 }
 #[rustfmt::skip]
@@ -590,6 +688,87 @@ pub mod rudel {
 pub mod exports {
     pub mod rudel {
         pub mod base {
+            #[allow(dead_code, clippy::all)]
+            pub mod ble_guest {
+                use super::super::super::super::_rt;
+                #[repr(C)]
+                #[derive(Clone, Copy)]
+                pub struct Advertisment {
+                    pub address: u64,
+                    /// 32 byte of data
+                    pub data: (u32, u32, u32, u32, u32, u32, u32, u32),
+                    /// how many of the data bytes are actually used
+                    pub data_length: u8,
+                    pub received_at: u64,
+                }
+                impl ::core::fmt::Debug for Advertisment {
+                    fn fmt(
+                        &self,
+                        f: &mut ::core::fmt::Formatter<'_>,
+                    ) -> ::core::fmt::Result {
+                        f.debug_struct("Advertisment")
+                            .field("address", &self.address)
+                            .field("data", &self.data)
+                            .field("data-length", &self.data_length)
+                            .field("received-at", &self.received_at)
+                            .finish()
+                    }
+                }
+                #[doc(hidden)]
+                #[allow(non_snake_case)]
+                pub unsafe fn _export_on_advertisment_cabi<T: Guest>(
+                    arg0: i64,
+                    arg1: i32,
+                    arg2: i32,
+                    arg3: i32,
+                    arg4: i32,
+                    arg5: i32,
+                    arg6: i32,
+                    arg7: i32,
+                    arg8: i32,
+                    arg9: i32,
+                    arg10: i64,
+                ) {
+                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
+                    T::on_advertisment(Advertisment {
+                        address: arg0 as u64,
+                        data: (
+                            arg1 as u32,
+                            arg2 as u32,
+                            arg3 as u32,
+                            arg4 as u32,
+                            arg5 as u32,
+                            arg6 as u32,
+                            arg7 as u32,
+                            arg8 as u32,
+                        ),
+                        data_length: arg9 as u8,
+                        received_at: arg10 as u64,
+                    });
+                }
+                pub trait Guest {
+                    /// Check if the ble module is implemented
+                    ///
+                    /// The rudelblinken runtime will mock out all functions the it can not link.
+                    /// If this function returns false you should not use any of the other functions
+                    fn on_advertisment(advertisment: Advertisment);
+                }
+                #[doc(hidden)]
+                #[macro_export]
+                macro_rules! __export_rudel_base_ble_guest_0_0_1_cabi {
+                    ($ty:ident with_types_in $($path_to_types:tt)*) => {
+                        const _ : () = { #[export_name =
+                        "rudel:base/ble-guest@0.0.1#on-advertisment"] unsafe extern "C"
+                        fn export_on_advertisment(arg0 : i64, arg1 : i32, arg2 : i32,
+                        arg3 : i32, arg4 : i32, arg5 : i32, arg6 : i32, arg7 : i32, arg8
+                        : i32, arg9 : i32, arg10 : i64,) { $($path_to_types)*::
+                        _export_on_advertisment_cabi::<$ty > (arg0, arg1, arg2, arg3,
+                        arg4, arg5, arg6, arg7, arg8, arg9, arg10) } };
+                    };
+                }
+                #[doc(hidden)]
+                pub use __export_rudel_base_ble_guest_0_0_1_cabi;
+            }
             #[allow(dead_code, clippy::all)]
             pub mod run {
                 use super::super::super::super::_rt;
@@ -702,10 +881,12 @@ mod _rt {
             self as i32
         }
     }
+    pub use alloc_crate::vec::Vec;
     #[cfg(target_arch = "wasm32")]
     pub fn run_ctors_once() {
         wit_bindgen::rt::run_ctors_once();
     }
+    extern crate alloc as alloc_crate;
 }
 /// Generates `#[no_mangle]` functions to export the specified type as the
 /// root implementation of all generated traits.
@@ -732,13 +913,54 @@ macro_rules! __export_rudel_impl {
     };
     ($ty:ident with_types_in $($path_to_types_root:tt)*) => {
         $($path_to_types_root)*::
+        exports::rudel::base::ble_guest::__export_rudel_base_ble_guest_0_0_1_cabi!($ty
+        with_types_in $($path_to_types_root)*:: exports::rudel::base::ble_guest);
+        $($path_to_types_root)*::
         exports::rudel::base::run::__export_rudel_base_run_0_0_1_cabi!($ty with_types_in
         $($path_to_types_root)*:: exports::rudel::base::run); const _ : () = {
         #[cfg(target_arch = "wasm32")] #[link_section =
         "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel:imports and exports"]
-        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 946] = *
+        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 1335] = *
         b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb6\x06\x01A\x02\x01\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xbb\x09\x01A\x02\x01\
+A\x0b\x01B\x11\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
+\0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
+\0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\0\x01\0\x04\0\x09yiel\
+d-now\x01\x05\x01@\x01\x06microsw\x01\0\x04\0\x05sleep\x01\x06\x01@\0\0w\x04\0\x04\
+time\x01\x07\x01@\x02\x05level\x03\x07messages\x01\0\x04\0\x03log\x01\x08\x01o\x10\
+}}}}}}}}}}}}}}}}\x01@\0\0\x09\x04\0\x08get-name\x01\x0a\x03\0\x15rudel:base/base\
+@0.0.1\x05\0\x02\x03\0\0\x10semantic-version\x01B\x1b\x02\x03\x02\x01\x01\x04\0\x10\
+semantic-version\x03\0\0\x01r\x03\x03red}\x05green}\x04blue}\x04\0\x09led-color\x03\
+\0\x02\x01r\x02\x05color\x03\x07max-lux{\x04\0\x08led-info\x03\0\x04\x01m\x02\x04\
+none\x05basic\x04\0\x12ambient-light-type\x03\0\x06\x01m\x02\x04none\x05basic\x04\
+\0\x15vibration-sensor-type\x03\0\x08\x01@\0\0\x01\x04\0\x14get-hardware-version\
+\x01\x0a\x01p{\x01@\x02\x08first-id{\x03lux\x0b\x01\0\x04\0\x08set-leds\x01\x0c\x01\
+@\x02\x05color\x03\x03luxy\x01\0\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led\
+-count\x01\x0e\x01@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\
+\0\x16get-ambient-light-type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\
+\x09\x04\0\x19get-vibration-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\
+\0\x19rudel:base/hardware@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10se\
+mantic-version\x03\0\0\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x15adver\
+tisment-settings\x03\0\x02\x01p}\x04\0\x11advertisment-data\x03\0\x04\x01@\0\0\x01\
+\x04\0\x0fget-ble-version\x01\x06\x01@\x01\x08settings\x03\x01\0\x04\0\x16config\
+ure-advertisment\x01\x07\x01@\x01\x04data\x05\x01\0\x04\0\x15set-advertisment-da\
+ta\x01\x08\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x01B\x05\x01o\x08yyyyyyyy\x01r\x04\
+\x07addressw\x04data\0\x0bdata-length}\x0breceived-atw\x04\0\x0cadvertisment\x03\
+\0\x01\x01@\x01\x0cadvertisment\x02\x01\0\x04\0\x0fon-advertisment\x01\x03\x04\0\
+\x1arudel:base/ble-guest@0.0.1\x05\x04\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\0\x04\
+\0\x14rudel:base/run@0.0.1\x05\x05\x04\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\x0b\
+\x01\0\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\
+\x070.220.0\x10wit-bindgen-rust\x060.36.0";
+        };
+    };
+}
+#[doc(inline)]
+pub use __export_rudel_impl as export;
+#[cfg(target_arch = "wasm32")]
+#[link_section = "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel-with-all-of-its-exports-removed:encoded world"]
+#[doc(hidden)]
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1212] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xa0\x08\x01A\x02\x01\
 A\x07\x01B\x11\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
 \0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\0\x01\0\x04\0\x09yiel\
@@ -755,37 +977,12 @@ none\x05basic\x04\0\x12ambient-light-type\x03\0\x06\x01m\x02\x04none\x05basic\x0
 -count\x01\x0e\x01@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\
 \0\x16get-ambient-light-type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\
 \x09\x04\0\x19get-vibration-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\
-\0\x19rudel:base/hardware@0.0.1\x05\x02\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\0\
-\x04\0\x14rudel:base/run@0.0.1\x05\x03\x04\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\
-\x0b\x01\0\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-compo\
-nent\x070.220.0\x10wit-bindgen-rust\x060.36.0";
-        };
-    };
-}
-#[doc(inline)]
-pub use __export_rudel_impl as export;
-#[cfg(target_arch = "wasm32")]
-#[link_section = "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel-with-all-of-its-exports-removed:encoded world"]
-#[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 969] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xad\x06\x01A\x02\x01\
-A\x05\x01B\x11\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
-\0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
-\0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\0\x01\0\x04\0\x09yiel\
-d-now\x01\x05\x01@\x01\x06microsw\x01\0\x04\0\x05sleep\x01\x06\x01@\0\0w\x04\0\x04\
-time\x01\x07\x01@\x02\x05level\x03\x07messages\x01\0\x04\0\x03log\x01\x08\x01o\x10\
-}}}}}}}}}}}}}}}}\x01@\0\0\x09\x04\0\x08get-name\x01\x0a\x03\0\x15rudel:base/base\
-@0.0.1\x05\0\x02\x03\0\0\x10semantic-version\x01B\x1b\x02\x03\x02\x01\x01\x04\0\x10\
-semantic-version\x03\0\0\x01r\x03\x03red}\x05green}\x04blue}\x04\0\x09led-color\x03\
-\0\x02\x01r\x02\x05color\x03\x07max-lux{\x04\0\x08led-info\x03\0\x04\x01m\x02\x04\
-none\x05basic\x04\0\x12ambient-light-type\x03\0\x06\x01m\x02\x04none\x05basic\x04\
-\0\x15vibration-sensor-type\x03\0\x08\x01@\0\0\x01\x04\0\x14get-hardware-version\
-\x01\x0a\x01p{\x01@\x02\x08first-id{\x03lux\x0b\x01\0\x04\0\x08set-leds\x01\x0c\x01\
-@\x02\x05color\x03\x03luxy\x01\0\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led\
--count\x01\x0e\x01@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\
-\0\x16get-ambient-light-type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\
-\x09\x04\0\x19get-vibration-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\
-\0\x19rudel:base/hardware@0.0.1\x05\x02\x04\06rudel:base/rudel-with-all-of-its-e\
-xports-removed@0.0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-exports-removed\x03\0\
-\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bi\
-ndgen-rust\x060.36.0";
+\0\x19rudel:base/hardware@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10se\
+mantic-version\x03\0\0\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x15adver\
+tisment-settings\x03\0\x02\x01p}\x04\0\x11advertisment-data\x03\0\x04\x01@\0\0\x01\
+\x04\0\x0fget-ble-version\x01\x06\x01@\x01\x08settings\x03\x01\0\x04\0\x16config\
+ure-advertisment\x01\x07\x01@\x01\x04data\x05\x01\0\x04\0\x15set-advertisment-da\
+ta\x01\x08\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x04\06rudel:base/rudel-with-all\
+-of-its-exports-removed@0.0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-exports-rem\
+oved\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\
+\x10wit-bindgen-rust\x060.36.0";

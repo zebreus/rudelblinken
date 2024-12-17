@@ -67,12 +67,16 @@ interface run {
 world rudel {
     import base;
     import hardware;
+    import ble;
+    export ble-guest;
     export run;
 }
 
 world rudel-host {
     export base;
     export hardware;
+    export ble;
+    import ble-guest;
     import run;
 }
 
@@ -168,12 +172,14 @@ interface hardware {
 /// Control ble stuff
 @since(version = 0.0.1)
 interface ble {
-    /// Check if the ble module is implemented
-    ///
-    /// The rudelblinken runtime will mock out all functions the it can not link.
-    /// If this function returns false you should not use any of the other functions
     @since(version = 0.0.1)
-    has-ble: func() -> bool;
+    use base.{semantic-version};
+
+    /// Get the version of the hardware interface provided by the runtime.
+    ///
+    /// The rudelblinken runtime will mock out all functions the it can not link. If this function returns a version that is lower than the version you requested, you should probably not use any of the functions that are not available in that version.
+    @since(version = 0.0.1)
+    get-ble-version: func() -> semantic-version;
 
     /// Configure the BLE advertisments
     @since(version = 0.0.1)
@@ -182,21 +188,34 @@ interface ble {
         max-interval: u16,
     }
     /// The data to be sent in the advertisment
+    /// 
+    /// Up to 32 bytes of data
     @since(version = 0.0.1)
     type advertisment-data = list<u8>;
 
     @since(version = 0.0.1)
-    configure-ble-advertisment: func(settings: advertisment-settings) -> ();
+    configure-advertisment: func(settings: advertisment-settings) -> ();
     @since(version = 0.0.1)
-    configure-ble-advertisment-data: func(settings: advertisment-data) -> ();
+    set-advertisment-data: func(data: advertisment-data) -> ();
 }
+
 
 @since(version = 0.0.1)
 interface ble-guest {
+    @since(version = 0.0.1)
+    record advertisment {
+        address: u64,
+        // 32 byte of data
+        data: tuple<u32, u32, u32, u32, u32, u32, u32, u32>,
+        // how many of the data bytes are actually used
+        data-length: u8,
+        received-at: u64,
+    }
+    
     /// Check if the ble module is implemented
     ///
     /// The rudelblinken runtime will mock out all functions the it can not link.
     /// If this function returns false you should not use any of the other functions
     @since(version = 0.0.1)
-    has-ble-guest: func() -> bool;
+    on-advertisment: func(advertisment: advertisment) -> ();
 }
