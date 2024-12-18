@@ -1,4 +1,6 @@
-use crate::host::{Advertisement, Host, LedColor, LedInfo, LogLevel, SemanticVersion};
+use crate::host::{
+    Advertisement, AdvertisementSettings, Host, LedColor, LedInfo, LogLevel, SemanticVersion,
+};
 use wasmi::{Caller, Extern, Func, Linker, Memory, Store};
 
 use super::glue;
@@ -10,8 +12,8 @@ impl<'a, T: Host> WrappedCaller<'a, T> {
     pub fn new(caller: Caller<'a, T>) -> WrappedCaller<'a, T> {
         return WrappedCaller(caller);
     }
-    pub fn into_inner(self) -> Caller<'a, T> {
-        return self.0;
+    pub fn inner(&mut self) -> &mut Caller<'a, T> {
+        return &mut self.0;
     }
     pub fn data(&self) -> &T {
         return self.0.data();
@@ -326,7 +328,11 @@ pub fn link_hardware<T: Host>(
         "set-leds",
         Func::wrap(
             &mut store,
-            |caller: Caller<'_, T>, offset: i32, length: i32| -> Result<(), wasmi::Error> {
+            |caller: Caller<'_, T>,
+             first_id: i32,
+             offset: i32,
+             length: i32|
+             -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
                 let memory = get_memory(caller.as_ref())?;
                 let slice = get_slice(&memory, caller.as_mut(), offset, length * 2)?;
@@ -336,7 +342,7 @@ pub fn link_hardware<T: Host>(
                 let values_slice =
                     unsafe { std::slice::from_raw_parts(led_values, length as usize) };
 
-                glue::set_leds(caller, values_slice)?;
+                glue::set_leds(caller, first_id as u16, values_slice)?;
 
                 return Ok(());
             },
@@ -468,6 +474,89 @@ pub fn link_hardware<T: Host>(
             |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
                 let caller = WrappedCaller(caller);
                 return glue::get_vibration(caller).map(|result| result as i32);
+            },
+        ),
+    )?;
+
+    return Ok(());
+}
+
+/// Link the led functions provided by T.
+///
+/// This functions will provide the rudel-host functions to the linker by generating glue code for the functionality provided by the host implementation T
+pub fn link_ble<T: Host>(
+    linker: &mut Linker<T>,
+    mut store: &mut Store<T>,
+) -> Result<(), wasmi::Error> {
+    // __attribute__((__import_module__("rudel:base/ble@0.0.1"), __import_name__("get-ble-version")))
+    // extern void __wasm_import_rudel_base_ble_get_ble_version(uint8_t *);
+    link_function(
+        linker,
+        "rudel:base/ble",
+        "get-ble-version",
+        Func::wrap(
+            &mut store,
+            |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
+                let mut caller = WrappedCaller(caller);
+                let memory = get_memory(caller.as_ref())?;
+                let slice = get_mut_slice(&memory, caller.as_mut(), offset, 4)?;
+                // SAFETY: Should be safe because the layout should match
+                let version = unsafe {
+                    std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())
+                };
+                let version_ref = unsafe { &mut *version };
+                glue::get_ble_version(caller, version_ref)?;
+
+                return Ok(());
+            },
+        ),
+    )?;
+
+    // __attribute__((__import_module__("rudel:base/ble@0.0.1"), __import_name__("configure-advertisement")))
+    // extern void __wasm_import_rudel_base_ble_configure_advertisement(int32_t, int32_t);
+    link_function(
+        linker,
+        "rudel:base/ble",
+        "configure-advertisement",
+        Func::wrap(
+            &mut store,
+            |caller: Caller<'_, T>,
+             min_interval: i32,
+             max_interval: i32|
+             -> Result<(), wasmi::Error> {
+                let caller = WrappedCaller(caller);
+
+                glue::configure_advertisement(
+                    caller,
+                    AdvertisementSettings {
+                        max_interval: max_interval as u16,
+                        min_interval: min_interval as u16,
+                    },
+                )?;
+
+                return Ok(());
+            },
+        ),
+    )?;
+
+    // __attribute__((__import_module__("rudel:base/ble@0.0.1"), __import_name__("set-advertisement-data")))
+    // extern void __wasm_import_rudel_base_ble_set_advertisement_data(uint8_t *, size_t);
+    link_function(
+        linker,
+        "rudel:base/ble",
+        "set-advertisement-data",
+        Func::wrap(
+            &mut store,
+            |caller: Caller<'_, T>, offset: i32, length: i32| -> Result<(), wasmi::Error> {
+                let mut caller = WrappedCaller(caller);
+                let memory = get_memory(caller.as_ref())?;
+                let slice = get_slice(&memory, caller.as_mut(), offset, length)?;
+                // // Remove lifetime
+                // let data = unsafe { std::slice::from_raw_parts(slice.as_ptr(), length as usize) };
+
+                glue::set_advertisement_data(caller, slice)?;
+
+                return Ok(());
             },
         ),
     )?;

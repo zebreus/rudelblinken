@@ -1,7 +1,8 @@
 /// Provides functions that glue the relatively raw host functions to the implementation of Host
 use super::{linker::WrappedCaller, MAJOR, MINOR, PATCH};
 use crate::host::{
-    AmbientLightType, Host, LedColor, LedInfo, LogLevel, SemanticVersion, VibrationSensorType,
+    AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo, LogLevel, SemanticVersion,
+    VibrationSensorType,
 };
 
 /// `get-base-version: func() -> semantic-version;`
@@ -59,6 +60,7 @@ pub(super) fn get_hardware_version<T: Host>(
 /// `set-leds: func(first-id: u16, lux: list<u16>) -> ();`
 pub(super) fn set_leds<T: Host>(
     mut caller: WrappedCaller<'_, T>,
+    _first_id: u16,
     leds: &[u16],
 ) -> Result<(), wasmi::Error> {
     return T::set_leds(&mut caller, leds);
@@ -113,4 +115,29 @@ pub(super) fn get_vibration<T: Host>(
     mut caller: WrappedCaller<'_, T>,
 ) -> Result<u32, wasmi::Error> {
     return T::get_vibration(&mut caller);
+}
+
+/// `get-ble-version: func() -> semantic-version;`
+pub(super) fn get_ble_version<T: Host>(
+    mut _caller: WrappedCaller<'_, T>,
+    version: &mut SemanticVersion,
+) -> Result<(), wasmi::Error> {
+    *version = SemanticVersion::new(MAJOR, MINOR, PATCH);
+    return Ok(());
+}
+
+/// `configure-advertisement: func(settings: advertisement-settings) -> ();`
+pub(super) fn configure_advertisement<T: Host>(
+    mut caller: WrappedCaller<'_, T>,
+    settings: AdvertisementSettings,
+) -> Result<(), wasmi::Error> {
+    return T::configure_advertisement(&mut caller, settings);
+}
+
+/// `set-advertisement-data: func(data: advertisement-data) -> ();`
+pub(super) fn set_advertisement_data<T: Host>(
+    mut caller: WrappedCaller<'_, T>,
+    data: &[u8],
+) -> Result<(), wasmi::Error> {
+    return T::set_advertisement_data(&mut caller, data);
 }

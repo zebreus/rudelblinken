@@ -125,6 +125,22 @@ pub struct Advertisement {
     pub received_at: u64,
 }
 
+/// Configure the BLE advertisements
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AdvertisementSettings {
+    pub min_interval: u16,
+    pub max_interval: u16,
+}
+impl ::core::fmt::Debug for AdvertisementSettings {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("AdvertisementSettings")
+            .field("min-interval", &self.min_interval)
+            .field("max-interval", &self.max_interval)
+            .finish()
+    }
+}
+
 pub enum Event {
     AdvertisementReceived(Advertisement),
 }
@@ -170,4 +186,13 @@ where
 
     fn has_vibration_sensor(context: &mut WrappedCaller<'_, Self>) -> Result<bool, wasmi::Error>;
     fn get_vibration(context: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error>;
+
+    fn configure_advertisement(
+        context: &mut WrappedCaller<'_, Self>,
+        settings: AdvertisementSettings,
+    ) -> Result<(), wasmi::Error>;
+    fn set_advertisement_data(
+        context: &mut WrappedCaller<'_, Self>,
+        data: &[u8],
+    ) -> Result<(), wasmi::Error>;
 }

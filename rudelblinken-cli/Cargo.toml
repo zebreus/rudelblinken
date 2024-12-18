@@ -20,3 +20,6 @@ thiserror = "1.0.64"
 tokio = { version = "1", features = ["full"] }
 uuid = "1.10.0"
 rudelblinken-runtime = { path = "../rudelblinken-runtime" }
+tempfile = "3.14.0"
+rand = "0.8.5"
+zerocopy = { version = "0.8.13", features = ["derive"] }

@@ -150,8 +150,8 @@ async fn main() -> bluer::Result<()> {
             .unwrap();
         }
         Commands::Emulate(emulate_command) => {
-            let emulator = Emulator::new(emulate_command);
-            emulator.emulate().unwrap();
+            let emulator = Emulator::new(emulate_command).await.unwrap();
+            emulator.emulate().await.unwrap();
         }
     };
 

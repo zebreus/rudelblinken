@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    host::{Event, Host, LedColor, LedInfo, LogLevel},
+    host::{AdvertisementSettings, Event, Host, LedColor, LedInfo, LogLevel},
     linker::linker::WrappedCaller,
 };
 
@@ -104,5 +104,19 @@ impl Host for EmulatedHost {
 
     fn get_vibration(_caller: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error> {
         return Ok(0);
+    }
+
+    fn configure_advertisement(
+        _context: &mut WrappedCaller<'_, Self>,
+        _settings: AdvertisementSettings,
+    ) -> Result<(), wasmi::Error> {
+        return Ok(());
+    }
+
+    fn set_advertisement_data(
+        _context: &mut WrappedCaller<'_, Self>,
+        _data: &[u8],
+    ) -> Result<(), wasmi::Error> {
+        return Ok(());
     }
 }

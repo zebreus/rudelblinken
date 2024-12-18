@@ -2,7 +2,7 @@ pub mod glue;
 pub mod linker;
 
 use crate::host::Host;
-use linker::{link_base, link_hardware};
+use linker::{link_base, link_ble, link_hardware};
 use wasmi::{Config, Engine, Instance, Linker, Module, Store};
 
 const MAJOR: u8 = 0;
@@ -57,6 +57,7 @@ pub fn setup_linker<T: Host>(
 ) -> Result<(), wasmi::Error> {
     link_base(linker, store)?;
     link_hardware(linker, store)?;
+    link_ble(linker, store)?;
 
     return Ok(());
 }
