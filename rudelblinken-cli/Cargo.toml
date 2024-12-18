@@ -1,7 +1,14 @@
 [package]
-name = "rudelblinken-cli"
+name = "rudel"
 version = "0.1.0"
 edition = "2021"
+license = "AGPL-3.0-only"
+description = "Commandline utility for rudelblinken"
+repository = "https://github.com/zebreus/rudelblinken-rs"
+readme = "README.md"
+categories = ["wasm", "embedded", "command-line-utilities", "emulators"]
+keywords = ["rudelblinken", "cli", "emulator"]
+
 
 [[bin]]
 name = "rudel"
