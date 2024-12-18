@@ -1,10 +1,12 @@
 #![feature(async_closure)]
 //! Connects to our Bluetooth GATT service and exercises the characteristic.
 
+mod bluetooth;
 mod emulator;
 mod update_target;
 use bluer::{AdapterEvent, Device};
-use clap::{Parser, Subcommand};
+use bluetooth::scan_for;
+use clap::{Args, Parser, Subcommand};
 use emulator::{EmulateCommand, Emulator};
 use futures::{
     pin_mut,
@@ -15,56 +17,6 @@ use futures_time::stream::StreamExt;
 use futures_time::time::Duration;
 use std::{future::Future, path::PathBuf, time::Instant};
 use update_target::{UpdateTarget, UpdateTargetError};
-
-async fn scan_for<Fut, Err>(
-    duration: Duration,
-    max_devices: u32,
-    f: &dyn Fn(Device) -> Fut,
-) -> bluer::Result<()>
-where
-    Fut: Future<Output = Result<(), Err>>,
-{
-    let session = bluer::Session::new().await?;
-    let adapter = session.default_adapter().await?;
-    adapter.set_powered(true).await?;
-
-    {
-        // eprintln!(
-        //     "Discovering on Bluetooth adapter {} with address {}\n",
-        //     adapter.name(),
-        //     adapter.address().await?
-        // );
-        let (abort_handle, abort_registration) = AbortHandle::new_pair();
-        let discover = adapter.discover_devices().await?;
-        pin_mut!(discover);
-        let stream = Abortable::new(discover, abort_registration);
-        let mut stream = stream.timeout(duration);
-        let mut programmed_devices = 0;
-        while let Some(evt) = stream.next().await {
-            let Ok(evt) = evt else {
-                break;
-            };
-            match evt {
-                AdapterEvent::DeviceAdded(addr) => {
-                    let device = adapter.device(addr)?;
-                    let result = f(device).await;
-                    if result.is_ok() {
-                        programmed_devices += 1;
-                    }
-                    if programmed_devices >= max_devices {
-                        abort_handle.abort();
-                    }
-                }
-                // AdapterEvent::DeviceRemoved(addr) => {
-                //     // println!("Device removed {addr}");
-                // }
-                _ => (),
-            }
-        }
-    }
-
-    return Ok(());
-}
 
 /// Rudelblinken cli utility
 #[derive(Parser, Debug)]
