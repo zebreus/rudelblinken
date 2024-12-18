@@ -1,4 +1,5 @@
 //! Test wasm files on an emulated rudelblinken device.
+use clap::Args;
 use rudelblinken_runtime::host::{Advertisement, Event};
 use std::{
     path::PathBuf,
@@ -14,13 +15,25 @@ pub enum EmulatorError {
     RuntimeError(#[from] rudelblinken_runtime::Error),
 }
 
+#[derive(Args, Debug)]
+pub struct EmulateCommand {
+    /// WASM file to run
+    file: PathBuf,
+
+    /// Name of the instance
+    #[arg(short, long, default_value = "random")]
+    name: String,
+}
+
 pub struct Emulator {
     file: PathBuf,
 }
 
 impl Emulator {
-    pub fn new(file: PathBuf) -> Self {
-        Self { file }
+    pub fn new(command: EmulateCommand) -> Self {
+        eprintln!("Emulating WASM file: {:?}", command.file);
+
+        Self { file: command.file }
     }
     pub fn emulate(&self) -> Result<(), EmulatorError> {
         let wasm = std::fs::read(&self.file)?;

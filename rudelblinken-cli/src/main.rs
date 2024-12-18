@@ -5,7 +5,7 @@ mod emulator;
 mod update_target;
 use bluer::{AdapterEvent, Device};
 use clap::{Parser, Subcommand};
-use emulator::Emulator;
+use emulator::{EmulateCommand, Emulator};
 use futures::{
     pin_mut,
     stream::{AbortHandle, Abortable},
@@ -109,10 +109,7 @@ enum Commands {
         timeout: f32,
     },
     /// Scan for cats
-    Emulate {
-        /// WASM file to run
-        file: PathBuf,
-    },
+    Emulate(EmulateCommand),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -200,9 +197,8 @@ async fn main() -> bluer::Result<()> {
             .await
             .unwrap();
         }
-        Commands::Emulate { file } => {
-            eprintln!("Emulating WASM file: {:?}", file);
-            let emulator = Emulator::new(file);
+        Commands::Emulate(emulate_command) => {
+            let emulator = Emulator::new(emulate_command);
             emulator.emulate().unwrap();
         }
     };
