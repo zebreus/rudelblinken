@@ -26,7 +26,7 @@ futures-time = "3.0.0"
 thiserror = "1.0.64"
 tokio = { version = "1", features = ["full"] }
 uuid = "1.10.0"
-rudelblinken-runtime = { path = "../rudelblinken-runtime" }
+rudelblinken-runtime = { path = "../rudelblinken-runtime", version = "0.1.0" }
 tempfile = "3.14.0"
 rand = "0.8.5"
 zerocopy = { version = "0.8.13", features = ["derive"] }
