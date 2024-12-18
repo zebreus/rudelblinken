@@ -122,19 +122,19 @@
           ];
         };
 
-        packages.rudelblinken-cli =
+        packages.rudelctl =
           (pkgs.makeRustPlatform {
             cargo = rustToolchain;
             rustc = rustToolchain;
           }).buildRustPackage
             {
-              pname = "rudel";
+              pname = "rudelctl";
               version = "0.1.0";
 
-              src = ./rudelblinken-cli;
+              src = ./rudelctl;
 
               cargoLock = {
-                lockFile = ./rudelblinken-cli/Cargo.lock;
+                lockFile = ./rudelctl/Cargo.lock;
               };
 
               nativeBuildInputs = [
@@ -150,8 +150,7 @@
                 license = pkgs.lib.licenses.agpl3Plus;
               };
             };
-        packages.rudel = packages.rudelblinken-cli;
-        packages.default = packages.rudelblinken-cli;
+        packages.default = packages.rudelctl;
 
         formatter = pkgs.nixfmt-rfc-style;
       }

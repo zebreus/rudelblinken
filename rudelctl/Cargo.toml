@@ -1,5 +1,5 @@
 [package]
-name = "rudel"
+name = "rudelctl"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-only"
@@ -11,7 +11,7 @@ keywords = ["rudelblinken", "cli", "emulator"]
 
 
 [[bin]]
-name = "rudel"
+name = "rudelctl"
 path = "src/main.rs"
 
 [dependencies]

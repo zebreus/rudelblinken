@@ -1057,7 +1057,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
-name = "rudel"
+name = "rudelblinken-runtime"
+version = "0.1.0"
+dependencies = [
+ "wasmi",
+]
+
+[[package]]
+name = "rudelctl"
 version = "0.1.0"
 dependencies = [
  "async-recursion",
@@ -1075,13 +1082,6 @@ dependencies = [
  "tokio",
  "uuid",
  "zerocopy 0.8.13",
-]
-
-[[package]]
-name = "rudelblinken-runtime"
-version = "0.1.0"
-dependencies = [
- "wasmi",
 ]
 
 [[package]]

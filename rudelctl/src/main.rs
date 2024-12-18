@@ -1,13 +1,13 @@
-//! # Rudelblinken CLI
+//! # rudelctl
 //!
-//! `rudel` is the cli utility for the `rudelblinken` project. It is used to program and run WASM binaries on the `rudelblinken` devices. It can also run WASM binaries in a simulated environment.
+//! `rudelctl` is the cli utility for the `rudelblinken` project. It is used to program and run WASM binaries on the `rudelblinken` devices. It can also run WASM binaries in a simulated environment.
 //!
 //! ## Usage
 //!
-//! Until I have time to write proper documentation, here is the output of `rudel --help`:
+//! Until I have time to write proper documentation, here is the output of `rudelctl --help`:
 //!
 //! ```
-//! Usage: rudel <COMMAND>
+//! Usage: rudelctl <COMMAND>
 //!
 //! Commands:
 //! upload   Upload a file
@@ -80,7 +80,7 @@ enum Commands {
         #[arg(short, long, default_value = "5")]
         timeout: f32,
     },
-    /// Scan for cats
+    /// Emulate a rudelblinken device
     Emulate(EmulateCommand),
 }
 
