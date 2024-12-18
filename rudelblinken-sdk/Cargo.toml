@@ -2,6 +2,12 @@
 name = "rudelblinken-sdk"
 version = "0.1.0"
 edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "SDK for developing applications for the rudelblinken platform"
+repository = "https://github.com/zebreus/rudelblinken-rs"
+readme = "README.md"
+categories = ["wasm", "embedded"]
+keywords = ["rudelblinken"]
 
 [dependencies]
 talc = "4.4.2"
