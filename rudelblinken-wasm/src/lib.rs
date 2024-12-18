@@ -1,7 +1,8 @@
 use rudelblinken_sdk::{
     export,
     exports::{self},
-    get_name, led_count, log, sleep, time, yield_now, Advertisement, BleGuest, Guest, LogLevel,
+    get_name, led_count, log, set_advertisement_data, sleep, time, yield_now, Advertisement,
+    BleGuest, Guest, LogLevel,
 };
 use talc::{ClaimOnOom, Span, Talc, Talck};
 
@@ -24,6 +25,8 @@ impl Guest for Test {
         let time_b = time();
 
         yield_now();
+        let data = b"Hello World!";
+        set_advertisement_data(&data.into());
 
         log(
             LogLevel::Info,
@@ -40,7 +43,7 @@ impl Guest for Test {
 
         log(LogLevel::Info, &format!("I have {} leds", led_count()));
         loop {
-            log(LogLevel::Debug, "Looping");
+            // log(LogLevel::Debug, "Looping");
             sleep(1000 * 200);
             yield_now();
         }
@@ -49,18 +52,15 @@ impl Guest for Test {
 
 impl BleGuest for Test {
     fn on_advertisement(advertisement: Advertisement) {
-        log(
-            LogLevel::Debug,
-            format!("Received advertisement at: {}", advertisement.received_at).as_str(),
-        );
-        log(
-            LogLevel::Debug,
-            format!("Address bytes: {:?}", advertisement.get_address()).as_str(),
-        );
-        log(
-            LogLevel::Debug,
-            format!("Data bytes: {:?}", advertisement.get_data()).as_str(),
-        );
+        let data = unsafe {
+            std::mem::transmute::<[u32; 8], [u8; 32]>(
+                advertisement.data.try_into().unwrap_unchecked(),
+            )
+        };
+        let slice = &data[0..(advertisement.data_length as usize)];
+        let string = String::from_utf8_lossy(slice);
+
+        log(LogLevel::Debug, format!("Received: '{}'", string).as_str());
     }
 }
 
