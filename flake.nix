@@ -137,6 +137,10 @@
                 lockFile = ./rudelctl/Cargo.lock;
               };
 
+              postPatch = ''
+                sed -i 's|path = "../rudelblinken-runtime", ||' Cargo.toml || true
+              '';
+
               nativeBuildInputs = [
                 pkgs.pkg-config
               ];
