@@ -25,6 +25,7 @@ use wasm_service::wasm_host;
 mod cat_management_service;
 mod file_upload_service;
 mod serial_logging_service;
+pub mod service_helpers;
 pub mod storage;
 mod wasm_service;
 
@@ -140,23 +141,14 @@ pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>
     });
 
 fn main() {
-    unsafe {
-        esp_idf_sys::sleep(2);
-    }
+// // Sleep a bit to allow the debugger to attach
+    // unsafe {
+//     esp_idf_sys::sleep(4);
+    // }
+
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
     esp_idf_svc::sys::link_patches();
-
-    unsafe {
-        esp_idf_sys::sleep(2);
-    }
-
-    // Bind the log crate to the ESP Logging facilities
-    // esp_idf_svc::log::EspLogger::initialize_default();
-    // tracing_subscriber::fmt()
-    //     .with_max_level(tracing::Level::INFO)
-    //     .with_writer(std::io::stdout)
-    //     .init();
 
     fix_mac_address();
 
@@ -166,41 +158,9 @@ fn main() {
 
     let serial_logging_service = SerialLoggingService::new(ble_device.get_server());
 
-    setup_storage();
-
+    setup_storage().unwrap();
     print_memory_info();
-    // print_partitions();
-
-    // let mut storage = FlashStorage::new().unwrap();
-    // let mut storage2 = FlashStorage::new().unwrap();
-
-    // let test_string = String::from("Hallo Wolt!");
-    // let test_vec: Vec<u8> = test_string.clone().into();
-
-    // // storage.write(&test_vec).unwrap_or_default();
-    // // let new_vec = storage.read(test_vec.len());
-    // // let new_vec2 = storage2.read(test_vec.len());
-
-    // // let new_string = String::from_utf8_lossy(&new_vec);
-    // // let new_string2 = String::from_utf8_lossy(&new_vec2);
-
-    // // ::log::error!(target: "test-fs", "Print {} Pront {} Prant {}", test_string, new_string, new_string2);
-
-    /* let peripherals = Peripherals::take().unwrap();
-    let timer_driver = LedcTimerDriver::new(
-        peripherals.ledc.timer0,
-        &TimerConfig::default().frequency(25.kHz().into()),
-    )
-    .unwrap();
-    let led_driver = Mutex::new(
-        LedcDriver::new(
-            peripherals.ledc.channel0,
-            timer_driver,
-            peripherals.pins.gpio8,
-        )
-        .unwrap(),
-    );
-    led_driver.lock().set_duty(0x1000).unwrap(); */
+    
     let led_pin =
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
 
@@ -233,10 +193,25 @@ fn main() {
             .unwrap();
     }
 
+    ble_device.get_server().on_connect(|server, connection| {
+        let ble_device = unsafe { BLE_DEVICE.get_mut().unwrap() };
+        let ble_advertising = ble_device.get_advertising();
+        ble_advertising.lock().start().unwrap();
+        tracing::info!("Client connected, {:?}", connection);
+    });
+    ble_device.get_server().on_disconnect(|connection, result| {
+        let ble_device = unsafe { BLE_DEVICE.get_mut().unwrap() };
+        let ble_advertising = ble_device.get_advertising();
+        ble_advertising.lock().start().unwrap();
+        tracing::info!("Client disconnected, {:?}", connection);
+        tracing::info!("with result {:?}", result);
+    });
+
     let mut ble_scan = BLEScan::new();
     ble_scan.active_scan(false).interval(100).window(99);
 
     loop {
+tracing::info!("Scanning for BLE devices");
         task::block_on(async {
             ble_scan
                 .start(ble_device, 1000, |dev, data| {
@@ -253,15 +228,7 @@ fn main() {
                             data_length: data_length as u8,
                             received_at: now,
                         }));
-                        // cat_management_service
-                        //     .lock()
-                        //     .wasm_runner
-                        //     .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
-                        //         mac: dev.addr().as_be_bytes(),
-                        //         data: md.payload.into(),
-                        //     }))
-                        //     .expect("failed to send ble adv callback");
-                    }
+                                            }
                     None::<()>
                 })
                 .await
