@@ -7,8 +7,11 @@ use std::{
 
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
-    uuid128, BLEServer, DescriptorProperties, NimbleProperties,
+    uuid128, BLE2904Format, BLEServer, DescriptorProperties, NimbleProperties,
 };
+use esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS;
+
+use crate::service_helpers::DocumentableCharacteristic;
 // use esp_idf_sys::esp_log_timestamp;
 // use tracing::{Level, LevelFilter};
 
@@ -266,7 +269,7 @@ impl std::io::Write for SerialWriter {
 
 impl SerialLoggingService {
     pub fn new(server: &mut BLEServer) -> Arc<Mutex<SerialLoggingService>> {
-        let file_upload_service = Arc::new(Mutex::new(SerialLoggingService {
+        let serial_logging_service = Arc::new(Mutex::new(SerialLoggingService {
             connection: SerialConnection::new(),
         }));
 
@@ -274,74 +277,46 @@ impl SerialLoggingService {
 
         let tx_characteristic = service
             .lock()
-            .create_characteristic(SERIAL_LOGGING_TIO_CHAR_TX, NimbleProperties::NOTIFY);
-        tx_characteristic
-            .lock()
-            .create_2904_descriptor()
-            .format(esp32_nimble::BLE2904Format::OPAQUE)
-            .exponent(0)
-            .unit(esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS as u16)
-            .namespace(0x01)
-            .description(0x00);
-        tx_characteristic
-            .lock()
-            .create_descriptor(BleUuid::Uuid16(0x2901), DescriptorProperties::READ)
-            .lock()
-            .set_value("UART TX".as_bytes());
+            .create_characteristic(SERIAL_LOGGING_TIO_CHAR_TX, NimbleProperties::INDICATE);
+        tx_characteristic.document(
+            "UART TX",
+            BLE2904Format::OPAQUE,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
 
         let tx_credits_characteristic = service.lock().create_characteristic(
             SERIAL_LOGGING_TIO_CHAR_TX_CREDITS,
             NimbleProperties::INDICATE,
         );
-        tx_credits_characteristic
-            .lock()
-            .create_2904_descriptor()
-            .format(esp32_nimble::BLE2904Format::UINT8)
-            .exponent(0)
-            .unit(esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS as u16)
-            .namespace(0x01)
-            .description(0x00);
-        tx_credits_characteristic
-            .lock()
-            .create_descriptor(BleUuid::Uuid16(0x2901), DescriptorProperties::READ)
-            .lock()
-            .set_value("UART credits TX".as_bytes());
+        tx_credits_characteristic.document(
+            "UART credits TX",
+            BLE2904Format::UINT8,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
 
         let rx_characteristic = service
             .lock()
             .create_characteristic(SERIAL_LOGGING_TIO_CHAR_RX, NimbleProperties::WRITE_NO_RSP);
-        rx_characteristic
-            .lock()
-            .create_2904_descriptor()
-            .format(esp32_nimble::BLE2904Format::OPAQUE)
-            .exponent(0)
-            .unit(esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS as u16)
-            .namespace(0x01)
-            .description(0x00);
-        rx_characteristic
-            .lock()
-            .create_descriptor(BleUuid::Uuid16(0x2901), DescriptorProperties::READ)
-            .lock()
-            .set_value("UART RX".as_bytes());
+        rx_characteristic.document(
+            "UART RX",
+            BLE2904Format::OPAQUE,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
 
         let rx_credits_characteristic = service
             .lock()
             .create_characteristic(SERIAL_LOGGING_TIO_CHAR_RX_CREDITS, NimbleProperties::WRITE);
-        rx_credits_characteristic
-            .lock()
-            .create_2904_descriptor()
-            .format(esp32_nimble::BLE2904Format::UINT8)
-            .exponent(0)
-            .unit(esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS as u16)
-            .namespace(0x01)
-            .description(0x00);
-        rx_credits_characteristic
-            .lock()
-            .create_descriptor(BleUuid::Uuid16(0x2901), DescriptorProperties::READ)
-            .lock()
-            .set_value("UART credits RX".as_bytes());
+        rx_credits_characteristic.document(
+            "UART credits RX",
+            BLE2904Format::UINT8,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
 
-        let cc = file_upload_service.clone();
+        let cc = serial_logging_service.clone();
         rx_characteristic.lock().on_write(move |args| {
             cc.lock().connection.ble_receive_line(args.recv_data());
         });
@@ -366,7 +341,7 @@ impl SerialLoggingService {
 
             ::tracing::debug!("Received {} credits", new_credits);
         });
-        let cc = file_upload_service.clone();
+        let cc = serial_logging_service.clone();
         tx_credits_characteristic
             .lock()
             .on_subscribe(move |this, _, _| {
@@ -394,6 +369,6 @@ impl SerialLoggingService {
             .with_writer(|| SerialWriter {})
             .init();
 
-        file_upload_service
+        serial_logging_service
     }
 }
