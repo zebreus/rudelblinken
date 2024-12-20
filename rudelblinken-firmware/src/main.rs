@@ -25,9 +25,9 @@ use wasm_service::wasm_host;
 mod cat_management_service;
 mod file_upload_service;
 mod nrf_logging_service;
-mod serial_logging_service;
 pub mod service_helpers;
 pub mod storage;
+mod telid_logging_service;
 mod wasm_service;
 
 /// Changes the OUI of the base mac address to 24:ec:4b which is not assigned
