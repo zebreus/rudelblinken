@@ -17,13 +17,14 @@ use esp_idf_hal::{
 };
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
+use nrf_logging_service::SerialLoggingService;
 use rudelblinken_runtime::host::{Advertisement, Event};
-use serial_logging_service::SerialLoggingService;
 use storage::setup_storage;
 use wasm_service::wasm_host;
 
 mod cat_management_service;
 mod file_upload_service;
+mod nrf_logging_service;
 mod serial_logging_service;
 pub mod service_helpers;
 pub mod storage;
@@ -141,9 +142,9 @@ pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>
     });
 
 fn main() {
-// // Sleep a bit to allow the debugger to attach
+    // // Sleep a bit to allow the debugger to attach
     // unsafe {
-//     esp_idf_sys::sleep(4);
+    //     esp_idf_sys::sleep(4);
     // }
 
     // It is necessary to call this function once. Otherwise some patches to the runtime
@@ -160,7 +161,7 @@ fn main() {
 
     setup_storage().unwrap();
     print_memory_info();
-    
+
     let led_pin =
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
 
@@ -211,7 +212,7 @@ fn main() {
     ble_scan.active_scan(false).interval(100).window(99);
 
     loop {
-tracing::info!("Scanning for BLE devices");
+        tracing::info!("Scanning for BLE devices");
         task::block_on(async {
             ble_scan
                 .start(ble_device, 1000, |dev, data| {
@@ -228,7 +229,7 @@ tracing::info!("Scanning for BLE devices");
                             data_length: data_length as u8,
                             received_at: now,
                         }));
-                                            }
+                    }
                     None::<()>
                 })
                 .await
