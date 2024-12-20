@@ -1,6 +1,8 @@
-use std::sync::Arc;
+#![feature(round_char_boundary)]
 
-use cat_management_service::{CatManagementService, WasmHostMessage};
+use std::sync::{Arc, LazyLock, OnceLock};
+
+use cat_management_service::CatManagementService;
 use esp32_nimble::{
     enums::{ConnMode, DiscMode, PowerLevel, PowerType},
     utilities::mutex::Mutex,
@@ -15,14 +17,16 @@ use esp_idf_hal::{
 };
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
-use rudelblinken_sdk::common::BLEAdvNotification;
+use rudelblinken_runtime::host::{Advertisement, Event};
 use serial_logging_service::SerialLoggingService;
 use storage::setup_storage;
+use wasm_service::wasm_host;
 
 mod cat_management_service;
 mod file_upload_service;
 mod serial_logging_service;
 pub mod storage;
+mod wasm_service;
 
 /// Changes the OUI of the base mac address to 24:ec:4b which is not assigned
 ///
@@ -129,6 +133,12 @@ pub fn print_memory_info() {
     }
 }
 
+pub static mut BLE_DEVICE: OnceLock<&mut BLEDevice> = OnceLock::new();
+pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>>> =
+    LazyLock::new(|| {
+        Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"))
+    });
+
 fn main() {
     unsafe {
         esp_idf_sys::sleep(2);
@@ -152,7 +162,8 @@ fn main() {
 
     setup_ble_server();
 
-    let ble_device = BLEDevice::take();
+    let ble_device = unsafe { BLE_DEVICE.get_or_init(|| BLEDevice::take()) };
+
     let serial_logging_service = SerialLoggingService::new(ble_device.get_server());
 
     setup_storage();
@@ -194,8 +205,10 @@ fn main() {
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
 
     let file_upload_service = FileUploadService::new(ble_device.get_server());
+    LazyLock::force(&LED_PIN);
+    let (sender, receiver, host) = wasm_service::wasm_host::WasmHost::new();
     let cat_management_service =
-        CatManagementService::new(ble_device, file_upload_service.clone(), led_pin);
+        CatManagementService::new(ble_device, file_upload_service.clone(), host);
 
     {
         let ble_advertising = ble_device.get_advertising();
@@ -228,14 +241,26 @@ fn main() {
             ble_scan
                 .start(ble_device, 1000, |dev, data| {
                     if let Some(md) = data.manufacture_data() {
-                        cat_management_service
-                            .lock()
-                            .wasm_runner
-                            .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
-                                mac: dev.addr().as_be_bytes(),
-                                data: md.payload.into(),
-                            }))
-                            .expect("failed to send ble adv callback");
+                        let mut padded_mac = [0u8; 8];
+                        padded_mac[0..6].copy_from_slice(&dev.addr().as_le_bytes());
+                        let now = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+                        let mut data = [0u8; 32];
+                        let data_length = std::cmp::min(md.payload.len(), 32);
+                        data[..data_length].copy_from_slice(&md.payload[..data_length]);
+                        sender.send(Event::AdvertisementReceived(Advertisement {
+                            address: padded_mac,
+                            data: data,
+                            data_length: data_length as u8,
+                            received_at: now,
+                        }));
+                        // cat_management_service
+                        //     .lock()
+                        //     .wasm_runner
+                        //     .send(WasmHostMessage::BLEAdvRecv(BLEAdvNotification {
+                        //         mac: dev.addr().as_be_bytes(),
+                        //         data: md.payload.into(),
+                        //     }))
+                        //     .expect("failed to send ble adv callback");
                     }
                     None::<()>
                 })

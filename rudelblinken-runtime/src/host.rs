@@ -115,7 +115,7 @@ impl VibrationSensorType {
 }
 
 #[repr(C, align(4))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Advertisement {
     pub address: [u8; 8],
     /// 32 byte of data
@@ -141,6 +141,7 @@ impl ::core::fmt::Debug for AdvertisementSettings {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum Event {
     AdvertisementReceived(Advertisement),
 }
@@ -164,7 +165,9 @@ where
         message: &str,
     ) -> Result<(), wasmi::Error>;
 
-    #[doc = " The name for this host. You can assume that this is unique"]
+    /// The name for this host. You can assume that this is unique
+    ///
+    /// Gets truncated to the first 16 bytes
     fn get_name(context: &mut WrappedCaller<'_, Self>) -> Result<String, wasmi::Error>;
 
     fn set_leds(context: &mut WrappedCaller<'_, Self>, lux: &[u16]) -> Result<(), wasmi::Error>;
