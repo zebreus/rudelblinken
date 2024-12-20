@@ -51,7 +51,7 @@ enum Commands {
     /// Upload a file
     Upload {
         /// Stop scanning after this many seconds
-        #[arg(short, long, default_value = "5")]
+        #[arg(short, long, default_value = "2")]
         timeout: f32,
 
         /// Maximum number of devices to program
@@ -64,7 +64,7 @@ enum Commands {
     /// Run a WASM binary
     Run {
         /// Stop scanning after this many seconds
-        #[arg(short, long, default_value = "5")]
+        #[arg(short, long, default_value = "2")]
         timeout: f32,
 
         /// Maximum number of devices to program
@@ -77,7 +77,7 @@ enum Commands {
     /// Scan for cats
     Scan {
         /// Stop scanning after this many seconds
-        #[arg(short, long, default_value = "5")]
+        #[arg(short, long, default_value = "2")]
         timeout: f32,
     },
     /// Emulate a rudelblinken device
