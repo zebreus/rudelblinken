@@ -43,7 +43,7 @@ impl Guest for Test {
 
         log(LogLevel::Info, &format!("I have {} leds", led_count()));
         loop {
-            // log(LogLevel::Debug, "Looping");
+            log(LogLevel::Debug, "Looping");
             sleep(1000 * 200);
             yield_now();
         }
