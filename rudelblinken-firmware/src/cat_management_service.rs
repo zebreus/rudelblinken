@@ -61,7 +61,7 @@ fn log_heap_stats() {
 }
 
 fn wasm_runner(
-    mut host: WasmHost,
+    host: WasmHost,
     receiver: mpsc::Receiver<File<FlashStorage, { FileState::Reader }>>,
 ) {
     loop {
@@ -73,14 +73,24 @@ fn wasm_runner(
 
         info!("before creating and linking instance");
         log_heap_stats();
-        let wasm: &[u8] = file.as_ref();
-        let mut instance = rudelblinken_runtime::linker::setup(&file, host.clone()).unwrap();
+        let mut instance = match rudelblinken_runtime::linker::setup(&file, host.clone()) {
+            Ok(instance) => instance,
+            Err(error) => {
+                error!("Linker Error:\n {}", error);
+                continue;
+            }
+        };
 
         info!("after creating and linking instance");
         log_heap_stats();
 
-        let result = instance.run().unwrap();
-        info!("Finished wasm execution")
+        let result = instance.run();
+        match result {
+            Ok(_) => info!("Wasm module finished execution"),
+            Err(err) => {
+                error!("Wasm module failed to execute:\n{}", err);
+            }
+        }
     }
 }
 
