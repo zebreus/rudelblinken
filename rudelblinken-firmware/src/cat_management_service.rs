@@ -1,8 +1,10 @@
 use crate::{
     file_upload_service::{self, FileUploadService},
+    service_helpers::DocumentableCharacteristic,
     storage::FlashStorage,
     wasm_service::wasm_host::WasmHost,
 };
+use device_name::{get_device_name, set_device_name};
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
     BLEAdvertisementData, BLEAdvertising, BLEDevice, BLEServer, NimbleProperties,
@@ -11,8 +13,7 @@ use esp_idf_hal::{
     gpio::{self, PinDriver},
     ledc::LedcDriver,
 };
-use esp_idf_sys as _;
-use get_device_name::get_device_name;
+use esp_idf_sys::{self as _, BLE_GATT_CHR_UNIT_UNITLESS};
 use rudelblinken_filesystem::file::{File, FileState};
 use std::{
     sync::{mpsc, Arc},
@@ -21,7 +22,7 @@ use std::{
 use tracing::{debug, error, info, instrument, Level};
 use wasmi::{AsContext, Caller, Engine, Linker, Module, Store};
 
-pub mod get_device_name;
+pub mod device_name;
 
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
@@ -34,7 +35,6 @@ const CAT_MANAGEMENT_SERVICE_NAME_UUID: BleUuid = BleUuid::from_uuid16(CAT_MANAG
 
 pub struct CatManagementService {
     program_hash: Option<[u8; 32]>,
-    name: String,
     pub wasm_runner: mpsc::Sender<File<FlashStorage, { FileState::Reader }>>,
     file_upload_service: Arc<Mutex<FileUploadService>>,
 }
@@ -92,8 +92,6 @@ impl CatManagementService {
         files: Arc<Mutex<FileUploadService>>,
         host: WasmHost,
     ) -> Arc<Mutex<CatManagementService>> {
-        let name = get_device_name();
-
         let wasm_send = {
             let (send, recv) = mpsc::channel::<File<FlashStorage, { FileState::Reader }>>();
 
@@ -112,7 +110,6 @@ impl CatManagementService {
         };
 
         let cat_management_service = Arc::new(Mutex::new(CatManagementService {
-            name,
             program_hash: None,
             wasm_runner: wasm_send,
             file_upload_service: files,
@@ -126,6 +123,24 @@ impl CatManagementService {
             CAT_MANAGEMENT_SERVICE_PROGRAM_HASH_UUID,
             NimbleProperties::WRITE | NimbleProperties::READ,
         );
+        program_hash_characteristic.document(
+            "Current program hash",
+            esp32_nimble::BLE2904Format::UTF8,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
+
+        let name_characteristic = service.lock().create_characteristic(
+            CAT_MANAGEMENT_SERVICE_NAME_UUID,
+            NimbleProperties::WRITE | NimbleProperties::READ,
+        );
+        name_characteristic.document(
+            "Name",
+            esp32_nimble::BLE2904Format::UTF8,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
+
         let cat_management_service_clone = cat_management_service.clone();
         program_hash_characteristic.lock().on_read(move |value, _| {
             let service = cat_management_service_clone.lock();
@@ -153,25 +168,19 @@ impl CatManagementService {
                 .expect("failed to send new wasm module to runner");
         });
 
-        let name_characteristic = service.lock().create_characteristic(
-            CAT_MANAGEMENT_SERVICE_NAME_UUID,
-            NimbleProperties::WRITE | NimbleProperties::READ,
-        );
-        let cat_management_service_clone = cat_management_service.clone();
         name_characteristic.lock().on_read(move |value, _| {
-            let service = cat_management_service_clone.lock();
-            let hash = service.name.as_bytes();
-            value.set_value(hash);
+            // let service = cat_management_service_clone.lock();
+            // let hash = service.name.as_bytes();
+            // value.set_value(hash);
+            value.set_value(get_device_name().as_bytes());
         });
-        let cat_management_service_clone = cat_management_service.clone();
         name_characteristic.lock().on_write(move |args| {
-            let mut service = cat_management_service_clone.lock();
             let data = args.recv_data();
             if data.len() <= 3 {
                 error!("Name too short");
                 return;
             }
-            if data.len() > 32 {
+            if data.len() > 16 {
                 error!("Name too long");
                 return;
             }
@@ -181,7 +190,7 @@ impl CatManagementService {
                 return;
             };
 
-            service.name = new_name;
+            set_device_name(&new_name);
         });
 
         cat_management_service

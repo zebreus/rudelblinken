@@ -12,6 +12,7 @@ use esp_idf_hal::{
     gpio::{self, PinDriver},
     task,
 };
+use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvsPartition, NvsDefault};
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
 use nrf_logging_service::SerialLoggingService;
@@ -137,6 +138,12 @@ pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>
     LazyLock::new(|| {
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"))
     });
+
+pub static NVS_PARTITION: LazyLock<EspNvsPartition<NvsDefault>> = LazyLock::new(|| {
+    let nvs_default_partition: EspNvsPartition<NvsDefault> =
+        EspDefaultNvsPartition::take().unwrap();
+    nvs_default_partition
+});
 
 fn main() {
     // // Sleep a bit to allow the debugger to attach

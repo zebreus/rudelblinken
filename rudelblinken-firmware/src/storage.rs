@@ -20,6 +20,8 @@ use rudelblinken_filesystem::{
 };
 use thiserror::Error;
 
+use crate::NVS_PARTITION;
+
 pub struct FlashStorage {
     size: usize,
 
@@ -151,8 +153,7 @@ impl FlashStorage {
             ::tracing::info!("Got out_ptr: {:0x?}", first_pointer);
             memory_mapped_flash = first_pointer as _;
 
-            let nvs_default_partition: EspNvsPartition<NvsDefault> =
-                EspDefaultNvsPartition::take().or(Err(CreateStorageError::NoNvsPartitionFound))?;
+            let nvs_default_partition: EspNvsPartition<NvsDefault> = NVS_PARTITION.clone();
             let nvs = EspNvs::new(nvs_default_partition, "filesystem1", true)
                 .or(Err(CreateStorageError::FailedToOpenNvsNamespace))?;
 

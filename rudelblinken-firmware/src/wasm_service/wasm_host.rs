@@ -13,10 +13,7 @@ use std::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 
-use crate::{
-    cat_management_service::get_device_name::{self, get_device_name},
-    BLE_DEVICE,
-};
+use crate::{cat_management_service::device_name::get_device_name, BLE_DEVICE};
 
 pub enum WasmEvent {
     SetAdvertismentSettings(AdvertisementSettings),
