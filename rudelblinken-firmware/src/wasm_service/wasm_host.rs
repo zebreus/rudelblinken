@@ -60,7 +60,7 @@ impl Host for WasmHost {
             }
         }
 
-        caller.inner().set_fuel(99999).unwrap();
+        caller.inner().set_fuel(999_999).unwrap();
         return Ok(());
     }
 
