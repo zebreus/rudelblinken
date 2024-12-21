@@ -14,10 +14,19 @@ interface base {
     get-base-version: func() -> semantic-version;
 
     /// You need to yield periodically, as the watchdog will kill you if you dont
+    /// 
+    /// Will try to sleep for the given duration while still serving callbacks
+    /// 
+    /// Use micros = 0 to sleep for the minimum duration
+    /// 
+    /// Returns the new fuel amount
     @since(version = 0.0.1)
-    yield-now: func();
+    yield-now: func(micros: u64) -> u32;
 
-    /// Sleep for a given amount of time.
+    /// Get the remaining fuel
+    get-remaining-fuel: func() -> u32;
+
+    /// Sleep for a given amount of time without yielding
     @since(version = 0.0.1)
     sleep: func(micros: u64);
 
@@ -153,7 +162,7 @@ interface hardware {
     @since(version = 0.0.1)
     enum vibration-sensor-type {
         none,
-        basic,
+        ball,
     }
 
     /// Vibration sensor type.
@@ -205,7 +214,10 @@ interface ble-guest {
     @since(version = 0.0.1)
     record advertisement {
         address: u64,
+        // Company identifier
+        company: u16,
         // 32 byte of data
+        // TODO: Figure out the limit
         data: tuple<u32, u32, u32, u32, u32, u32, u32, u32>,
         // how many of the data bytes are actually used
         data-length: u8,
