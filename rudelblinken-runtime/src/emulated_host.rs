@@ -27,7 +27,7 @@ impl EmulatedHost {
 }
 
 impl Host for EmulatedHost {
-    fn yield_now(caller: &mut WrappedCaller<'_, Self>) -> Result<(), wasmi::Error> {
+    fn yield_now(caller: &mut WrappedCaller<'_, Self>, micros: u64) -> Result<u32, wasmi::Error> {
         //YIELD here
         // callbacks = return Ok(());
         // todo!();
@@ -39,7 +39,8 @@ impl Host for EmulatedHost {
             }
             // Self::log(caller, LogLevel::Warn, "Got something").unwrap();
         }
-        return Ok(());
+        caller.inner().set_fuel(999_999).unwrap();
+        return Ok(999_999);
     }
 
     fn sleep(_caller: &mut WrappedCaller<'_, Self>, micros: u64) -> Result<(), wasmi::Error> {

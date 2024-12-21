@@ -37,7 +37,10 @@ impl EmulatedHost {
 }
 
 impl Host for EmulatedHost {
-    fn yield_now(caller: &mut WrappedCaller<'_, Self>) -> Result<(), rudelblinken_runtime::Error> {
+    fn yield_now(
+        caller: &mut WrappedCaller<'_, Self>,
+        micros: u64,
+    ) -> Result<u32, rudelblinken_runtime::Error> {
         while let Ok(event) = caller.data_mut().host_events.try_recv() {
             match event {
                 Event::AdvertisementReceived(advertisement) => {
@@ -45,8 +48,8 @@ impl Host for EmulatedHost {
                 }
             }
         }
-        caller.inner().set_fuel(99999).unwrap();
-        return Ok(());
+        caller.inner().set_fuel(999_999).unwrap();
+        return Ok(999_999);
     }
 
     fn sleep(

@@ -204,9 +204,9 @@ pub fn link_base<T: Host>(
         "yield-now",
         Func::wrap(
             &mut store,
-            |caller: Caller<'_, T>| -> Result<(), wasmi::Error> {
+            |caller: Caller<'_, T>, micros: u64| -> Result<u32, wasmi::Error> {
                 let caller = WrappedCaller(caller);
-                return glue::yield_now(caller);
+                return glue::yield_now(caller, micros);
             },
         ),
     )?;

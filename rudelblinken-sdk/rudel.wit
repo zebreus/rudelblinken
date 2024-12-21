@@ -4,9 +4,9 @@ package rudel:base@0.0.1;
 @since(version = 0.0.1)
 interface base {
     /// Get the version of the rudel base
-    /// 
+    ///
     /// If your module requests newer versions of the modules than the host implements, it will attempt to link its old ones anyways and make them conforme to the requested signatures. You can use this function to get the actual version of the host functions.
-    /// 
+    ///
     /// If your module requests older versions of the host modules, the host will link compatible functions if available, or abort during linking.
     ///
     /// The host will mock out all functions it can not link.
@@ -14,11 +14,11 @@ interface base {
     get-base-version: func() -> semantic-version;
 
     /// You need to yield periodically, as the watchdog will kill you if you dont
-    /// 
+    ///
     /// Will try to sleep for the given duration while still serving callbacks
-    /// 
+    ///
     /// Use micros = 0 to sleep for the minimum duration
-    /// 
+    ///
     /// Returns the new fuel amount
     @since(version = 0.0.1)
     yield-now: func(micros: u64) -> u32;
@@ -56,11 +56,11 @@ interface base {
     log: func(level: log-level, message: string)  -> ();
 
     /// The name of this host. It is guaranteed to be unique, and will not change during the lifetime of the host.
-    /// 
+    ///
     /// The name is returned as a list of 16 bytes to avoid the need for allocations on the host side, as the buffer will be allocated by the guest. The name is UTF-8 encoded, and the buffer will be zero padded after the end of the string.
-    /// 
+    ///
     /// Once fixed size lists gets stabilized in WIT, this will be changed to a list<u8, 16>. That should not affect the ABI as the representation of a tuple and a fixed size list is the same.
-    /// 
+    ///
     /// Your host bindings should provide a wrapper for this that converts the list to a string.
     @since(version = 0.0.1)
     get-name: func() -> tuple<u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8>;
@@ -106,7 +106,7 @@ interface hardware {
     /// The values are in lux in the main direction of the LED
     ///
     /// You should probably not use this function directly, but use a higher level abstraction instead
-    /// 
+    ///
     /// The first-id is the index of the first LED to set. If the lux list is shorter than the number of LEDs, the remaining LEDs will not be modified. If the lux list is longer than the number of LEDs, the remaining values will be ignored.
     @since(version = 0.0.1)
     set-leds: func(first-id: u16, lux: list<u16>) -> ();
@@ -130,13 +130,13 @@ interface hardware {
     }
 
     /// Get information about a specific LED
-    /// 
+    ///
     /// If the id does not exist, the function will return a led-info with all values set to 0
     @since(version = 0.0.1)
     get-led-info: func(id: u16) -> led-info;
 
     /// Information about the ambient light sensor.
-    /// 
+    ///
     /// This could be extended in the future to indicate more types of sensors in future hardware revisions.
     @since(version = 0.0.1)
     enum ambient-light-type {
@@ -145,7 +145,7 @@ interface hardware {
     }
 
     /// Information about the ambient light sensor.
-    /// 
+    ///
     /// This could be extended in the future to indicate more types of sensors in future hardware revisions.
     @since(version = 0.0.1)
     get-ambient-light-type: func() -> ambient-light-type;
@@ -157,7 +157,7 @@ interface hardware {
     get-ambient-light: func() -> u32;
 
     /// Information about the vibration sensor.
-    /// 
+    ///
     /// This could be extended in the future to indicate more types of sensors in future hardware revisions.
     @since(version = 0.0.1)
     enum vibration-sensor-type {
@@ -166,13 +166,13 @@ interface hardware {
     }
 
     /// Vibration sensor type.
-    /// 
-    /// 
+    ///
+    ///
     @since(version = 0.0.1)
     get-vibration-sensor-type: func() -> vibration-sensor-type;
 
     /// Get a measure of the vibration level
-    /// 
+    ///
     /// TODO: Figure out what this should return
     @since(version = 0.0.1)
     get-vibration: func() -> u32;
@@ -197,7 +197,7 @@ interface ble {
         max-interval: u16,
     }
     /// The data to be sent in the advertisement
-    /// 
+    ///
     /// Up to 32 bytes of data
     @since(version = 0.0.1)
     type advertisement-data = list<u8>;
@@ -223,7 +223,7 @@ interface ble-guest {
         data-length: u8,
         received-at: u64,
     }
-    
+
     /// Check if the ble module is implemented
     ///
     /// The rudelblinken runtime will mock out all functions the it can not link.

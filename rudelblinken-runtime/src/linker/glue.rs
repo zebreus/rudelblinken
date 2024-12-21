@@ -14,8 +14,11 @@ pub(super) fn get_base_version<T: Host>(
     return Ok(());
 }
 /// `yield-now: func();`
-pub(super) fn yield_now<T: Host>(mut caller: WrappedCaller<'_, T>) -> Result<(), wasmi::Error> {
-    return T::yield_now(&mut caller);
+pub(super) fn yield_now<T: Host>(
+    mut caller: WrappedCaller<'_, T>,
+    micros: u64,
+) -> Result<u32, wasmi::Error> {
+    return T::yield_now(&mut caller, micros);
 }
 /// `sleep: func(micros: u64);`
 pub(super) fn sleep<T: Host>(

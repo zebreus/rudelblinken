@@ -1,11 +1,16 @@
 use esp32_nimble::{utilities::mutex::Mutex, BLEAdvertisementData};
+use esp_idf_hal::{
+    gpio::{self, PinDriver},
+    ledc::{self, config::TimerConfig, LedcDriver, LedcTimerDriver},
+    units::FromValueType,
+};
 use rudelblinken_runtime::{
     host::{AdvertisementSettings, Event, Host, LedColor, LedInfo, LogLevel},
     linker::linker::WrappedCaller,
 };
 use std::{
     cell::RefCell,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 use std::{
@@ -14,6 +19,21 @@ use std::{
 };
 
 use crate::{config::device_name::get_device_name, BLE_DEVICE};
+
+pub static LED_PIN: LazyLock<Mutex<LedcDriver<'static>>> = LazyLock::new(|| {
+    Mutex::new(
+        LedcDriver::new(
+            unsafe { ledc::CHANNEL0::new() },
+            LedcTimerDriver::new(
+                unsafe { ledc::TIMER0::new() },
+                &TimerConfig::new().frequency(25.kHz().into()),
+            )
+            .expect("timer init failed"),
+            unsafe { gpio::Gpio8::new() },
+        )
+        .expect("ledc driver init failed"),
+    )
+});
 
 pub enum WasmEvent {
     SetAdvertismentSettings(AdvertisementSettings),
@@ -28,6 +48,7 @@ pub struct WasmHost {
 
 impl WasmHost {
     pub fn new() -> (Sender<Event>, Receiver<WasmEvent>, Self) {
+        LazyLock::force(&LED_PIN);
         let (host_sender, host_receiver) = channel::<Event>();
         let (wasm_sender, wasm_receiver) = channel::<WasmEvent>();
         return (
@@ -42,7 +63,10 @@ impl WasmHost {
 }
 
 impl Host for WasmHost {
-    fn yield_now(caller: &mut WrappedCaller<'_, Self>) -> Result<(), rudelblinken_runtime::Error> {
+    fn yield_now(
+        caller: &mut WrappedCaller<'_, Self>,
+        micros: u64,
+    ) -> Result<u32, rudelblinken_runtime::Error> {
         // Sleep for 1 freeRTOS tick to force yielding
         tracing::error!("YIELD CALLED");
         std::thread::sleep(Duration::from_millis(1));
@@ -61,7 +85,7 @@ impl Host for WasmHost {
         }
 
         caller.inner().set_fuel(999_999).unwrap();
-        return Ok(());
+        return Ok(999_999);
     }
 
     fn sleep(
@@ -112,9 +136,10 @@ impl Host for WasmHost {
     fn set_rgb(
         _caller: &mut WrappedCaller<'_, Self>,
         _color: &LedColor,
-        _lux: u32,
+        lux: u32,
     ) -> Result<(), rudelblinken_runtime::Error> {
-        todo!();
+        LED_PIN.lock().set_duty(lux);
+        Ok(())
     }
 
     fn led_count(
@@ -129,7 +154,7 @@ impl Host for WasmHost {
     ) -> Result<LedInfo, rudelblinken_runtime::Error> {
         return Ok(LedInfo {
             color: LedColor::new(0, 0, 0),
-            max_lux: 0,
+            max_lux: LED_PIN.lock().get_max_duty() as u16,
         });
     }
 

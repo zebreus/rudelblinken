@@ -151,7 +151,7 @@ where
     Self: Sized,
 {
     #[doc = "You need to yield periodically, as the watchdog will kill you if you dont"]
-    fn yield_now(context: &mut WrappedCaller<'_, Self>) -> Result<(), wasmi::Error>;
+    fn yield_now(context: &mut WrappedCaller<'_, Self>, micros: u64) -> Result<u32, wasmi::Error>;
     #[doc = " Sleep for a given amount of time."]
     fn sleep(context: &mut WrappedCaller<'_, Self>, micros: u64) -> Result<(), wasmi::Error>;
 
