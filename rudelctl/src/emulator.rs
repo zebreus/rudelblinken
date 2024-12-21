@@ -148,18 +148,13 @@ impl Emulator {
             .into_iter()
             .map(|socket_name| async {
                 let other_socket = UnixDatagram::unbound()?;
-                let socket_name_copy = socket_name.clone();
-                match other_socket.send_to(data, socket_name).await {
+                match other_socket.send_to(data, socket_name.clone()).await {
                     Ok(_) => {
                         // println!("Sent data to {}", socket.display());
                     }
                     Err(err) => {
-                        eprintln!(
-                            "Failed to send data to {}: {}",
-                            socket_name_copy.display(),
-                            err
-                        );
-                        remove_file(socket_name_copy).await?;
+                        eprintln!("Failed to send data to {}: {}", socket_name.display(), err);
+                        remove_file(socket_name).await?;
                     }
                 }
                 Ok(()) as Result<(), EmulatorError>
