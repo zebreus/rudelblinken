@@ -1,15 +1,15 @@
 use core::str;
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsDefault};
-use std::sync::{LazyLock, Mutex, RwLock};
+use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsDefault};
+use std::sync::{LazyLock, RwLock};
 
-use crate::NVS_PARTITION;
+use crate::config::NVS_PARTITION;
+
+use super::CONFIG_NVS;
 
 static DEVICE_NAME: LazyLock<RwLock<String>> = LazyLock::new(|| {
     let name;
 
-    let nvs_default_partition: EspNvsPartition<NvsDefault> = NVS_PARTITION.clone();
-    let nvs = EspNvs::new(nvs_default_partition, "config", true)
-        .expect("Failed to open NVS storage for configuration");
+    let nvs = CONFIG_NVS.read().unwrap();
 
     let mut buffer = [0u8; 16];
     if let Ok(Some(name)) = nvs.get_blob("device_name", &mut buffer) {
@@ -35,9 +35,7 @@ pub fn get_device_name() -> String {
 }
 
 pub fn set_device_name(name: &str) {
-    let nvs_default_partition: EspNvsPartition<NvsDefault> = NVS_PARTITION.clone();
-    let mut nvs = EspNvs::new(nvs_default_partition, "config", true)
-        .expect("Failed to open NVS storage for configuration");
+    let mut nvs = CONFIG_NVS.write().unwrap();
 
     nvs.set_blob("device_name", name.as_bytes()).unwrap();
     let mut device_name = DEVICE_NAME.write().unwrap();

@@ -1,10 +1,10 @@
+use crate::config::device_name::{get_device_name, set_device_name};
 use crate::{
     file_upload_service::{self, FileUploadService},
     service_helpers::DocumentableCharacteristic,
     storage::FlashStorage,
     wasm_service::wasm_host::WasmHost,
 };
-use device_name::{get_device_name, set_device_name};
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
     BLEAdvertisementData, BLEAdvertising, BLEDevice, BLEServer, NimbleProperties,
@@ -21,8 +21,6 @@ use std::{
 };
 use tracing::{debug, error, info, instrument, Level};
 use wasmi::{AsContext, Caller, Engine, Linker, Module, Store};
-
-pub mod device_name;
 
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;

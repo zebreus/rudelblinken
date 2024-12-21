@@ -20,7 +20,7 @@ use rudelblinken_filesystem::{
 };
 use thiserror::Error;
 
-use crate::NVS_PARTITION;
+use crate::config::NVS_PARTITION;
 
 pub struct FlashStorage {
     size: usize,

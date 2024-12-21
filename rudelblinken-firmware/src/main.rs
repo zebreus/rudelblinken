@@ -21,6 +21,7 @@ use storage::setup_storage;
 use wasm_service::wasm_host;
 
 mod cat_management_service;
+mod config;
 mod file_upload_service;
 mod nrf_logging_service;
 pub mod service_helpers;
@@ -138,12 +139,6 @@ pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>
     LazyLock::new(|| {
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"))
     });
-
-pub static NVS_PARTITION: LazyLock<EspNvsPartition<NvsDefault>> = LazyLock::new(|| {
-    let nvs_default_partition: EspNvsPartition<NvsDefault> =
-        EspDefaultNvsPartition::take().unwrap();
-    nvs_default_partition
-});
 
 fn main() {
     // // Sleep a bit to allow the debugger to attach
