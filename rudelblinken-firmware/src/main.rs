@@ -10,10 +10,7 @@ use esp32_nimble::{
 };
 use esp_idf_hal::{
     gpio::{self, PinDriver},
-    ledc::{config::TimerConfig, LedcDriver, LedcTimerDriver},
-    prelude::Peripherals,
     task,
-    units::FromValueType,
 };
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
