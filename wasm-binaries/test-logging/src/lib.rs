@@ -1,4 +1,6 @@
-use rudelblinken_sdk::{export, exports, get_name, log, time, yield_now, Guest, LogLevel};
+use rudelblinken_sdk::{
+    export, exports, get_name, log, time, yield_now, Advertisement, BleGuest, Guest, LogLevel,
+};
 use talc::{ClaimOnOom, Span, Talc, Talck};
 
 const HEAP_SIZE: usize = 36624;
@@ -16,6 +18,9 @@ impl Guest for TestLogging {
         log(LogLevel::Debug, &format!("This is a debug message"));
         log(LogLevel::Trace, &format!("This is a trace message"));
     }
+}
+impl BleGuest for TestLogging {
+    fn on_advertisement(_advertisement: Advertisement) {}
 }
 
 export! {TestLogging}

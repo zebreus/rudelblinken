@@ -11,10 +11,10 @@
 //! use rudelblinken_runtime::linker::setup;
 //!
 //! const WASM_MOD: &[u8] = include_bytes!(
-//!     "../../rudelblinken-wasm/target/wasm32-unknown-unknown/release/rudelblinken_wasm.wasm"
+//!     "../../wasm-binaries/binaries/test_logging.wasm"
 //! );
 //!
-//! let host = EmulatedHost::new();
+//! let (_, host) = EmulatedHost::new();
 //! let mut instance = setup(WASM_MOD, host).unwrap();
 //! instance.run().unwrap();
 //! ```
