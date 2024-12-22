@@ -2,6 +2,8 @@ use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsDefau
 use rudelblinken_runtime::host::LedColor;
 use std::sync::{LazyLock, RwLock};
 
+pub mod main_program;
+
 pub static NVS_PARTITION: LazyLock<EspNvsPartition<NvsDefault>> = LazyLock::new(|| {
     let nvs_default_partition: EspNvsPartition<NvsDefault> =
         EspDefaultNvsPartition::take().unwrap();

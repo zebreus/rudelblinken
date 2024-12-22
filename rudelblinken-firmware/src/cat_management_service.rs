@@ -1,3 +1,5 @@
+use crate::config::device_name::{get_device_name, set_device_name};
+use crate::config::main_program::{get_main_program, set_main_program};
 use crate::config::{get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
 use crate::{
     file_upload_service::{self, FileUploadService},
@@ -39,7 +41,6 @@ const CAT_MANAGEMENT_SERVICE_WASM_GUEST_CONFIG_UUID: BleUuid =
     BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE_WASM_GUEST_CONFIG);
 
 pub struct CatManagementService {
-    program_hash: Option<[u8; 32]>,
     pub wasm_runner: mpsc::Sender<File<FlashStorage, { FileState::Reader }>>,
     file_upload_service: Arc<Mutex<FileUploadService>>,
 }
@@ -71,6 +72,7 @@ fn wasm_runner(
 
         info!("before creating and linking instance");
         log_heap_stats();
+
         let mut instance = match rudelblinken_runtime::linker::setup(&file, host.clone()) {
             Ok(instance) => instance,
             Err(error) => {
@@ -116,7 +118,6 @@ impl CatManagementService {
         };
 
         let cat_management_service = Arc::new(Mutex::new(CatManagementService {
-            program_hash: None,
             wasm_runner: wasm_send,
             file_upload_service: files,
         }));
@@ -169,9 +170,8 @@ impl CatManagementService {
 
         let cat_management_service_clone = cat_management_service.clone();
         program_hash_characteristic.lock().on_read(move |value, _| {
-            let service = cat_management_service_clone.lock();
-            let hash = service.program_hash.unwrap_or([0; 32]);
-            value.set_value(&hash);
+            let hash = get_main_program();
+            value.set_value(&hash.unwrap_or([0u8; 32]));
         });
         let cat_management_service_clone = cat_management_service.clone();
         program_hash_characteristic.lock().on_write(move |args| {
@@ -181,7 +181,7 @@ impl CatManagementService {
                 return;
             };
 
-            service.program_hash = Some(hash);
+            set_main_program(&Some(hash));
             let file_upload_service = service.file_upload_service.lock();
             let file = file_upload_service
                 .get_file(&hash)
@@ -242,8 +242,25 @@ impl CatManagementService {
             .on_write(move |args| {
                 set_config::<WasmGuestConfig>(args.recv_data().to_vec());
             });
+        cat_management_service.lock().on_boot();
 
         cat_management_service
+    }
+
+    fn on_boot(&mut self) {
+        let Some(hash) = get_main_program() else {
+            return;
+        };
+        let file_upload_service = self.file_upload_service.lock();
+        let Some(file) = file_upload_service.get_file(&hash) else {
+            return;
+        };
+        let Ok(content) = file.content.upgrade() else {
+            return;
+        };
+        self.wasm_runner
+            .send(content)
+            .expect("failed to send initial wasm module to runner");
     }
 }
 
