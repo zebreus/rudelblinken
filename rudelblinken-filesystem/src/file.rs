@@ -73,6 +73,23 @@ pub enum WriteFileToStorageError {
     WriteFileContentError(#[from] WriteFileError),
 }
 
+/// Represents an error that can occur while upgrading a file
+#[derive(Error, Debug)]
+pub enum UpgradeFileError {
+    /// Only weak references and readers can be upgraded.
+    #[error("Only weak references and readers can be upgraded.")]
+    CannotUpgradeWriter,
+    /// Cannot read a file that has been deleted.
+    #[error("Cannot read a file that has been deleted.")]
+    FileHasBeenDeleted,
+    /// Cannot read a file that is not ready yet.
+    #[error("Cannot read a file that is not ready yet.")]
+    NotReady,
+    /// Cannot read a file that is marked for deletion.
+    #[error("Cannot read a file that is marked for deletion.")]
+    MarkedForDeletion,
+}
+
 /// Represents an error that can occur while deleting file content.
 #[derive(Error, Debug)]
 pub enum DeleteFileContentError {
@@ -375,23 +392,23 @@ impl<T: Storage + 'static + Send + Sync, const STATE: FileState> File<T, STATE> 
     /// Upgrading a writer will always fail. Use commit instead.
     ///
     /// Upgrading will always fail while there is a writer alive.
-    pub fn upgrade(&self) -> Option<File<T, { FileState::Reader }>> {
+    pub fn upgrade(&self) -> Result<File<T, { FileState::Reader }>, UpgradeFileError> {
         if STATE == FileState::Writer {
-            return None;
+            return Err(UpgradeFileError::CannotUpgradeWriter);
         }
         let mut info = unsafe { self.info.as_ref().write().unwrap() };
         if info.has_been_deleted {
-            return None;
+            return Err(UpgradeFileError::FileHasBeenDeleted);
         }
         if !self.metadata.ready() {
-            return None;
+            return Err(UpgradeFileError::NotReady);
         }
         if self.metadata.marked_for_deletion() {
-            return None;
+            return Err(UpgradeFileError::MarkedForDeletion);
         }
 
         info.reader_count += 1;
-        Some(File::<T, { FileState::Reader }> {
+        Ok(File::<T, { FileState::Reader }> {
             content: self.content,
             metadata: self.metadata,
             info: self.info,
@@ -807,7 +824,7 @@ mod tests {
         assert!(File::is_last(&content));
         content.mark_for_deletion().unwrap();
         drop(content);
-        let None = weak_content.upgrade() else {
+        let Err(_) = weak_content.upgrade() else {
             panic!("Should not be able to upgrade when there are no strong references left");
         };
     }
@@ -820,7 +837,7 @@ mod tests {
         assert!(File::is_last(&content));
         drop(content);
         weak_content.mark_for_deletion().unwrap();
-        let None = weak_content.upgrade() else {
+        let Err(_) = weak_content.upgrade() else {
             panic!("Should not be able to upgrade when there are no strong references left");
         };
     }
@@ -857,10 +874,10 @@ mod tests {
         let content = call_new();
         let weak_content = content.downgrade();
         File::mark_for_deletion(&content).unwrap();
-        let None = content.upgrade() else {
+        let Err(_) = content.upgrade() else {
             panic!("Should not be able to upgrade when there are no strong references left");
         };
-        let None = weak_content.upgrade() else {
+        let Err(_) = weak_content.upgrade() else {
             panic!("Should not be able to upgrade when there are no strong references left");
         };
     }

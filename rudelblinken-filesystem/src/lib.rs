@@ -531,7 +531,7 @@ mod tests {
         let file = filesystem.read_file("fancy").unwrap();
         let weak_ref = file;
         filesystem.delete_file("fancy").unwrap();
-        let None = weak_ref.upgrade() else {
+        let Err(_) = weak_ref.upgrade() else {
             panic!("Should not be able to upgrade deleted file");
         };
         let None = filesystem.read_file("fancy") else {
