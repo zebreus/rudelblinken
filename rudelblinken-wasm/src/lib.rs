@@ -91,9 +91,19 @@ impl Guest for Test {
 
         log(LogLevel::Info, &format!("I have {} leds", led_count()));
         loop {
-            yield_now(1000);
+            yield_now(1_000);
             if let Ok(mut state) = CYCLE_STATE.try_lock() {
-                state.update_progress((time() / 1000) as u32);
+                let t = (time() / 1000) as u32;
+                /* log(
+                    LogLevel::Info,
+                    &format!(
+                        "Updating after {} ms, {} nudges",
+                        t - state.prog_time,
+                        state.off_cnt
+                    ),
+                ); */
+
+                state.update_progress(t);
                 let prog = state.progress;
                 drop(state);
                 set_advertisement_data(&vec![0x00, 0x00, 0xca, 0x7e, 0xa2, prog]);
@@ -103,7 +113,12 @@ impl Guest for Test {
                         green: 0xff,
                         blue: 0xff,
                     },
-                    (max_lux >> 8) * (prog as u32),
+                    if 192 <= prog {
+                        // (max_lux >> 8) * (prog as u32)
+                        max_lux
+                    } else {
+                        0
+                    },
                 );
             }
         }
@@ -122,6 +137,7 @@ impl BleGuest for Test {
             if let Ok(mut state) = CYCLE_STATE.try_lock() {
                 state.off_cnt += 1;
                 state.off_sum += slice[3].wrapping_sub(state.progress) as i8 as i32;
+                state.update_progress((advertisement.received_at / 1000) as u32)
             }
         }
     }

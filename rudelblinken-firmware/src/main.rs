@@ -216,15 +216,17 @@ fn main() {
             ble_scan
                 .start(ble_device, 1000, |dev, data| {
                     if let Some(md) = data.manufacture_data() {
+                        let now = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+
                         let mut padded_mac = [0u8; 8];
                         padded_mac[0..6].copy_from_slice(&dev.addr().as_le_bytes());
-                        let now = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
                         let mut data = [0u8; 32];
                         let data_length = std::cmp::min(md.payload.len(), 32);
                         data[..data_length].copy_from_slice(&md.payload[..data_length]);
                         sender.send(Event::AdvertisementReceived(Advertisement {
+                            company: md.company_identifier,
                             address: padded_mac,
-                            data: data,
+                            data,
                             data_length: data_length as u8,
                             received_at: now,
                         }));

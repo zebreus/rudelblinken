@@ -67,20 +67,26 @@ impl Host for WasmHost {
         caller: &mut WrappedCaller<'_, Self>,
         micros: u64,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        // Sleep for 1 freeRTOS tick to force yielding
-        tracing::error!("YIELD CALLED");
-        std::thread::sleep(Duration::from_millis(1));
+        let yield_until = unsafe { esp_idf_sys::esp_timer_get_time() } as u64 + micros;
 
         loop {
-            let receiver = caller.data().host_events.lock();
-            let Ok(event) = receiver.try_recv() else {
-                break;
-            };
-            drop(receiver);
-            match event {
-                Event::AdvertisementReceived(advertisement) => {
-                    caller.on_advertisement(advertisement)?;
+            // Sleep for 1 freeRTOS tick to force yielding
+            std::thread::sleep(Duration::from_millis(1));
+
+            loop {
+                let receiver = caller.data().host_events.lock();
+                let Ok(event) = receiver.try_recv() else {
+                    break;
+                };
+                drop(receiver);
+                match event {
+                    Event::AdvertisementReceived(advertisement) => {
+                        caller.on_advertisement(advertisement)?;
+                    }
                 }
+            }
+            if yield_until < unsafe { esp_idf_sys::esp_timer_get_time() } as u64 {
+                break;
             }
         }
 
@@ -128,7 +134,7 @@ impl Host for WasmHost {
     fn set_leds(
         _caller: &mut WrappedCaller<'_, Self>,
         _lux: &[u16],
-    ) -> Result<(), rudelblinken_runtime::Error> {
+    ) -> Result<u32, rudelblinken_runtime::Error> {
         todo!();
         // return Ok(());
     }
@@ -137,9 +143,11 @@ impl Host for WasmHost {
         _caller: &mut WrappedCaller<'_, Self>,
         _color: &LedColor,
         lux: u32,
-    ) -> Result<(), rudelblinken_runtime::Error> {
-        LED_PIN.lock().set_duty(lux);
-        Ok(())
+    ) -> Result<u32, rudelblinken_runtime::Error> {
+        match LED_PIN.lock().set_duty(lux) {
+            Ok(_) => Ok(0),
+            Err(_) => Ok(1),
+        }
     }
 
     fn led_count(
@@ -185,36 +193,44 @@ impl Host for WasmHost {
     fn configure_advertisement(
         caller: &mut WrappedCaller<'_, Self>,
         settings: AdvertisementSettings,
-    ) -> Result<(), rudelblinken_runtime::Error> {
+    ) -> Result<u32, rudelblinken_runtime::Error> {
         let min_interval = settings.min_interval.clamp(400, 1000);
         let max_interval = settings.max_interval.clamp(min_interval, 1500);
 
         let ble_device = unsafe { BLE_DEVICE.get_mut().unwrap() };
         let mut ble_advertising = ble_device.get_advertising().lock();
         ble_advertising
+            .stop()
+            .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
+        ble_advertising
             .min_interval(min_interval)
             .max_interval(max_interval);
-        ble_advertising.stop().unwrap();
-        ble_advertising.start().unwrap();
-        return Ok(());
+        ble_advertising
+            .start()
+            .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
+        Ok(0)
     }
 
     fn set_advertisement_data(
         caller: &mut WrappedCaller<'_, Self>,
         data: &[u8],
-    ) -> Result<(), rudelblinken_runtime::Error> {
+    ) -> Result<u32, rudelblinken_runtime::Error> {
         let ble_device = unsafe { BLE_DEVICE.get_mut().unwrap() };
         let mut ble_advertising = ble_device.get_advertising().lock();
         ble_advertising
-            .set_data(
-                BLEAdvertisementData::new()
-                    .name(&Host::get_name(caller).unwrap())
-                    .manufacturer_data(&data),
-            )
-            .unwrap();
-        ble_advertising.stop().unwrap();
-        ble_advertising.start().unwrap();
+            .stop()
+            .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
+        if let Err(_) = ble_advertising.set_data(
+            BLEAdvertisementData::new()
+                .name(&Host::get_name(caller)?)
+                .manufacturer_data(&data),
+        ) {
+            return Ok(1);
+        }
+        ble_advertising
+            .start()
+            .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
 
-        return Ok(());
+        Ok(0)
     }
 }

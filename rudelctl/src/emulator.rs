@@ -67,6 +67,7 @@ fn mac_to_name(mac: &[u8; 6]) -> String {
 #[repr(packed)]
 #[derive(IntoBytes, FromBytes, Clone, Copy, KnownLayout, Immutable)]
 pub struct Advertisement {
+    pub company: u16,
     pub address: [u8; 6],
     /// 32 byte of data
     pub data: [u8; 32],
@@ -205,6 +206,7 @@ impl Emulator {
                                     0,
                                     0,
                                 ],
+                                company: received_advertisement.company,
                                 data: received_advertisement.data,
                                 data_length: received_advertisement.data_length,
                                 received_at: start_time.elapsed().as_micros() as u64,
@@ -238,6 +240,7 @@ impl Emulator {
                     advertisment_data_array[0..advertisment_data_length]
                         .copy_from_slice(&advertisment_data[0..advertisment_data_length]);
                     let advertisement = Advertisement {
+                        company: 0u16,
                         address: self.address,
                         data: advertisment_data_array,
                         data_length: advertisment_data_length as u8,

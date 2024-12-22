@@ -435,7 +435,7 @@ pub mod rudel {
             /// You should probably not use this function directly, but use a higher level abstraction instead
             ///
             /// The first-id is the index of the first LED to set. If the lux list is shorter than the number of LEDs, the remaining LEDs will not be modified. If the lux list is longer than the number of LEDs, the remaining values will be ignored.
-            pub fn set_leds(first_id: u16, lux: &[u16]) {
+            pub fn set_leds(first_id: u16, lux: &[u16]) -> u32 {
                 unsafe {
                     let vec0 = lux;
                     let ptr0 = vec0.as_ptr().cast::<u8>();
@@ -444,36 +444,38 @@ pub mod rudel {
                     #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
                     extern "C" {
                         #[link_name = "set-leds"]
-                        fn wit_import(_: i32, _: *mut u8, _: usize);
+                        fn wit_import(_: i32, _: *mut u8, _: usize) -> i32;
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: i32, _: *mut u8, _: usize) {
+                    fn wit_import(_: i32, _: *mut u8, _: usize) -> i32 {
                         unreachable!()
                     }
-                    wit_import(_rt::as_i32(&first_id), ptr0.cast_mut(), len0);
+                    let ret = wit_import(_rt::as_i32(&first_id), ptr0.cast_mut(), len0);
+                    ret as u32
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
             /// Convenience function to set all LEDs
-            pub fn set_rgb(color: LedColor, lux: u32) {
+            pub fn set_rgb(color: LedColor, lux: u32) -> u32 {
                 unsafe {
                     let LedColor { red: red0, green: green0, blue: blue0 } = color;
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "rudel:base/hardware@0.0.1")]
                     extern "C" {
                         #[link_name = "set-rgb"]
-                        fn wit_import(_: i32, _: i32, _: i32, _: i32);
+                        fn wit_import(_: i32, _: i32, _: i32, _: i32) -> i32;
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: i32, _: i32, _: i32, _: i32) {
+                    fn wit_import(_: i32, _: i32, _: i32, _: i32) -> i32 {
                         unreachable!()
                     }
-                    wit_import(
+                    let ret = wit_import(
                         _rt::as_i32(red0),
                         _rt::as_i32(green0),
                         _rt::as_i32(blue0),
                         _rt::as_i32(&lux),
                     );
+                    ret as u32
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
@@ -667,7 +669,7 @@ pub mod rudel {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            pub fn configure_advertisement(settings: AdvertisementSettings) {
+            pub fn configure_advertisement(settings: AdvertisementSettings) -> u32 {
                 unsafe {
                     let AdvertisementSettings {
                         min_interval: min_interval0,
@@ -677,17 +679,21 @@ pub mod rudel {
                     #[link(wasm_import_module = "rudel:base/ble@0.0.1")]
                     extern "C" {
                         #[link_name = "configure-advertisement"]
-                        fn wit_import(_: i32, _: i32);
+                        fn wit_import(_: i32, _: i32) -> i32;
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: i32, _: i32) {
+                    fn wit_import(_: i32, _: i32) -> i32 {
                         unreachable!()
                     }
-                    wit_import(_rt::as_i32(min_interval0), _rt::as_i32(max_interval0));
+                    let ret = wit_import(
+                        _rt::as_i32(min_interval0),
+                        _rt::as_i32(max_interval0),
+                    );
+                    ret as u32
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            pub fn set_advertisement_data(data: &AdvertisementData) {
+            pub fn set_advertisement_data(data: &AdvertisementData) -> u32 {
                 unsafe {
                     let vec0 = data;
                     let ptr0 = vec0.as_ptr().cast::<u8>();
@@ -696,13 +702,14 @@ pub mod rudel {
                     #[link(wasm_import_module = "rudel:base/ble@0.0.1")]
                     extern "C" {
                         #[link_name = "set-advertisement-data"]
-                        fn wit_import(_: *mut u8, _: usize);
+                        fn wit_import(_: *mut u8, _: usize) -> i32;
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    fn wit_import(_: *mut u8, _: usize) {
+                    fn wit_import(_: *mut u8, _: usize) -> i32 {
                         unreachable!()
                     }
-                    wit_import(ptr0.cast_mut(), len0);
+                    let ret = wit_import(ptr0.cast_mut(), len0);
+                    ret as u32
                 }
             }
         }
@@ -967,23 +974,23 @@ level\x03\x07messages\x01\0\x04\0\x03log\x01\x09\x01o\x10}}}}}}}}}}}}}}}}\x01@\0
 color\x03\x07max-lux{\x04\0\x08led-info\x03\0\x04\x01m\x02\x04none\x05basic\x04\0\
 \x12ambient-light-type\x03\0\x06\x01m\x02\x04none\x04ball\x04\0\x15vibration-sen\
 sor-type\x03\0\x08\x01@\0\0\x01\x04\0\x14get-hardware-version\x01\x0a\x01p{\x01@\
-\x02\x08first-id{\x03lux\x0b\x01\0\x04\0\x08set-leds\x01\x0c\x01@\x02\x05color\x03\
-\x03luxy\x01\0\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led-count\x01\x0e\x01\
-@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\0\x16get-ambie\
-nt-light-type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\x09\x04\0\x19g\
-et-vibration-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\0\x19rudel:b\
-ase/hardware@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10semantic-versio\
-n\x03\0\0\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16advertisement-sett\
-ings\x03\0\x02\x01p}\x04\0\x12advertisement-data\x03\0\x04\x01@\0\0\x01\x04\0\x0f\
-get-ble-version\x01\x06\x01@\x01\x08settings\x03\x01\0\x04\0\x17configure-advert\
-isement\x01\x07\x01@\x01\x04data\x05\x01\0\x04\0\x16set-advertisement-data\x01\x08\
-\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x01B\x05\x01o\x08yyyyyyyy\x01r\x05\x07add\
-ressw\x07company{\x04data\0\x0bdata-length}\x0breceived-atw\x04\0\x0dadvertiseme\
-nt\x03\0\x01\x01@\x01\x0dadvertisement\x02\x01\0\x04\0\x10on-advertisement\x01\x03\
-\x04\0\x1arudel:base/ble-guest@0.0.1\x05\x04\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\
-\0\x04\0\x14rudel:base/run@0.0.1\x05\x05\x04\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\
-\x0b\x01\0\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-compo\
-nent\x070.220.0\x10wit-bindgen-rust\x060.36.0";
+\x02\x08first-id{\x03lux\x0b\0y\x04\0\x08set-leds\x01\x0c\x01@\x02\x05color\x03\x03\
+luxy\0y\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led-count\x01\x0e\x01@\x01\x02\
+id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\0\x16get-ambient-light-\
+type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\x09\x04\0\x19get-vibrat\
+ion-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\0\x19rudel:base/hardw\
+are@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10semantic-version\x03\0\0\
+\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16advertisement-settings\x03\0\
+\x02\x01p}\x04\0\x12advertisement-data\x03\0\x04\x01@\0\0\x01\x04\0\x0fget-ble-v\
+ersion\x01\x06\x01@\x01\x08settings\x03\0y\x04\0\x17configure-advertisement\x01\x07\
+\x01@\x01\x04data\x05\0y\x04\0\x16set-advertisement-data\x01\x08\x03\0\x14rudel:\
+base/ble@0.0.1\x05\x03\x01B\x05\x01o\x08yyyyyyyy\x01r\x05\x07addressw\x07company\
+{\x04data\0\x0bdata-length}\x0breceived-atw\x04\0\x0dadvertisement\x03\0\x01\x01\
+@\x01\x0dadvertisement\x02\x01\0\x04\0\x10on-advertisement\x01\x03\x04\0\x1arude\
+l:base/ble-guest@0.0.1\x05\x04\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\0\x04\0\x14\
+rudel:base/run@0.0.1\x05\x05\x04\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\x0b\x01\0\
+\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.\
+220.0\x10wit-bindgen-rust\x060.36.0";
         };
     };
 }
@@ -1006,17 +1013,17 @@ level\x03\x07messages\x01\0\x04\0\x03log\x01\x09\x01o\x10}}}}}}}}}}}}}}}}\x01@\0
 color\x03\x07max-lux{\x04\0\x08led-info\x03\0\x04\x01m\x02\x04none\x05basic\x04\0\
 \x12ambient-light-type\x03\0\x06\x01m\x02\x04none\x04ball\x04\0\x15vibration-sen\
 sor-type\x03\0\x08\x01@\0\0\x01\x04\0\x14get-hardware-version\x01\x0a\x01p{\x01@\
-\x02\x08first-id{\x03lux\x0b\x01\0\x04\0\x08set-leds\x01\x0c\x01@\x02\x05color\x03\
-\x03luxy\x01\0\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led-count\x01\x0e\x01\
-@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\0\x16get-ambie\
-nt-light-type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\x09\x04\0\x19g\
-et-vibration-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\0\x19rudel:b\
-ase/hardware@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10semantic-versio\
-n\x03\0\0\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16advertisement-sett\
-ings\x03\0\x02\x01p}\x04\0\x12advertisement-data\x03\0\x04\x01@\0\0\x01\x04\0\x0f\
-get-ble-version\x01\x06\x01@\x01\x08settings\x03\x01\0\x04\0\x17configure-advert\
-isement\x01\x07\x01@\x01\x04data\x05\x01\0\x04\0\x16set-advertisement-data\x01\x08\
-\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x04\06rudel:base/rudel-with-all-of-its-ex\
-ports-removed@0.0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-exports-removed\x03\0\
-\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bi\
-ndgen-rust\x060.36.0";
+\x02\x08first-id{\x03lux\x0b\0y\x04\0\x08set-leds\x01\x0c\x01@\x02\x05color\x03\x03\
+luxy\0y\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led-count\x01\x0e\x01@\x01\x02\
+id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\0\x16get-ambient-light-\
+type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\x09\x04\0\x19get-vibrat\
+ion-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\0\x19rudel:base/hardw\
+are@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10semantic-version\x03\0\0\
+\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16advertisement-settings\x03\0\
+\x02\x01p}\x04\0\x12advertisement-data\x03\0\x04\x01@\0\0\x01\x04\0\x0fget-ble-v\
+ersion\x01\x06\x01@\x01\x08settings\x03\0y\x04\0\x17configure-advertisement\x01\x07\
+\x01@\x01\x04data\x05\0y\x04\0\x16set-advertisement-data\x01\x08\x03\0\x14rudel:\
+base/ble@0.0.1\x05\x03\x04\06rudel:base/rudel-with-all-of-its-exports-removed@0.\
+0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-exports-removed\x03\0\0\0G\x09produce\
+rs\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bindgen-rust\x060.\
+36.0";

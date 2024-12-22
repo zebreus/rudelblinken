@@ -82,16 +82,16 @@ impl Host for EmulatedHost {
     fn set_leds(
         _caller: &mut WrappedCaller<'_, Self>,
         _lux: &[u16],
-    ) -> Result<(), rudelblinken_runtime::Error> {
-        return Ok(());
+    ) -> Result<u32, rudelblinken_runtime::Error> {
+        Ok(0)
     }
 
     fn set_rgb(
         _caller: &mut WrappedCaller<'_, Self>,
         _color: &LedColor,
         _lux: u32,
-    ) -> Result<(), rudelblinken_runtime::Error> {
-        return Ok(());
+    ) -> Result<u32, rudelblinken_runtime::Error> {
+        Ok(0)
     }
 
     fn led_count(
@@ -137,22 +137,22 @@ impl Host for EmulatedHost {
     fn configure_advertisement(
         caller: &mut WrappedCaller<'_, Self>,
         settings: AdvertisementSettings,
-    ) -> Result<(), rudelblinken_runtime::Error> {
+    ) -> Result<u32, rudelblinken_runtime::Error> {
         caller
             .data_mut()
             .wasm_events
             .blocking_send(WasmEvent::SetAdvertismentSettings(settings));
-        return Ok(());
+        Ok(0)
     }
 
     fn set_advertisement_data(
         caller: &mut WrappedCaller<'_, Self>,
         data: &[u8],
-    ) -> Result<(), rudelblinken_runtime::Error> {
+    ) -> Result<u32, rudelblinken_runtime::Error> {
         caller
             .data_mut()
             .wasm_events
             .blocking_send(WasmEvent::SetAdvertismentData(data.into()));
-        return Ok(());
+        Ok(0)
     }
 }

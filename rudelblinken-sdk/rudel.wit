@@ -109,11 +109,11 @@ interface hardware {
     ///
     /// The first-id is the index of the first LED to set. If the lux list is shorter than the number of LEDs, the remaining LEDs will not be modified. If the lux list is longer than the number of LEDs, the remaining values will be ignored.
     @since(version = 0.0.1)
-    set-leds: func(first-id: u16, lux: list<u16>) -> ();
+    set-leds: func(first-id: u16, lux: list<u16>) -> u32;
 
     /// Convenience function to set all LEDs
     @since(version = 0.0.1)
-    set-rgb: func(color: led-color, lux: u32) -> ();
+    set-rgb: func(color: led-color, lux: u32) -> u32;
 
     /// Get information about the number of LEDs
     @since(version = 0.0.1)
@@ -203,9 +203,9 @@ interface ble {
     type advertisement-data = list<u8>;
 
     @since(version = 0.0.1)
-    configure-advertisement: func(settings: advertisement-settings) -> ();
+    configure-advertisement: func(settings: advertisement-settings) -> u32;
     @since(version = 0.0.1)
-    set-advertisement-data: func(data: advertisement-data) -> ();
+    set-advertisement-data: func(data: advertisement-data) -> u32;
 }
 
 

@@ -117,6 +117,7 @@ impl VibrationSensorType {
 #[repr(C, align(4))]
 #[derive(Clone, Copy, Debug)]
 pub struct Advertisement {
+    pub company: u16,
     pub address: [u8; 8],
     /// 32 byte of data
     pub data: [u8; 32],
@@ -170,12 +171,12 @@ where
     /// Gets truncated to the first 16 bytes
     fn get_name(context: &mut WrappedCaller<'_, Self>) -> Result<String, wasmi::Error>;
 
-    fn set_leds(context: &mut WrappedCaller<'_, Self>, lux: &[u16]) -> Result<(), wasmi::Error>;
+    fn set_leds(context: &mut WrappedCaller<'_, Self>, lux: &[u16]) -> Result<u32, wasmi::Error>;
     fn set_rgb(
         context: &mut WrappedCaller<'_, Self>,
         color: &LedColor,
         lux: u32,
-    ) -> Result<(), wasmi::Error>;
+    ) -> Result<u32, wasmi::Error>;
     fn led_count(context: &mut WrappedCaller<'_, Self>) -> Result<u16, wasmi::Error>;
     fn get_led_info(
         context: &mut WrappedCaller<'_, Self>,
@@ -193,9 +194,9 @@ where
     fn configure_advertisement(
         context: &mut WrappedCaller<'_, Self>,
         settings: AdvertisementSettings,
-    ) -> Result<(), wasmi::Error>;
+    ) -> Result<u32, wasmi::Error>;
     fn set_advertisement_data(
         context: &mut WrappedCaller<'_, Self>,
         data: &[u8],
-    ) -> Result<(), wasmi::Error>;
+    ) -> Result<u32, wasmi::Error>;
 }

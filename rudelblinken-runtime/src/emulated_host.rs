@@ -65,16 +65,16 @@ impl Host for EmulatedHost {
         return Ok("EmulatedHost".to_string());
     }
 
-    fn set_leds(_caller: &mut WrappedCaller<'_, Self>, _lux: &[u16]) -> Result<(), wasmi::Error> {
-        return Ok(());
+    fn set_leds(_caller: &mut WrappedCaller<'_, Self>, _lux: &[u16]) -> Result<u32, wasmi::Error> {
+        return Ok(0);
     }
 
     fn set_rgb(
         _caller: &mut WrappedCaller<'_, Self>,
         _color: &crate::host::LedColor,
         _lux: u32,
-    ) -> Result<(), wasmi::Error> {
-        return Ok(());
+    ) -> Result<u32, wasmi::Error> {
+        return Ok(0);
     }
 
     fn led_count(_caller: &mut WrappedCaller<'_, Self>) -> Result<u16, wasmi::Error> {
@@ -110,14 +110,14 @@ impl Host for EmulatedHost {
     fn configure_advertisement(
         _context: &mut WrappedCaller<'_, Self>,
         _settings: AdvertisementSettings,
-    ) -> Result<(), wasmi::Error> {
-        return Ok(());
+    ) -> Result<u32, wasmi::Error> {
+        return Ok(0);
     }
 
     fn set_advertisement_data(
         _context: &mut WrappedCaller<'_, Self>,
         _data: &[u8],
-    ) -> Result<(), wasmi::Error> {
-        return Ok(());
+    ) -> Result<u32, wasmi::Error> {
+        return Ok(0);
     }
 }

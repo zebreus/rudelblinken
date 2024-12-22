@@ -48,7 +48,7 @@ impl<'a, T: Host> WrappedCaller<'a, T> {
             return Err(wasmi::Error::new("on-advertisement is not a function"));
         };
         let Ok(run) =
-            run.typed::<(u64, u32, u32, u32, u32, u32, u32, u32, u32, u32, u64), ()>(&self.0)
+            run.typed::<(u64, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u64), ()>(&self.0)
         else {
             return Err(wasmi::Error::new(
                 "on-advertisement does not have a matching function signature",
@@ -56,11 +56,13 @@ impl<'a, T: Host> WrappedCaller<'a, T> {
         };
 
         let address = u64::from_le_bytes(advertisement.address);
+        let company = advertisement.company as u32;
         let data = unsafe { std::mem::transmute::<[u8; 32], [u32; 8]>(advertisement.data) };
         run.call(
             &mut self.0,
             (
                 address,
+                company,
                 data[0],
                 data[1],
                 data[2],
@@ -332,7 +334,7 @@ pub fn link_hardware<T: Host>(
              first_id: i32,
              offset: i32,
              length: i32|
-             -> Result<(), wasmi::Error> {
+             -> Result<u32, wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
                 let memory = get_memory(caller.as_ref())?;
                 let slice = get_slice(&memory, caller.as_mut(), offset, length * 2)?;
@@ -342,9 +344,7 @@ pub fn link_hardware<T: Host>(
                 let values_slice =
                     unsafe { std::slice::from_raw_parts(led_values, length as usize) };
 
-                glue::set_leds(caller, first_id as u16, values_slice)?;
-
-                return Ok(());
+                glue::set_leds(caller, first_id as u16, values_slice)
             },
         ),
     )?;
@@ -362,7 +362,7 @@ pub fn link_hardware<T: Host>(
              green: i32,
              blue: i32,
              lux: i32|
-             -> Result<(), wasmi::Error> {
+             -> Result<u32, wasmi::Error> {
                 let caller = WrappedCaller(caller);
                 let color = LedColor {
                     red: red.to_le_bytes()[0],
@@ -370,7 +370,7 @@ pub fn link_hardware<T: Host>(
                     blue: blue.to_le_bytes()[0],
                 };
 
-                return glue::set_rgb(caller, &color, lux as u32);
+                glue::set_rgb(caller, &color, lux as u32)
             },
         ),
     )?;
@@ -385,7 +385,7 @@ pub fn link_hardware<T: Host>(
             &mut store,
             |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
                 let caller = WrappedCaller(caller);
-                return glue::led_count(caller).map(|result| result as i32);
+                glue::led_count(caller).map(|result| result as i32)
             },
         ),
     )?;
@@ -523,7 +523,7 @@ pub fn link_ble<T: Host>(
             |caller: Caller<'_, T>,
              min_interval: i32,
              max_interval: i32|
-             -> Result<(), wasmi::Error> {
+             -> Result<u32, wasmi::Error> {
                 let caller = WrappedCaller(caller);
 
                 glue::configure_advertisement(
@@ -532,9 +532,7 @@ pub fn link_ble<T: Host>(
                         max_interval: max_interval as u16,
                         min_interval: min_interval as u16,
                     },
-                )?;
-
-                return Ok(());
+                )
             },
         ),
     )?;
@@ -547,16 +545,14 @@ pub fn link_ble<T: Host>(
         "set-advertisement-data",
         Func::wrap(
             &mut store,
-            |caller: Caller<'_, T>, offset: i32, length: i32| -> Result<(), wasmi::Error> {
+            |caller: Caller<'_, T>, offset: i32, length: i32| -> Result<u32, wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
                 let memory = get_memory(caller.as_ref())?;
                 let slice = get_slice(&memory, caller.as_mut(), offset, length)?;
                 // // Remove lifetime
                 // let data = unsafe { std::slice::from_raw_parts(slice.as_ptr(), length as usize) };
 
-                glue::set_advertisement_data(caller, slice)?;
-
-                return Ok(());
+                glue::set_advertisement_data(caller, slice)
             },
         ),
     )?;
