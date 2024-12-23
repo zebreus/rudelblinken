@@ -113,6 +113,19 @@ pub struct Filesystem<T: Storage + 'static + Send + Sync> {
     files: Vec<FileInformation<T>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Importance {
+    Free,
+    Unimportant,
+    Important,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Range {
+    importance: Importance,
+    length: u16,
+}
+
 impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     /// Retrieves the first block number from the storage metadata.
     fn get_first_block(&self) -> Result<u16, std::io::Error> {
@@ -231,12 +244,16 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         Some(file.read())
     }
 
-    /// Find a free space in storage of at least the given length.
-    ///
-    /// For now the space is guaranteed to start at a block boundary
-    fn find_free_space(&self, length: u32) -> Result<u32, FindFreeSpaceError> {
-        let mut free_ranges: BTreeMap<u16, u16> = Default::default();
-        free_ranges.insert(0, T::BLOCKS as u16 * 2);
+    /// Get information about the free space in the storage
+    fn analyze_free_space(&self) -> Result<BTreeMap<u16, Range>, FindFreeSpaceError> {
+        let mut free_ranges: BTreeMap<u16, Range> = Default::default();
+        free_ranges.insert(
+            0,
+            Range {
+                importance: Importance::Free,
+                length: T::BLOCKS as u16 * 2,
+            },
+        );
 
         for file in &self.files {
             let start_block = (file.address / T::BLOCK_SIZE) as u16;
@@ -244,7 +261,13 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
                 (file.length + size_of::<FileMetadata>() as u32).div_ceil(T::BLOCK_SIZE) as u16;
             let end_block = start_block + length_in_blocks;
 
-            let Some((&surrounding_start, &surrounding_length)) = free_ranges
+            let Some((
+                &surrounding_start,
+                &Range {
+                    length: surrounding_length,
+                    importance: surrounding_importance,
+                },
+            )) = free_ranges
                 .range((Included(0), Included(start_block)))
                 .last()
             else {
@@ -255,59 +278,105 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             let space_before = start_block - surrounding_start;
             let space_after = (surrounding_start + surrounding_length) - (end_block);
 
-            match (space_before, space_after) {
-                (0, 0) => {
-                    free_ranges.remove(&surrounding_start);
-                }
-                (0, space_after) => {
-                    free_ranges.remove(&surrounding_start);
-                    free_ranges.insert(end_block, space_after);
-                }
-                (space_before, 0) => {
-                    free_ranges.insert(start_block, space_before);
-                }
-                (space_before, space_after) => {
-                    free_ranges.insert(start_block, space_before);
-                    free_ranges.insert(end_block, space_after);
-                }
+            if space_before != 0 {
+                free_ranges.insert(
+                    surrounding_start,
+                    Range {
+                        importance: surrounding_importance,
+                        length: space_before,
+                    },
+                );
+            }
+            free_ranges.insert(
+                surrounding_start + space_before,
+                Range {
+                    importance: Importance::Important,
+                    length: length_in_blocks,
+                },
+            );
+            if space_after != 0 {
+                free_ranges.insert(
+                    surrounding_start + space_before + length_in_blocks,
+                    Range {
+                        importance: surrounding_importance,
+                        length: space_after,
+                    },
+                );
             }
         }
 
-        // Fix the last entry for wraparound
+        // Fix the last entry in case of a wraparound
         let last_free_space_start = free_ranges.last_key_value().map_or(0, |(start, _)| *start);
         let wraparound_length: i64 = last_free_space_start as i64 - T::BLOCKS as i64;
         if wraparound_length >= 0 {
+            let Some((
+                wrapping_range_start,
+                &Range {
+                    length: wrapping_range_length,
+                    importance: wrapping_range_importance,
+                },
+            )) = free_ranges.iter().rev().skip(1).next()
+            else {
+                // If there is a wraparound on the last file, there always should be something before it.
+                return Err(FindFreeSpaceError::FilesystemError);
+            };
+
             let wraparound_length = wraparound_length as u16;
-            let Some((0, &first_range_length)) = free_ranges.first_key_value() else {
+            let Some((
+                0,
+                &Range {
+                    length: first_range_length,
+                    importance: first_range_importance,
+                },
+            )) = free_ranges.first_key_value()
+            else {
                 // If there is wraparound on the last file, there needs to be enough space at the start of the storage to accomodate that overlap
                 return Err(FindFreeSpaceError::FilesystemError);
             };
-            free_ranges.remove(&0);
+            free_ranges.insert(
+                0,
+                Range {
+                    length: wraparound_length,
+                    importance: wrapping_range_importance,
+                },
+            );
             let new_first_range_length = first_range_length - wraparound_length;
             if new_first_range_length > 0 {
-                free_ranges.insert(wraparound_length, new_first_range_length);
+                free_ranges.insert(
+                    wraparound_length,
+                    Range {
+                        length: new_first_range_length,
+                        importance: first_range_importance,
+                    },
+                );
             }
-            free_ranges.insert(
-                last_free_space_start,
-                T::BLOCKS as u16 - last_free_space_start,
+        }
+
+        return Ok(free_ranges);
+    }
+
+    /// Find a free space in storage of at least the given length.
+    ///
+    /// For now the space is guaranteed to start at a block boundary
+    fn find_free_space(&self, length: u32) -> Result<u32, FindFreeSpaceError> {
+        let free_ranges = self.analyze_free_space()?;
+
+        if let Some((free_range_start, free_range_length)) = free_ranges
+            .iter()
+            .filter(|(_, range)| range.importance == Importance::Free)
+            .filter(|(_, range)| range.length >= (length.div_ceil(T::BLOCK_SIZE) as u16))
+            .min_by(|(_, range_a), (_, range_b)| range_a.length.cmp(&range_b.length))
+            .map(|(a, b)| (*a as u32, b.length as u32))
+        {
+            // let longest_range_start = longest_range.0 % (T::BLOCKS);
+            println!(
+                "Found free space at {} with length {}",
+                free_range_start, free_range_length
             );
+            return Ok(free_range_start * T::BLOCK_SIZE);
         }
 
-        let Some(longest_range) = free_ranges
-            .into_iter()
-            .max_by(|(_, length_a), (_, length_b)| length_a.cmp(length_b))
-            .map(|(a, b)| (a as u32, b as u32))
-        else {
-            return Err(FindFreeSpaceError::NoFreeSpace);
-        };
-
-        if (longest_range.1 * T::BLOCK_SIZE) < length {
-            return Err(FindFreeSpaceError::NotEnoughSpace);
-        }
-
-        let longest_range_start = longest_range.0 % (T::BLOCKS);
-
-        Ok(longest_range_start * T::BLOCK_SIZE)
+        return Err(FindFreeSpaceError::NotEnoughSpace);
     }
 
     /// Write a file to storage.
