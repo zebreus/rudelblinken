@@ -19,9 +19,6 @@
 //! is located at a specific address in storage. Undefined behavior may occur if these
 //! assumptions are violated. Use these methods with caution and ensure that the metadata
 //! is correctly memory-mapped before calling them.
-/// This module provides the `Storage` trait which defines the interface for
-/// storage backends used in the application. Implementations of this trait
-/// are responsible for handling theuse crate::storage::Storage;
 use crate::storage::{Storage, StorageError};
 use thiserror::Error;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
@@ -55,6 +52,8 @@ impl FileFlags {
     const READY: u16 =               0b0000000000000010;
     const MARKED_FOR_DELETION: u16 = 0b0000000000001000;
     const DELETED: u16 =             0b0000000001000000;
+    /// Important files wont be deleted automatically if space is needed
+    const IMPORTANT: u16 =           0b0000000010000000;
 }
 
 /// Represents a the metadata segment of a file that is memory-mapped into storage.
@@ -66,8 +65,8 @@ pub struct FileMetadata {
     /// Type of this block
     /// Access only via the supplied functions
     flags: u16,
-    /// Reserved space for alignment reasons
-    _reserved: [u8; 2],
+    /// Age of the file
+    age: u16,
     /// Length in bytes
     pub length: u32,
     /// SHA3-256 hash of the file
@@ -92,6 +91,7 @@ impl std::fmt::Debug for FileMetadata {
             .field("length", &self.length)
             .field("hash", &hash_string)
             .field("name", &self.name_str())
+            .field("important", &self.important())
             .finish()
     }
 }
@@ -101,7 +101,7 @@ impl FileMetadata {
     fn new(name: &str, length: u32, hash: &[u8; 32]) -> Self {
         let mut metadata = FileMetadata {
             flags: u16::MAX ^ FileFlags::LOW_MARKERS,
-            _reserved: [0; 2],
+            age: u16::MAX,
             length,
             hash: *hash,
             name: [0; 16],
@@ -145,6 +145,18 @@ impl FileMetadata {
         storage.write(address, flags.as_bytes())
     }
 
+    /// Increase the age of the metadata in storage
+    ///
+    /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
+    unsafe fn increase_age<T: Storage>(
+        &self,
+        storage: &T,
+        address: u32,
+    ) -> Result<(), StorageError> {
+        let new_age: u16 = self.age >> 1;
+        storage.write(address + 2, new_age.as_bytes())
+    }
+
     /// Set the ready flag of the metadata in storage
     ///
     /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
@@ -178,6 +190,17 @@ impl FileMetadata {
         self.set_flags(storage, address, FileFlags::DELETED)
     }
 
+    /// Set the important flag of the metadata in storage
+    ///
+    /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
+    pub unsafe fn set_important<T: Storage>(
+        &self,
+        storage: &T,
+        address: u32,
+    ) -> Result<(), StorageError> {
+        self.set_flags(storage, address, FileFlags::IMPORTANT)
+    }
+
     /// Check if the file is ready to be read
     pub fn ready(&self) -> bool {
         self.flags & FileFlags::READY == 0
@@ -191,6 +214,16 @@ impl FileMetadata {
     /// Check if the file has been deleted
     pub fn deleted(&self) -> bool {
         self.flags & FileFlags::DELETED == 0
+    }
+
+    /// Check if the file is important
+    pub fn important(&self) -> bool {
+        self.flags & FileFlags::IMPORTANT == 0
+    }
+
+    /// Get the age of the metadata.
+    pub fn age(&self) -> u8 {
+        self.age.count_ones() as u8
     }
 
     /// Create new metadata at the specified location

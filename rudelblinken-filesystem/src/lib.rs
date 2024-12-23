@@ -15,6 +15,16 @@
 //! Designed specifically for flash storage, the implementation uses block-aligned operations,
 //! respects write limitations, and implements basic wear leveling.
 //!
+//! # Additional features
+//!
+//! ## Autodeleting unimportant files
+// TODO: Improve documentation and move it somewhere else
+//!
+//! When you want to create a new file, but there is not enough space, the filesystem will automatically delete the oldest unimportant files to make space.
+//! Unimportant files are files that have not explicitly been marked as important.
+//!
+//! The age of a file is determined by the number of ticks and reboots since it was created. It can be a number between 0 and 15. A file with age 16 has just been created, while a file with age 1 is the oldest file. Every reboot increases the age of all files by 1. You can manually call the tick method to age all files.
+//! Files with age 16 require 1 tick to go to 15. Files with age 15 require 2 ticks to go to 14. Files with age 14 require 3 ticks. The recommended tick rate is once per minute.
 #![warn(missing_docs)]
 #![allow(static_mut_refs)]
 #![feature(adt_const_params)]

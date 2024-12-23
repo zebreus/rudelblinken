@@ -456,6 +456,16 @@ impl<T: Storage + 'static + Send + Sync, const STATE: FileState> File<T, STATE> 
         self.metadata.ready()
     }
 
+    /// Check if the file is important.
+    pub fn important(&self) -> bool {
+        self.metadata.important()
+    }
+
+    /// Check the age of the file.
+    pub fn age(&self) -> u8 {
+        self.metadata.age()
+    }
+
     /// Mark this file for deletion.
     ///
     /// No new strong references can be created to a file that's marked for deletion, except with clone on a strong reference.
@@ -464,6 +474,7 @@ impl<T: Storage + 'static + Send + Sync, const STATE: FileState> File<T, STATE> 
     pub(crate) fn mark_for_deletion(&self) -> Result<(), DeleteFileContentError> {
         let info = unsafe { self.info.as_ref().read().unwrap() };
 
+        // TODO: Move this block in the !info.has_been_deleted guard
         unsafe {
             self.metadata
                 .set_marked_for_deletion(info.storage, info.storage_address)
@@ -474,6 +485,16 @@ impl<T: Storage + 'static + Send + Sync, const STATE: FileState> File<T, STATE> 
             unsafe { self.internal_delete()? };
         }
         Ok(())
+    }
+
+    /// Check if this file can be deleted right now.
+    pub(crate) fn can_be_deleted(&self) -> Result<Option<&Self>, DeleteFileContentError> {
+        let info = unsafe { self.info.as_ref().read().unwrap() };
+
+        if info.writer_count == 0 && info.reader_count == 0 {
+            return Ok(Some(self));
+        }
+        return Ok(None);
     }
 
     /// Internal delete function that does not consume the file.

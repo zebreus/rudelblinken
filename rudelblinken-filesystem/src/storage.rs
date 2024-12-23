@@ -1,3 +1,7 @@
+//! This module provides the `Storage` trait which defines the interface for
+//! storage backends used in the application. Implementations of this trait
+//! are responsible for handling theuse crate::storage::Storage;
+
 use thiserror::Error;
 
 #[cfg(any(test, feature = "simulated"))]
