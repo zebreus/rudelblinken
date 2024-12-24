@@ -1,11 +1,20 @@
 use esp32_nimble::{utilities::mutex::Mutex, BLEAdvertisementData};
 use esp_idf_hal::{
+    adc::{
+        self,
+        oneshot::{config::AdcChannelConfig, AdcChannelDriver, AdcDriver},
+        AdcContDriver,
+    },
     gpio::{self, PinDriver},
     ledc::{self, config::TimerConfig, LedcDriver, LedcTimerDriver},
     units::FromValueType,
 };
+use esp_idf_sys::adc_atten_t_ADC_ATTEN_DB_12;
 use rudelblinken_runtime::{
-    host::{AdvertisementSettings, Event, Host, LedColor, LedInfo, LogLevel},
+    host::{
+        self, AdvertisementSettings, AmbientLightType, Event, Host, LedColor, LedInfo, LogLevel,
+        VibrationSensorType,
+    },
     linker::linker::WrappedCaller,
 };
 use std::{
@@ -35,6 +44,42 @@ pub static LED_PIN: LazyLock<Mutex<LedcDriver<'static>>> = LazyLock::new(|| {
     )
 });
 
+pub static LIGHT_SENSOR_ADC: LazyLock<
+    Mutex<AdcChannelDriver<'static, gpio::Gpio3, AdcDriver<'static, adc::ADC1>>>,
+> = LazyLock::new(|| {
+    let driver = AdcDriver::new(unsafe { adc::ADC1::new() }).unwrap();
+    let pin = AdcChannelDriver::new(
+        driver,
+        unsafe { gpio::Gpio3::new() },
+        &AdcChannelConfig {
+            attenuation: adc_atten_t_ADC_ATTEN_DB_12,
+            resolution: adc::Resolution::Resolution12Bit,
+            calibration: false,
+        },
+    )
+    .unwrap();
+    Mutex::new(pin)
+});
+
+#[derive(Clone)]
+pub struct WasmHostConfiguration {
+    reset_fuel: u32,
+    led_color: LedColor,
+}
+
+impl Default for WasmHostConfiguration {
+    fn default() -> Self {
+        Self {
+            reset_fuel: 999_999,
+            led_color: LedColor {
+                red: 0,
+                green: 0,
+                blue: 0,
+            },
+        }
+    }
+}
+
 pub enum WasmEvent {
     SetAdvertismentSettings(AdvertisementSettings),
     SetAdvertismentData(Vec<u8>),
@@ -44,6 +89,7 @@ pub enum WasmEvent {
 pub struct WasmHost {
     pub host_events: Arc<Mutex<Receiver<Event>>>,
     pub wasm_events: Sender<WasmEvent>,
+    config: WasmHostConfiguration,
 }
 
 impl WasmHost {
@@ -57,6 +103,7 @@ impl WasmHost {
             WasmHost {
                 host_events: Arc::new(Mutex::new(host_receiver)),
                 wasm_events: wasm_sender,
+                config: WasmHostConfiguration::default(),
             },
         );
     }
@@ -90,8 +137,9 @@ impl Host for WasmHost {
             }
         }
 
-        caller.inner().set_fuel(999_999).unwrap();
-        return Ok(999_999);
+        let reset_fuel = caller.data().config.reset_fuel;
+        caller.inner().set_fuel(reset_fuel as u64).unwrap();
+        Ok(reset_fuel)
     }
 
     fn sleep(
@@ -99,12 +147,12 @@ impl Host for WasmHost {
         micros: u64,
     ) -> Result<(), rudelblinken_runtime::Error> {
         std::thread::sleep(Duration::from_micros(micros));
-        return Ok(());
+        Ok(())
     }
 
-    fn time(caller: &mut WrappedCaller<'_, Self>) -> Result<u64, rudelblinken_runtime::Error> {
+    fn time(_caller: &mut WrappedCaller<'_, Self>) -> Result<u64, rudelblinken_runtime::Error> {
         let time = unsafe { esp_idf_sys::esp_timer_get_time() };
-        return Ok(time as u64);
+        Ok(time as u64)
     }
 
     fn log(
@@ -113,13 +161,13 @@ impl Host for WasmHost {
         message: &str,
     ) -> Result<(), rudelblinken_runtime::Error> {
         match level {
-            LogLevel::Error => ::tracing::error!(msg = &message),
-            LogLevel::Warn => ::tracing::warn!(msg = &message),
-            LogLevel::Info => ::tracing::info!(msg = &message),
-            LogLevel::Debug => ::tracing::debug!(msg = &message),
-            LogLevel::Trace => ::tracing::trace!(msg = &message),
+            LogLevel::Error => ::tracing::error!(target: "wasm-guest", msg = &message),
+            LogLevel::Warn => ::tracing::warn!(target: "wasm-guest",msg = &message),
+            LogLevel::Info => ::tracing::info!(target: "wasm-guest",msg = &message),
+            LogLevel::Debug => ::tracing::debug!(target: "wasm-guest",msg = &message),
+            LogLevel::Trace => ::tracing::trace!(target: "wasm-guest",msg = &message),
         }
-        return Ok(());
+        Ok(())
     }
 
     fn get_name(
@@ -128,15 +176,19 @@ impl Host for WasmHost {
         let mut name = get_device_name();
         let closest = name.floor_char_boundary(16);
         let name = name.split_off(closest);
-        return Ok(name);
+        Ok(name)
     }
 
     fn set_leds(
         _caller: &mut WrappedCaller<'_, Self>,
-        _lux: &[u16],
+        first_id: u16,
+        lux: &[u16],
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        todo!();
-        // return Ok(());
+        if first_id == 0 && 0 < lux.len() {
+            host::to_error_code(LED_PIN.lock().set_duty(lux[0] as u32), 1)
+        } else {
+            Ok(0)
+        }
     }
 
     fn set_rgb(
@@ -144,44 +196,51 @@ impl Host for WasmHost {
         _color: &LedColor,
         lux: u32,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        match LED_PIN.lock().set_duty(lux) {
-            Ok(_) => Ok(0),
-            Err(_) => Ok(1),
-        }
+        host::to_error_code(LED_PIN.lock().set_duty(lux), 1)
     }
 
     fn led_count(
         _caller: &mut WrappedCaller<'_, Self>,
     ) -> Result<u16, rudelblinken_runtime::Error> {
-        return Ok(1);
+        Ok(1)
     }
 
     fn get_led_info(
-        _caller: &mut WrappedCaller<'_, Self>,
-        _id: u16,
+        caller: &mut WrappedCaller<'_, Self>,
+        id: u16,
     ) -> Result<LedInfo, rudelblinken_runtime::Error> {
-        return Ok(LedInfo {
-            color: LedColor::new(0, 0, 0),
-            max_lux: LED_PIN.lock().get_max_duty() as u16,
-        });
+        if id == 0 {
+            Ok(LedInfo {
+                color: caller.data().config.led_color,
+                max_lux: LED_PIN.lock().get_max_duty() as u16,
+            })
+        } else {
+            Ok(LedInfo {
+                color: LedColor::new(0, 0, 0),
+                max_lux: 0 as u16,
+            })
+        }
     }
 
-    fn has_ambient_light(
+    fn get_ambient_light_type(
         _caller: &mut WrappedCaller<'_, Self>,
-    ) -> Result<bool, rudelblinken_runtime::Error> {
-        return Ok(false);
+    ) -> Result<AmbientLightType, rudelblinken_runtime::Error> {
+        Ok(AmbientLightType::Basic)
     }
 
     fn get_ambient_light(
         _caller: &mut WrappedCaller<'_, Self>,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        return Ok(0);
+        match LIGHT_SENSOR_ADC.lock().read() {
+            Ok(v) => Ok(v as u32),
+            Err(_) => Ok(u32::MAX),
+        }
     }
 
-    fn has_vibration_sensor(
+    fn get_vibration_sensor_type(
         _caller: &mut WrappedCaller<'_, Self>,
-    ) -> Result<bool, rudelblinken_runtime::Error> {
-        return Ok(false);
+    ) -> Result<VibrationSensorType, rudelblinken_runtime::Error> {
+        Ok(VibrationSensorType::Ball)
     }
 
     fn get_vibration(
@@ -191,7 +250,7 @@ impl Host for WasmHost {
     }
 
     fn configure_advertisement(
-        caller: &mut WrappedCaller<'_, Self>,
+        _caller: &mut WrappedCaller<'_, Self>,
         settings: AdvertisementSettings,
     ) -> Result<u32, rudelblinken_runtime::Error> {
         let min_interval = settings.min_interval.clamp(400, 1000);

@@ -63,10 +63,10 @@ pub(super) fn get_hardware_version<T: Host>(
 /// `set-leds: func(first-id: u16, lux: list<u16>) -> ();`
 pub(super) fn set_leds<T: Host>(
     mut caller: WrappedCaller<'_, T>,
-    _first_id: u16,
+    first_id: u16,
     leds: &[u16],
 ) -> Result<u32, wasmi::Error> {
-    T::set_leds(&mut caller, leds)
+    T::set_leds(&mut caller, first_id, leds)
 }
 /// `set-rgb: func(color: led-color, lux: u32) -> ();`
 pub(super) fn set_rgb<T: Host>(
@@ -93,10 +93,7 @@ pub(super) fn get_led_info<T: Host>(
 pub(super) fn get_ambient_light_type<T: Host>(
     mut caller: WrappedCaller<'_, T>,
 ) -> Result<AmbientLightType, wasmi::Error> {
-    match T::has_ambient_light(&mut caller)? {
-        true => Ok(AmbientLightType::Basic),
-        false => Ok(AmbientLightType::None),
-    }
+    T::get_ambient_light_type(&mut caller)
 }
 /// `get-ambient-light: func() -> u32;`
 pub(super) fn get_ambient_light<T: Host>(
@@ -108,10 +105,7 @@ pub(super) fn get_ambient_light<T: Host>(
 pub(super) fn get_vibration_sensor_type<T: Host>(
     mut caller: WrappedCaller<'_, T>,
 ) -> Result<VibrationSensorType, wasmi::Error> {
-    match T::has_vibration_sensor(&mut caller)? {
-        true => Ok(VibrationSensorType::Basic),
-        false => Ok(VibrationSensorType::None),
-    }
+    T::get_vibration_sensor_type(&mut caller)
 }
 /// `get-vibration: func() -> u32;`
 pub(super) fn get_vibration<T: Host>(

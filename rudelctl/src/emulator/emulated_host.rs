@@ -1,5 +1,8 @@
 use rudelblinken_runtime::{
-    host::{AdvertisementSettings, Event, Host, LedColor, LedInfo, LogLevel},
+    host::{
+        AdvertisementSettings, AmbientLightType, Event, Host, LedColor, LedInfo, LogLevel,
+        VibrationSensorType,
+    },
     linker::linker::WrappedCaller,
 };
 use std::time::{Duration, Instant};
@@ -81,6 +84,7 @@ impl Host for EmulatedHost {
 
     fn set_leds(
         _caller: &mut WrappedCaller<'_, Self>,
+        _first_id: u16,
         _lux: &[u16],
     ) -> Result<u32, rudelblinken_runtime::Error> {
         Ok(0)
@@ -110,10 +114,10 @@ impl Host for EmulatedHost {
         });
     }
 
-    fn has_ambient_light(
+    fn get_ambient_light_type(
         _caller: &mut WrappedCaller<'_, Self>,
-    ) -> Result<bool, rudelblinken_runtime::Error> {
-        return Ok(false);
+    ) -> Result<AmbientLightType, rudelblinken_runtime::Error> {
+        Ok(AmbientLightType::None)
     }
 
     fn get_ambient_light(
@@ -122,10 +126,10 @@ impl Host for EmulatedHost {
         return Ok(0);
     }
 
-    fn has_vibration_sensor(
+    fn get_vibration_sensor_type(
         _caller: &mut WrappedCaller<'_, Self>,
-    ) -> Result<bool, rudelblinken_runtime::Error> {
-        return Ok(false);
+    ) -> Result<VibrationSensorType, rudelblinken_runtime::Error> {
+        Ok(VibrationSensorType::None)
     }
 
     fn get_vibration(

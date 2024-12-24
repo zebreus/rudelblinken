@@ -4,7 +4,10 @@ use std::{
 };
 
 use crate::{
-    host::{AdvertisementSettings, Event, Host, LedColor, LedInfo, LogLevel},
+    host::{
+        AdvertisementSettings, AmbientLightType, Event, Host, LedColor, LedInfo, LogLevel,
+        VibrationSensorType,
+    },
     linker::linker::WrappedCaller,
 };
 
@@ -65,8 +68,12 @@ impl Host for EmulatedHost {
         return Ok("EmulatedHost".to_string());
     }
 
-    fn set_leds(_caller: &mut WrappedCaller<'_, Self>, _lux: &[u16]) -> Result<u32, wasmi::Error> {
-        return Ok(0);
+    fn set_leds(
+        _caller: &mut WrappedCaller<'_, Self>,
+        _first_id: u16,
+        _lux: &[u16],
+    ) -> Result<u32, wasmi::Error> {
+        Ok(0)
     }
 
     fn set_rgb(
@@ -91,16 +98,20 @@ impl Host for EmulatedHost {
         });
     }
 
-    fn has_ambient_light(_caller: &mut WrappedCaller<'_, Self>) -> Result<bool, wasmi::Error> {
-        return Ok(false);
+    fn get_ambient_light_type(
+        _caller: &mut WrappedCaller<'_, Self>,
+    ) -> Result<AmbientLightType, wasmi::Error> {
+        Ok(AmbientLightType::None)
     }
 
     fn get_ambient_light(_caller: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error> {
         return Ok(0);
     }
 
-    fn has_vibration_sensor(_caller: &mut WrappedCaller<'_, Self>) -> Result<bool, wasmi::Error> {
-        return Ok(false);
+    fn get_vibration_sensor_type(
+        _caller: &mut WrappedCaller<'_, Self>,
+    ) -> Result<VibrationSensorType, wasmi::Error> {
+        Ok(VibrationSensorType::None)
     }
 
     fn get_vibration(_caller: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error> {

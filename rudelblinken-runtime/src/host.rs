@@ -100,13 +100,13 @@ impl AmbientLightType {
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd, Debug)]
 pub enum VibrationSensorType {
     None,
-    Basic,
+    Ball,
 }
 impl VibrationSensorType {
     pub fn lift(val: i32) -> VibrationSensorType {
         match val {
             0 => VibrationSensorType::None,
-            _ => VibrationSensorType::Basic,
+            _ => VibrationSensorType::Ball,
         }
     }
     pub fn lower(&self) -> i32 {
@@ -171,7 +171,11 @@ where
     /// Gets truncated to the first 16 bytes
     fn get_name(context: &mut WrappedCaller<'_, Self>) -> Result<String, wasmi::Error>;
 
-    fn set_leds(context: &mut WrappedCaller<'_, Self>, lux: &[u16]) -> Result<u32, wasmi::Error>;
+    fn set_leds(
+        context: &mut WrappedCaller<'_, Self>,
+        first_id: u16,
+        lux: &[u16],
+    ) -> Result<u32, wasmi::Error>;
     fn set_rgb(
         context: &mut WrappedCaller<'_, Self>,
         color: &LedColor,
@@ -184,11 +188,15 @@ where
     ) -> Result<LedInfo, wasmi::Error>;
 
     /// Check if this board has an ambient light sensor
-    fn has_ambient_light(context: &mut WrappedCaller<'_, Self>) -> Result<bool, wasmi::Error>;
+    fn get_ambient_light_type(
+        context: &mut WrappedCaller<'_, Self>,
+    ) -> Result<AmbientLightType, wasmi::Error>;
     /// Get the ambient light in lux
     fn get_ambient_light(context: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error>;
 
-    fn has_vibration_sensor(context: &mut WrappedCaller<'_, Self>) -> Result<bool, wasmi::Error>;
+    fn get_vibration_sensor_type(
+        context: &mut WrappedCaller<'_, Self>,
+    ) -> Result<VibrationSensorType, wasmi::Error>;
     fn get_vibration(context: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error>;
 
     fn configure_advertisement(
@@ -199,4 +207,21 @@ where
         context: &mut WrappedCaller<'_, Self>,
         data: &[u8],
     ) -> Result<u32, wasmi::Error>;
+}
+
+pub fn to_error_code<T, E>(result: Result<T, E>, code: u32) -> Result<u32, wasmi::Error> {
+    match result {
+        Ok(_) => Ok(0),
+        Err(_) => Ok(code),
+    }
+}
+
+pub fn map_to_error_code<T, E, F>(result: Result<T, E>, f: F) -> Result<u32, wasmi::Error>
+where
+    F: FnOnce(E) -> u32,
+{
+    match result {
+        Ok(_) => Ok(0),
+        Err(err) => Ok(f(err)),
+    }
 }

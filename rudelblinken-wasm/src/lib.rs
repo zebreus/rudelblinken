@@ -3,8 +3,8 @@ use std::sync::{LazyLock, Mutex};
 use rudelblinken_sdk::{
     export,
     exports::{self},
-    get_led_info, get_name, led_count, log, set_advertisement_data, set_leds, set_rgb, sleep, time,
-    yield_now, Advertisement, BleGuest, Guest, LedColor, LogLevel,
+    get_ambient_light, get_led_info, get_name, led_count, log, set_advertisement_data, set_leds,
+    set_rgb, sleep, time, yield_now, Advertisement, BleGuest, Guest, LedColor, LogLevel,
 };
 use talc::{ClaimOnOom, Span, Talc, Talck};
 
@@ -61,6 +61,45 @@ impl CycleState {
 
 static CYCLE_STATE: LazyLock<Mutex<CycleState>> = LazyLock::new(|| Mutex::new(CycleState::new()));
 
+// relative brightness to use in bright ambient conditions (>= MAX_AMBIENT); 0-255
+const MAX_BRIGHT: u8 = 192;
+// relative brightness to use in dark ambient conditions (<= MIN_AMBIENT); 0-255
+const MIN_BRIGHT: u8 = 32;
+const BRIGHT_RANGE: u32 = (MAX_BRIGHT - MIN_BRIGHT) as u32;
+
+const MAX_AMBIENT: u32 = 2_000;
+const MIN_AMBIENT: u32 = 0;
+const AMBIENT_RANGE: u32 = MAX_AMBIENT - MIN_AMBIENT;
+
+fn calc_bright(ambient: u32, fraction: u8, max_lux: u32) -> u32 {
+    // calculate brightness factor based on ambient light (0-255)
+    let max_bright = if ambient <= MIN_AMBIENT {
+        MIN_BRIGHT as u16
+    } else if MAX_AMBIENT <= ambient {
+        MAX_BRIGHT as u16
+    } else {
+        let rel_ambient = ambient - MIN_AMBIENT;
+        let rel_bright = (BRIGHT_RANGE * rel_ambient) / AMBIENT_RANGE;
+        (MIN_BRIGHT as u16) + (rel_bright as u16)
+    };
+    // calculate target fraction of maximum brightness (0-65535)
+    let target_bright = max_bright * (fraction as u16);
+    // scale max_lux based on target brightness
+    let target_lux = ((max_lux as u64) * (target_bright as u64) / 0x10000) as u32;
+    /* log(
+        LogLevel::Info,
+        &format!(
+            "ambient={}, fraction={}, max_lux={}, \
+             max_bright={}, target_bright={}, target_lux={}",
+            ambient, fraction, max_lux, max_bright, target_bright, target_lux
+        ),
+    ); */
+    target_lux
+}
+
+// number of update cycles between logging internal status
+const STATUS_LOG_PERIOD: usize = 127;
+
 struct Test;
 impl Guest for Test {
     fn run() {
@@ -90,21 +129,23 @@ impl Guest for Test {
         let max_lux = get_led_info(0).max_lux as u32;
 
         log(LogLevel::Info, &format!("I have {} leds", led_count()));
+
+        let mut ambient = 0u32;
+        let mut next_status_log = STATUS_LOG_PERIOD;
+        let mut prog = 0u8;
         loop {
             yield_now(1_000);
+            {
+                let l = get_ambient_light();
+                if l != u32::MAX {
+                    ambient = (31 * ambient + l) / 32;
+                }
+            }
             if let Ok(mut state) = CYCLE_STATE.try_lock() {
                 let t = (time() / 1000) as u32;
-                /* log(
-                    LogLevel::Info,
-                    &format!(
-                        "Updating after {} ms, {} nudges",
-                        t - state.prog_time,
-                        state.off_cnt
-                    ),
-                ); */
 
                 state.update_progress(t);
-                let prog = state.progress;
+                prog = state.progress;
                 drop(state);
                 set_advertisement_data(&vec![0x00, 0x00, 0xca, 0x7e, 0xa2, prog]);
                 set_rgb(
@@ -114,11 +155,18 @@ impl Guest for Test {
                         blue: 0xff,
                     },
                     if 192 <= prog {
-                        // (max_lux >> 8) * (prog as u32)
-                        max_lux
+                        calc_bright(ambient, 255, max_lux)
                     } else {
-                        0
+                        calc_bright(ambient, 0, max_lux)
                     },
+                );
+            };
+            next_status_log -= 1;
+            if next_status_log == 0 {
+                next_status_log = STATUS_LOG_PERIOD;
+                log(
+                    LogLevel::Info,
+                    &format!("prog={:3}, ambient={}", prog, ambient),
                 );
             }
         }
