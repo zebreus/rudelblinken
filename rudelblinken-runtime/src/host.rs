@@ -64,7 +64,12 @@ impl LedColor {
     pub fn new(red: u8, green: u8, blue: u8) -> LedColor {
         LedColor { red, green, blue }
     }
+
+    pub fn to_array(&self) -> [u8; 3] {
+        [self.red, self.green, self.blue]
+    }
 }
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LedInfo {

@@ -1,4 +1,4 @@
-use crate::config::{get_config, set_config, DeviceName};
+use crate::config::{get_config, set_config, DeviceName, LedStripColor};
 use crate::{
     file_upload_service::{self, FileUploadService},
     service_helpers::DocumentableCharacteristic,
@@ -15,6 +15,7 @@ use esp_idf_hal::{
 };
 use esp_idf_sys::{self as _, BLE_GATT_CHR_UNIT_UNITLESS};
 use rudelblinken_filesystem::file::{File, FileState};
+use rudelblinken_runtime::host::LedColor;
 use std::{
     sync::{mpsc, Arc},
     time::{Duration, Instant},
@@ -25,11 +26,14 @@ use wasmi::{AsContext, Caller, Engine, Linker, Module, Store};
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
 const CAT_MANAGEMENT_SERVICE_NAME: u16 = 0x7894;
+const CAT_MANAGEMENT_SERVICE_STRIP_COLOR: u16 = 0x7895;
 
 const CAT_MANAGEMENT_SERVICE_UUID: BleUuid = BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE);
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH_UUID: BleUuid =
     BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE_PROGRAM_HASH);
 const CAT_MANAGEMENT_SERVICE_NAME_UUID: BleUuid = BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE_NAME);
+const CAT_MANAGEMENT_SERVICE_STRIP_COLOR_UUID: BleUuid =
+    BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE_STRIP_COLOR);
 
 pub struct CatManagementService {
     program_hash: Option<[u8; 32]>,
@@ -139,6 +143,16 @@ impl CatManagementService {
             0,
             BLE_GATT_CHR_UNIT_UNITLESS,
         );
+        let strip_color_characteristic = service.lock().create_characteristic(
+            CAT_MANAGEMENT_SERVICE_STRIP_COLOR_UUID,
+            NimbleProperties::WRITE | NimbleProperties::READ,
+        );
+        strip_color_characteristic.document(
+            "LED Strip Color (three u8 values)",
+            esp32_nimble::BLE2904Format::OPAQUE,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
 
         let cat_management_service_clone = cat_management_service.clone();
         program_hash_characteristic.lock().on_read(move |value, _| {
@@ -187,6 +201,22 @@ impl CatManagementService {
             };
 
             set_config::<DeviceName>(new_name);
+        });
+
+        strip_color_characteristic.lock().on_read(move |value, _| {
+            value.set_value(&get_config::<LedStripColor>().to_array());
+        });
+        strip_color_characteristic.lock().on_write(move |args| {
+            let data = args.recv_data();
+            if data.len() != 3 {
+                error!(
+                    len = data.len(),
+                    "strip color write with length different from 3"
+                );
+                return;
+            }
+
+            set_config::<LedStripColor>(LedColor::new(data[0], data[1], data[2]));
         });
 
         cat_management_service

@@ -1,4 +1,5 @@
 use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsDefault};
+use rudelblinken_runtime::host::LedColor;
 use std::sync::{LazyLock, RwLock};
 
 pub static NVS_PARTITION: LazyLock<EspNvsPartition<NvsDefault>> = LazyLock::new(|| {
@@ -18,7 +19,7 @@ pub static CONFIG_NVS: LazyLock<RwLock<EspNvs<NvsDefault>>> = LazyLock::new(|| {
 trait StorableValue: Clone {
     fn initial_value() -> Self;
     fn decode(encoded: &[u8]) -> Option<Self>;
-    fn encode(&self) -> &[u8];
+    fn encode(&self) -> impl AsRef<[u8]>;
 }
 
 pub trait InnerConfig {
@@ -78,11 +79,11 @@ pub fn get_config<V: ConfigValue>() -> V::V {
 
 pub fn set_config<V: ConfigValue>(val: V::V) {
     let val = V::from_inner(val);
-    let buf = val.encode();
 
     {
+        let buf = val.encode();
         let mut nvs = CONFIG_NVS.write().unwrap();
-        nvs.set_blob(V::IDENTIFIER, buf).unwrap();
+        nvs.set_blob(V::IDENTIFIER, buf.as_ref()).unwrap();
     }
     {
         let mut dst = V::storage().write().unwrap();
@@ -116,7 +117,7 @@ impl StorableValue for DeviceName {
             .map(|name| Self { name })
     }
 
-    fn encode(&self) -> &[u8] {
+    fn encode(&self) -> impl AsRef<[u8]> {
         self.name.as_bytes()
     }
 }
@@ -138,5 +139,54 @@ impl ConfigValue for DeviceName {
 
     fn to_inner(self) -> Self::V {
         self.name
+    }
+}
+
+#[derive(Clone)]
+pub struct LedStripColor {
+    color: LedColor,
+}
+
+static LED_STRIP_COLOR: LazyLock<RwLock<LedStripColor>> = setup_config_storage();
+
+impl StorableValue for LedStripColor {
+    fn initial_value() -> Self {
+        Self {
+            color: LedColor::new(0xff, 0xff, 0xff),
+        }
+    }
+
+    fn decode(encoded: &[u8]) -> Option<Self> {
+        if encoded.len() == 3 {
+            Some(Self {
+                color: LedColor::new(encoded[0], encoded[1], encoded[2]),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.color.to_array()
+    }
+}
+
+impl InnerConfig for LedStripColor {
+    type V = LedColor;
+}
+
+impl ConfigValue for LedStripColor {
+    const IDENTIFIER: &'static str = "led_strip_color";
+
+    fn storage() -> &'static LazyLock<RwLock<Self>> {
+        &LED_STRIP_COLOR
+    }
+
+    fn from_inner(inner: Self::V) -> Self {
+        Self { color: inner }
+    }
+
+    fn to_inner(self) -> Self::V {
+        self.color
     }
 }

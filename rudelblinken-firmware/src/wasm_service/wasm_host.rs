@@ -28,7 +28,7 @@ use std::{
 };
 
 use crate::{
-    config::{get_config, DeviceName},
+    config::{get_config, DeviceName, LedStripColor},
     BLE_DEVICE,
 };
 
@@ -85,18 +85,12 @@ pub static VIBRATION_SENSOR_ADC: LazyLock<
 #[derive(Clone)]
 pub struct WasmHostConfiguration {
     reset_fuel: u32,
-    led_color: LedColor,
 }
 
 impl Default for WasmHostConfiguration {
     fn default() -> Self {
         Self {
             reset_fuel: 999_999,
-            led_color: LedColor {
-                red: 0,
-                green: 0,
-                blue: 0,
-            },
         }
     }
 }
@@ -227,12 +221,12 @@ impl Host for WasmHost {
     }
 
     fn get_led_info(
-        caller: &mut WrappedCaller<'_, Self>,
+        _caller: &mut WrappedCaller<'_, Self>,
         id: u16,
     ) -> Result<LedInfo, rudelblinken_runtime::Error> {
         if id == 0 {
             Ok(LedInfo {
-                color: caller.data().config.led_color,
+                color: get_config::<LedStripColor>(),
                 max_lux: LED_PIN.lock().get_max_duty() as u16,
             })
         } else {

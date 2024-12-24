@@ -127,9 +127,13 @@ impl Guest for Test {
             &format!("Sleeping 20.000 micros took {} micros", time_b - time_a),
         );
 
-        let max_lux = get_led_info(0).max_lux as u32;
+        let led_info = get_led_info(0);
+        let max_lux = led_info.max_lux as u32;
 
-        log(LogLevel::Info, &format!("I have {} leds", led_count()));
+        log(
+            LogLevel::Info,
+            &format!("I have {} leds; led 0 info: {:?}", led_count(), led_info),
+        );
 
         let mut ambient = 0u32;
         let mut vibrate = 0u32;
