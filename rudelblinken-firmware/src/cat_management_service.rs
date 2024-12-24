@@ -1,4 +1,4 @@
-use crate::config::device_name::{get_device_name, set_device_name};
+use crate::config::{get_config, set_config, DeviceName};
 use crate::{
     file_upload_service::{self, FileUploadService},
     service_helpers::DocumentableCharacteristic,
@@ -36,15 +36,6 @@ pub struct CatManagementService {
     pub wasm_runner: mpsc::Sender<File<FlashStorage, { FileState::Reader }>>,
     file_upload_service: Arc<Mutex<FileUploadService>>,
 }
-
-// pub enum WasmHostMessage {
-//     StartModule([u8; 32]),
-//     BLEAdvRecv(BLEAdvNotification),
-// }
-
-const WASM_MOD: &[u8] = include_bytes!(
-    "../../rudelblinken-wasm/target/wasm32-unknown-unknown/release/rudelblinken_wasm.wasm"
-);
 
 fn log_heap_stats() {
     info!(
@@ -177,10 +168,7 @@ impl CatManagementService {
         });
 
         name_characteristic.lock().on_read(move |value, _| {
-            // let service = cat_management_service_clone.lock();
-            // let hash = service.name.as_bytes();
-            // value.set_value(hash);
-            value.set_value(get_device_name().as_bytes());
+            value.set_value(get_config::<DeviceName>().as_bytes());
         });
         name_characteristic.lock().on_write(move |args| {
             let data = args.recv_data();
@@ -198,7 +186,7 @@ impl CatManagementService {
                 return;
             };
 
-            set_device_name(&new_name);
+            set_config::<DeviceName>(new_name);
         });
 
         cat_management_service

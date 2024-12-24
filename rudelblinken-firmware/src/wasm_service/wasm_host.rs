@@ -27,7 +27,10 @@ use std::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 
-use crate::{config::device_name::get_device_name, BLE_DEVICE};
+use crate::{
+    config::{get_config, DeviceName},
+    BLE_DEVICE,
+};
 
 pub static LED_PIN: LazyLock<Mutex<LedcDriver<'static>>> = LazyLock::new(|| {
     Mutex::new(
@@ -191,7 +194,7 @@ impl Host for WasmHost {
     fn get_name(
         _caller: &mut WrappedCaller<'_, Self>,
     ) -> Result<String, rudelblinken_runtime::Error> {
-        let mut name = get_device_name();
+        let mut name = get_config::<DeviceName>();
         let closest = name.floor_char_boundary(16);
         let name = name.split_off(closest);
         Ok(name)
