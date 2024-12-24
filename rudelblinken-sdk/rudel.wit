@@ -64,6 +64,12 @@ interface base {
     /// Your host bindings should provide a wrapper for this that converts the list to a string.
     @since(version = 0.0.1)
     get-name: func() -> tuple<u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8,u8>;
+
+
+    /// Returns the configuration for this guest, as configured over BLE. The
+    /// semantics of the configuration depend on the guest.
+    @since(version = 0.0.1)
+    get-config: func() -> list<u8>;
 }
 
 @since(version = 0.0.1)

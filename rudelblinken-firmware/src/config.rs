@@ -190,3 +190,46 @@ impl ConfigValue for LedStripColor {
         self.color
     }
 }
+
+#[derive(Clone)]
+pub struct WasmGuestConfig {
+    config: Vec<u8>,
+}
+
+static WASM_GUEST_CONFIG: LazyLock<RwLock<WasmGuestConfig>> = setup_config_storage();
+
+impl StorableValue for WasmGuestConfig {
+    fn initial_value() -> Self {
+        Self { config: vec![] }
+    }
+
+    fn decode(encoded: &[u8]) -> Option<Self> {
+        Some(Self {
+            config: encoded.to_vec(),
+        })
+    }
+
+    fn encode(&self) -> impl AsRef<[u8]> {
+        &self.config
+    }
+}
+
+impl InnerConfig for WasmGuestConfig {
+    type V = Vec<u8>;
+}
+
+impl ConfigValue for WasmGuestConfig {
+    const IDENTIFIER: &'static str = "wasm_guest_cfg";
+
+    fn storage() -> &'static LazyLock<RwLock<Self>> {
+        &WASM_GUEST_CONFIG
+    }
+
+    fn from_inner(inner: Self::V) -> Self {
+        Self { config: inner }
+    }
+
+    fn to_inner(self) -> Self::V {
+        self.config
+    }
+}

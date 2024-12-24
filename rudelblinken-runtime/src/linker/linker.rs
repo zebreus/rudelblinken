@@ -22,6 +22,28 @@ impl<'a, T: Host> WrappedCaller<'a, T> {
         return self.0.data_mut();
     }
 
+    fn realloc(
+        &mut self,
+        ptr: u32,
+        old_size: u32,
+        align: u32,
+        new_size: u32,
+    ) -> Result<u32, wasmi::Error> {
+        let Some(run) = self.0.get_export("cabi_realloc") else {
+            return Err(wasmi::Error::new("cabi_realloc"));
+        };
+        let Extern::Func(run) = run else {
+            return Err(wasmi::Error::new("cabi_realloc is not a function"));
+        };
+        let Ok(run) = run.typed::<(u32, u32, u32, u32), u32>(&self.0) else {
+            return Err(wasmi::Error::new(
+                "cabi_realloc does not have a matching function signature",
+            ));
+        };
+
+        run.call(&mut self.0, (ptr, old_size, align, new_size))
+    }
+
     pub fn run(&mut self) -> Result<(), wasmi::Error> {
         let Some(run) = self.0.get_export("rudel:base/run@0.0.1#run") else {
             return Err(wasmi::Error::new("run not found"));
@@ -37,6 +59,7 @@ impl<'a, T: Host> WrappedCaller<'a, T> {
         run.call(&mut self.0, ())?;
         return Ok(());
     }
+
     pub fn on_advertisement(&mut self, advertisement: Advertisement) -> Result<(), wasmi::Error> {
         let Some(run) = self
             .0
@@ -120,14 +143,14 @@ fn get_slice<T: Host>(
 fn get_mut_slice<T: Host>(
     memory: &Memory,
     caller: &mut Caller<'_, T>,
-    offset: i32,
-    length: i32,
+    offset: u32,
+    length: u32,
 ) -> Result<&'static mut [u8], wasmi::Error> {
     let slice = memory
         .data_mut(caller)
-        .get_mut(offset as u32 as usize..)
+        .get_mut(offset as usize..)
         .ok_or(wasmi::Error::new("pointer out of bounds"))?
-        .get_mut(..length as u32 as usize)
+        .get_mut(..length as usize)
         .ok_or(wasmi::Error::new("length out of bounds"))?;
 
     let static_slice = unsafe { std::mem::transmute::<&mut [u8], &'static mut [u8]>(slice) };
@@ -185,7 +208,7 @@ pub fn link_base<T: Host>(
             |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
                 let memory = get_memory(caller.as_ref())?;
-                let slice = get_mut_slice(&memory, caller.as_mut(), offset, 4)?;
+                let slice = get_mut_slice(&memory, caller.as_mut(), offset as u32, 4)?;
                 // SAFETY: Should be safe because the layout should match
                 let version = unsafe {
                     std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())
@@ -288,6 +311,48 @@ pub fn link_base<T: Host>(
         ),
     )?;
 
+    // __attribute__((__import_module__("rudel:base/base@0.0.1"), __import_name__("get-config")))
+    // extern void __wasm_import_rudel_base_base_get_config(uint8_t *);
+    link_function(
+        linker,
+        "rudel:base/base",
+        "get-config",
+        Func::wrap(
+            &mut store,
+            |caller: Caller<'_, T>, ret: i32| -> Result<(), wasmi::Error> {
+                let mut caller = WrappedCaller(caller);
+                let memory = get_memory(caller.as_ref())?;
+
+                // typedef struct {
+                //   uint8_t *ptr;
+                //   size_t len;
+                // } rudel_list_u8_t;
+                let list_header = get_mut_array::<T, 8>(&memory, caller.as_mut(), ret)?;
+
+                let data = glue::get_config(&mut caller)?;
+
+                let (ptr, len) = {
+                    let ptr = u32::from_le_bytes(list_header[0..4].try_into().unwrap());
+                    let len = u32::from_le_bytes(list_header[4..8].try_into().unwrap());
+                    let dlen = data.len() as u32;
+
+                    if len == dlen {
+                        (ptr, len)
+                    } else {
+                        // alignment for u8 is 1 byte
+                        let new_ptr = caller.realloc(ptr, len, 1, dlen)?;
+                        list_header[0..4].copy_from_slice(&new_ptr.to_le_bytes());
+                        list_header[4..8].copy_from_slice(&dlen.to_le_bytes());
+                        (new_ptr, dlen)
+                    }
+                };
+                let dst = get_mut_slice(&memory, caller.as_mut(), ptr, len)?;
+                dst.copy_from_slice(&data);
+                Ok(())
+            },
+        ),
+    )?;
+
     return Ok(());
 }
 
@@ -309,7 +374,7 @@ pub fn link_hardware<T: Host>(
             |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
                 let memory = get_memory(caller.as_ref())?;
-                let slice = get_mut_slice(&memory, caller.as_mut(), offset, 4)?;
+                let slice = get_mut_slice(&memory, caller.as_mut(), offset as u32, 4)?;
                 // SAFETY: Should be safe because the layout should match
                 let version = unsafe {
                     std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())
@@ -401,7 +466,7 @@ pub fn link_hardware<T: Host>(
             |caller: Caller<'_, T>, id: i32, offset: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
                 let memory = get_memory(caller.as_ref())?;
-                let slice = get_mut_slice(&memory, caller.as_mut(), offset, 6)?;
+                let slice = get_mut_slice(&memory, caller.as_mut(), offset as u32, 6)?;
                 // Layout in memory is
                 // 0: red
                 // 1: green
@@ -499,7 +564,7 @@ pub fn link_ble<T: Host>(
             |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
                 let memory = get_memory(caller.as_ref())?;
-                let slice = get_mut_slice(&memory, caller.as_mut(), offset, 4)?;
+                let slice = get_mut_slice(&memory, caller.as_mut(), offset as u32, 4)?;
                 // SAFETY: Should be safe because the layout should match
                 let version = unsafe {
                     std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())

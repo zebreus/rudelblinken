@@ -82,6 +82,12 @@ impl Host for EmulatedHost {
         return Ok("EmulatedHost".to_string());
     }
 
+    fn get_config(
+        _caller: &mut WrappedCaller<'_, Self>,
+    ) -> Result<Vec<u8>, rudelblinken_runtime::Error> {
+        return Ok(vec![]);
+    }
+
     fn set_leds(
         _caller: &mut WrappedCaller<'_, Self>,
         _first_id: u16,

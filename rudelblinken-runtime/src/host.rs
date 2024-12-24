@@ -176,6 +176,9 @@ where
     /// Gets truncated to the first 16 bytes
     fn get_name(context: &mut WrappedCaller<'_, Self>) -> Result<String, wasmi::Error>;
 
+    /// The configuration set on the host via BLE; to be treaded as an opaque byte slice
+    fn get_config(context: &mut WrappedCaller<'_, Self>) -> Result<Vec<u8>, wasmi::Error>;
+
     fn set_leds(
         context: &mut WrappedCaller<'_, Self>,
         first_id: u16,

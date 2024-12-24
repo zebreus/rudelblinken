@@ -28,7 +28,7 @@ use std::{
 };
 
 use crate::{
-    config::{get_config, DeviceName, LedStripColor},
+    config::{get_config, DeviceName, LedStripColor, WasmGuestConfig},
     BLE_DEVICE,
 };
 
@@ -192,6 +192,12 @@ impl Host for WasmHost {
         let closest = name.floor_char_boundary(16);
         let name = name.split_off(closest);
         Ok(name)
+    }
+
+    fn get_config(
+        _caller: &mut WrappedCaller<'_, Self>,
+    ) -> Result<Vec<u8>, rudelblinken_runtime::Error> {
+        Ok(get_config::<WasmGuestConfig>())
     }
 
     fn set_leds(

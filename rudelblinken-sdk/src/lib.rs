@@ -36,6 +36,10 @@ pub fn get_name() -> String {
     String::from_utf8_lossy(array).to_string()
 }
 
+pub fn get_config() -> Vec<u8> {
+    rudel::rudel::base::base::get_config()
+}
+
 impl exports::rudel::base::ble_guest::Advertisement {
     /// Get the manufacturer data as a byte array.
     ///

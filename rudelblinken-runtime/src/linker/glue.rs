@@ -52,6 +52,13 @@ pub(super) fn get_name<T: Host>(
     return Ok(());
 }
 
+/// `get-config: func() -> list<u8>;`
+pub(super) fn get_config<T: Host>(
+    caller: &mut WrappedCaller<'_, T>,
+) -> Result<Vec<u8>, wasmi::Error> {
+    T::get_config(caller)
+}
+
 /// `get-hardware-version: func() -> semantic-version;`
 pub(super) fn get_hardware_version<T: Host>(
     mut _caller: WrappedCaller<'_, T>,

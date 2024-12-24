@@ -1,4 +1,4 @@
-use crate::config::{get_config, set_config, DeviceName, LedStripColor};
+use crate::config::{get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
 use crate::{
     file_upload_service::{self, FileUploadService},
     service_helpers::DocumentableCharacteristic,
@@ -27,6 +27,7 @@ const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
 const CAT_MANAGEMENT_SERVICE_NAME: u16 = 0x7894;
 const CAT_MANAGEMENT_SERVICE_STRIP_COLOR: u16 = 0x7895;
+const CAT_MANAGEMENT_SERVICE_WASM_GUEST_CONFIG: u16 = 0x7896;
 
 const CAT_MANAGEMENT_SERVICE_UUID: BleUuid = BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE);
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH_UUID: BleUuid =
@@ -34,6 +35,8 @@ const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH_UUID: BleUuid =
 const CAT_MANAGEMENT_SERVICE_NAME_UUID: BleUuid = BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE_NAME);
 const CAT_MANAGEMENT_SERVICE_STRIP_COLOR_UUID: BleUuid =
     BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE_STRIP_COLOR);
+const CAT_MANAGEMENT_SERVICE_WASM_GUEST_CONFIG_UUID: BleUuid =
+    BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE_WASM_GUEST_CONFIG);
 
 pub struct CatManagementService {
     program_hash: Option<[u8; 32]>,
@@ -153,6 +156,16 @@ impl CatManagementService {
             0,
             BLE_GATT_CHR_UNIT_UNITLESS,
         );
+        let wasm_guest_config_characteristic = service.lock().create_characteristic(
+            CAT_MANAGEMENT_SERVICE_WASM_GUEST_CONFIG_UUID,
+            NimbleProperties::WRITE | NimbleProperties::READ,
+        );
+        wasm_guest_config_characteristic.document(
+            "Configuration data for the wasm guest",
+            esp32_nimble::BLE2904Format::OPAQUE,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
 
         let cat_management_service_clone = cat_management_service.clone();
         program_hash_characteristic.lock().on_read(move |value, _| {
@@ -218,6 +231,17 @@ impl CatManagementService {
 
             set_config::<LedStripColor>(LedColor::new(data[0], data[1], data[2]));
         });
+
+        wasm_guest_config_characteristic
+            .lock()
+            .on_read(move |value, _| {
+                value.set_value(&get_config::<WasmGuestConfig>());
+            });
+        wasm_guest_config_characteristic
+            .lock()
+            .on_write(move |args| {
+                set_config::<WasmGuestConfig>(args.recv_data().to_vec());
+            });
 
         cat_management_service
     }

@@ -3,9 +3,9 @@ use std::sync::{LazyLock, Mutex};
 use rudelblinken_sdk::{
     export,
     exports::{self},
-    get_ambient_light, get_led_info, get_name, get_vibration, led_count, log,
-    set_advertisement_data, set_leds, set_rgb, sleep, time, yield_now, Advertisement, BleGuest,
-    Guest, LedColor, LogLevel,
+    get_ambient_light, get_config, get_led_info, get_name, get_vibration, led_count, log,
+    set_advertisement_data, set_rgb, sleep, time, yield_now, Advertisement, BleGuest, Guest,
+    LedColor, LogLevel,
 };
 use talc::{ClaimOnOom, Span, Talc, Talck};
 
@@ -126,6 +126,9 @@ impl Guest for Test {
             LogLevel::Info,
             &format!("Sleeping 20.000 micros took {} micros", time_b - time_a),
         );
+
+        let config = get_config();
+        log(LogLevel::Info, &format!("Configuration: {:?}", config));
 
         let led_info = get_led_info(0);
         let max_lux = led_info.max_lux as u32;

@@ -280,6 +280,32 @@ pub mod rudel {
                     )
                 }
             }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Returns the configuration for this guest, as configured over BLE. The
+            /// semantics of the configuration depend on the guest.
+            pub fn get_config() -> _rt::Vec<u8> {
+                unsafe {
+                    #[repr(align(4))]
+                    struct RetArea([::core::mem::MaybeUninit<u8>; 8]);
+                    let mut ret_area = RetArea([::core::mem::MaybeUninit::uninit(); 8]);
+                    let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/base@0.0.1")]
+                    extern "C" {
+                        #[link_name = "get-config"]
+                        fn wit_import(_: *mut u8);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: *mut u8) {
+                        unreachable!()
+                    }
+                    wit_import(ptr0);
+                    let l1 = *ptr0.add(0).cast::<*mut u8>();
+                    let l2 = *ptr0.add(4).cast::<usize>();
+                    let len3 = l2;
+                    _rt::Vec::from_raw_parts(l1.cast(), len3, len3)
+                }
+            }
         }
         /// Use this interface to control the hardware
         #[allow(dead_code, clippy::all)]
@@ -861,6 +887,7 @@ mod _rt {
             self as i64
         }
     }
+    pub use alloc_crate::vec::Vec;
     pub fn as_i32<T: AsI32>(t: T) -> i32 {
         t.as_i32()
     }
@@ -920,7 +947,6 @@ mod _rt {
             self as i32
         }
     }
-    pub use alloc_crate::vec::Vec;
     #[cfg(target_arch = "wasm32")]
     pub fn run_ctors_once() {
         wit_bindgen::rt::run_ctors_once();
@@ -959,38 +985,38 @@ macro_rules! __export_rudel_impl {
         $($path_to_types_root)*:: exports::rudel::base::run); const _ : () = {
         #[cfg(target_arch = "wasm32")] #[link_section =
         "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel:imports and exports"]
-        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 1386] = *
+        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 1409] = *
         b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xee\x09\x01A\x02\x01\
-A\x0b\x01B\x13\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x85\x0a\x01A\x02\x01\
+A\x0b\x01B\x16\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
 \0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\x01\x06microsw\0y\x04\
 \0\x09yield-now\x01\x05\x01@\0\0y\x04\0\x12get-remaining-fuel\x01\x06\x01@\x01\x06\
 microsw\x01\0\x04\0\x05sleep\x01\x07\x01@\0\0w\x04\0\x04time\x01\x08\x01@\x02\x05\
 level\x03\x07messages\x01\0\x04\0\x03log\x01\x09\x01o\x10}}}}}}}}}}}}}}}}\x01@\0\
-\0\x0a\x04\0\x08get-name\x01\x0b\x03\0\x15rudel:base/base@0.0.1\x05\0\x02\x03\0\0\
-\x10semantic-version\x01B\x1b\x02\x03\x02\x01\x01\x04\0\x10semantic-version\x03\0\
-\0\x01r\x03\x03red}\x05green}\x04blue}\x04\0\x09led-color\x03\0\x02\x01r\x02\x05\
-color\x03\x07max-lux{\x04\0\x08led-info\x03\0\x04\x01m\x02\x04none\x05basic\x04\0\
-\x12ambient-light-type\x03\0\x06\x01m\x02\x04none\x04ball\x04\0\x15vibration-sen\
-sor-type\x03\0\x08\x01@\0\0\x01\x04\0\x14get-hardware-version\x01\x0a\x01p{\x01@\
-\x02\x08first-id{\x03lux\x0b\0y\x04\0\x08set-leds\x01\x0c\x01@\x02\x05color\x03\x03\
-luxy\0y\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led-count\x01\x0e\x01@\x01\x02\
-id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\0\x16get-ambient-light-\
-type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\x09\x04\0\x19get-vibrat\
-ion-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\0\x19rudel:base/hardw\
-are@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10semantic-version\x03\0\0\
-\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16advertisement-settings\x03\0\
-\x02\x01p}\x04\0\x12advertisement-data\x03\0\x04\x01@\0\0\x01\x04\0\x0fget-ble-v\
-ersion\x01\x06\x01@\x01\x08settings\x03\0y\x04\0\x17configure-advertisement\x01\x07\
-\x01@\x01\x04data\x05\0y\x04\0\x16set-advertisement-data\x01\x08\x03\0\x14rudel:\
-base/ble@0.0.1\x05\x03\x01B\x05\x01o\x08yyyyyyyy\x01r\x05\x07addressw\x07company\
-{\x04data\0\x0bdata-length}\x0breceived-atw\x04\0\x0dadvertisement\x03\0\x01\x01\
-@\x01\x0dadvertisement\x02\x01\0\x04\0\x10on-advertisement\x01\x03\x04\0\x1arude\
-l:base/ble-guest@0.0.1\x05\x04\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\0\x04\0\x14\
-rudel:base/run@0.0.1\x05\x05\x04\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\x0b\x01\0\
-\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.\
-220.0\x10wit-bindgen-rust\x060.36.0";
+\0\x0a\x04\0\x08get-name\x01\x0b\x01p}\x01@\0\0\x0c\x04\0\x0aget-config\x01\x0d\x03\
+\0\x15rudel:base/base@0.0.1\x05\0\x02\x03\0\0\x10semantic-version\x01B\x1b\x02\x03\
+\x02\x01\x01\x04\0\x10semantic-version\x03\0\0\x01r\x03\x03red}\x05green}\x04blu\
+e}\x04\0\x09led-color\x03\0\x02\x01r\x02\x05color\x03\x07max-lux{\x04\0\x08led-i\
+nfo\x03\0\x04\x01m\x02\x04none\x05basic\x04\0\x12ambient-light-type\x03\0\x06\x01\
+m\x02\x04none\x04ball\x04\0\x15vibration-sensor-type\x03\0\x08\x01@\0\0\x01\x04\0\
+\x14get-hardware-version\x01\x0a\x01p{\x01@\x02\x08first-id{\x03lux\x0b\0y\x04\0\
+\x08set-leds\x01\x0c\x01@\x02\x05color\x03\x03luxy\0y\x04\0\x07set-rgb\x01\x0d\x01\
+@\0\0y\x04\0\x09led-count\x01\x0e\x01@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\
+\x0f\x01@\0\0\x07\x04\0\x16get-ambient-light-type\x01\x10\x04\0\x11get-ambient-l\
+ight\x01\x0e\x01@\0\0\x09\x04\0\x19get-vibration-sensor-type\x01\x11\x04\0\x0dge\
+t-vibration\x01\x0e\x03\0\x19rudel:base/hardware@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\
+\x01\x01\x04\0\x10semantic-version\x03\0\0\x01r\x02\x0cmin-interval{\x0cmax-inte\
+rval{\x04\0\x16advertisement-settings\x03\0\x02\x01p}\x04\0\x12advertisement-dat\
+a\x03\0\x04\x01@\0\0\x01\x04\0\x0fget-ble-version\x01\x06\x01@\x01\x08settings\x03\
+\0y\x04\0\x17configure-advertisement\x01\x07\x01@\x01\x04data\x05\0y\x04\0\x16se\
+t-advertisement-data\x01\x08\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x01B\x05\x01o\
+\x08yyyyyyyy\x01r\x05\x07addressw\x07company{\x04data\0\x0bdata-length}\x0brecei\
+ved-atw\x04\0\x0dadvertisement\x03\0\x01\x01@\x01\x0dadvertisement\x02\x01\0\x04\
+\0\x10on-advertisement\x01\x03\x04\0\x1arudel:base/ble-guest@0.0.1\x05\x04\x01B\x02\
+\x01@\0\x01\0\x04\0\x03run\x01\0\x04\0\x14rudel:base/run@0.0.1\x05\x05\x04\0\x16\
+rudel:base/rudel@0.0.1\x04\0\x0b\x0b\x01\0\x05rudel\x03\0\0\0G\x09producers\x01\x0c\
+processed-by\x02\x0dwit-component\x070.220.0\x10wit-bindgen-rust\x060.36.0";
         };
     };
 }
@@ -999,31 +1025,31 @@ pub use __export_rudel_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel-with-all-of-its-exports-removed:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1251] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc7\x08\x01A\x02\x01\
-A\x07\x01B\x13\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1274] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xde\x08\x01A\x02\x01\
+A\x07\x01B\x16\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
 \0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\x01\x06microsw\0y\x04\
 \0\x09yield-now\x01\x05\x01@\0\0y\x04\0\x12get-remaining-fuel\x01\x06\x01@\x01\x06\
 microsw\x01\0\x04\0\x05sleep\x01\x07\x01@\0\0w\x04\0\x04time\x01\x08\x01@\x02\x05\
 level\x03\x07messages\x01\0\x04\0\x03log\x01\x09\x01o\x10}}}}}}}}}}}}}}}}\x01@\0\
-\0\x0a\x04\0\x08get-name\x01\x0b\x03\0\x15rudel:base/base@0.0.1\x05\0\x02\x03\0\0\
-\x10semantic-version\x01B\x1b\x02\x03\x02\x01\x01\x04\0\x10semantic-version\x03\0\
-\0\x01r\x03\x03red}\x05green}\x04blue}\x04\0\x09led-color\x03\0\x02\x01r\x02\x05\
-color\x03\x07max-lux{\x04\0\x08led-info\x03\0\x04\x01m\x02\x04none\x05basic\x04\0\
-\x12ambient-light-type\x03\0\x06\x01m\x02\x04none\x04ball\x04\0\x15vibration-sen\
-sor-type\x03\0\x08\x01@\0\0\x01\x04\0\x14get-hardware-version\x01\x0a\x01p{\x01@\
-\x02\x08first-id{\x03lux\x0b\0y\x04\0\x08set-leds\x01\x0c\x01@\x02\x05color\x03\x03\
-luxy\0y\x04\0\x07set-rgb\x01\x0d\x01@\0\0y\x04\0\x09led-count\x01\x0e\x01@\x01\x02\
-id{\0\x05\x04\0\x0cget-led-info\x01\x0f\x01@\0\0\x07\x04\0\x16get-ambient-light-\
-type\x01\x10\x04\0\x11get-ambient-light\x01\x0e\x01@\0\0\x09\x04\0\x19get-vibrat\
-ion-sensor-type\x01\x11\x04\0\x0dget-vibration\x01\x0e\x03\0\x19rudel:base/hardw\
-are@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10semantic-version\x03\0\0\
-\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16advertisement-settings\x03\0\
-\x02\x01p}\x04\0\x12advertisement-data\x03\0\x04\x01@\0\0\x01\x04\0\x0fget-ble-v\
-ersion\x01\x06\x01@\x01\x08settings\x03\0y\x04\0\x17configure-advertisement\x01\x07\
-\x01@\x01\x04data\x05\0y\x04\0\x16set-advertisement-data\x01\x08\x03\0\x14rudel:\
-base/ble@0.0.1\x05\x03\x04\06rudel:base/rudel-with-all-of-its-exports-removed@0.\
-0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-exports-removed\x03\0\0\0G\x09produce\
-rs\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bindgen-rust\x060.\
-36.0";
+\0\x0a\x04\0\x08get-name\x01\x0b\x01p}\x01@\0\0\x0c\x04\0\x0aget-config\x01\x0d\x03\
+\0\x15rudel:base/base@0.0.1\x05\0\x02\x03\0\0\x10semantic-version\x01B\x1b\x02\x03\
+\x02\x01\x01\x04\0\x10semantic-version\x03\0\0\x01r\x03\x03red}\x05green}\x04blu\
+e}\x04\0\x09led-color\x03\0\x02\x01r\x02\x05color\x03\x07max-lux{\x04\0\x08led-i\
+nfo\x03\0\x04\x01m\x02\x04none\x05basic\x04\0\x12ambient-light-type\x03\0\x06\x01\
+m\x02\x04none\x04ball\x04\0\x15vibration-sensor-type\x03\0\x08\x01@\0\0\x01\x04\0\
+\x14get-hardware-version\x01\x0a\x01p{\x01@\x02\x08first-id{\x03lux\x0b\0y\x04\0\
+\x08set-leds\x01\x0c\x01@\x02\x05color\x03\x03luxy\0y\x04\0\x07set-rgb\x01\x0d\x01\
+@\0\0y\x04\0\x09led-count\x01\x0e\x01@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\
+\x0f\x01@\0\0\x07\x04\0\x16get-ambient-light-type\x01\x10\x04\0\x11get-ambient-l\
+ight\x01\x0e\x01@\0\0\x09\x04\0\x19get-vibration-sensor-type\x01\x11\x04\0\x0dge\
+t-vibration\x01\x0e\x03\0\x19rudel:base/hardware@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\
+\x01\x01\x04\0\x10semantic-version\x03\0\0\x01r\x02\x0cmin-interval{\x0cmax-inte\
+rval{\x04\0\x16advertisement-settings\x03\0\x02\x01p}\x04\0\x12advertisement-dat\
+a\x03\0\x04\x01@\0\0\x01\x04\0\x0fget-ble-version\x01\x06\x01@\x01\x08settings\x03\
+\0y\x04\0\x17configure-advertisement\x01\x07\x01@\x01\x04data\x05\0y\x04\0\x16se\
+t-advertisement-data\x01\x08\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x04\06rudel:b\
+ase/rudel-with-all-of-its-exports-removed@0.0.1\x04\0\x0b+\x01\0%rudel-with-all-\
+of-its-exports-removed\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-co\
+mponent\x070.220.0\x10wit-bindgen-rust\x060.36.0";
