@@ -44,13 +44,31 @@ pub static LED_PIN: LazyLock<Mutex<LedcDriver<'static>>> = LazyLock::new(|| {
     )
 });
 
+static ADC_DRIVER: LazyLock<Arc<AdcDriver<'static, adc::ADC1>>> =
+    LazyLock::new(|| Arc::new(AdcDriver::new(unsafe { adc::ADC1::new() }).unwrap()));
+
 pub static LIGHT_SENSOR_ADC: LazyLock<
-    Mutex<AdcChannelDriver<'static, gpio::Gpio3, AdcDriver<'static, adc::ADC1>>>,
+    Mutex<AdcChannelDriver<'static, gpio::Gpio3, Arc<AdcDriver<'static, adc::ADC1>>>>,
 > = LazyLock::new(|| {
-    let driver = AdcDriver::new(unsafe { adc::ADC1::new() }).unwrap();
     let pin = AdcChannelDriver::new(
-        driver,
+        ADC_DRIVER.clone(),
         unsafe { gpio::Gpio3::new() },
+        &AdcChannelConfig {
+            attenuation: adc_atten_t_ADC_ATTEN_DB_12,
+            resolution: adc::Resolution::Resolution12Bit,
+            calibration: false,
+        },
+    )
+    .unwrap();
+    Mutex::new(pin)
+});
+
+pub static VIBRATION_SENSOR_ADC: LazyLock<
+    Mutex<AdcChannelDriver<'static, gpio::Gpio4, Arc<AdcDriver<'static, adc::ADC1>>>>,
+> = LazyLock::new(|| {
+    let pin = AdcChannelDriver::new(
+        ADC_DRIVER.clone(),
+        unsafe { gpio::Gpio4::new() },
         &AdcChannelConfig {
             attenuation: adc_atten_t_ADC_ATTEN_DB_12,
             resolution: adc::Resolution::Resolution12Bit,
@@ -233,7 +251,10 @@ impl Host for WasmHost {
     ) -> Result<u32, rudelblinken_runtime::Error> {
         match LIGHT_SENSOR_ADC.lock().read() {
             Ok(v) => Ok(v as u32),
-            Err(_) => Ok(u32::MAX),
+            Err(err) => {
+                tracing::warn!(?err, "reading ambient light failed");
+                Ok(u32::MAX)
+            }
         }
     }
 
@@ -246,7 +267,13 @@ impl Host for WasmHost {
     fn get_vibration(
         _caller: &mut WrappedCaller<'_, Self>,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        return Ok(0);
+        match VIBRATION_SENSOR_ADC.lock().read() {
+            Ok(v) => Ok(v as u32),
+            Err(err) => {
+                tracing::warn!(?err, "reading vibrations failed");
+                Ok(u32::MAX)
+            }
+        }
     }
 
     fn configure_advertisement(

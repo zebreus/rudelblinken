@@ -3,8 +3,9 @@ use std::sync::{LazyLock, Mutex};
 use rudelblinken_sdk::{
     export,
     exports::{self},
-    get_ambient_light, get_led_info, get_name, led_count, log, set_advertisement_data, set_leds,
-    set_rgb, sleep, time, yield_now, Advertisement, BleGuest, Guest, LedColor, LogLevel,
+    get_ambient_light, get_led_info, get_name, get_vibration, led_count, log,
+    set_advertisement_data, set_leds, set_rgb, sleep, time, yield_now, Advertisement, BleGuest,
+    Guest, LedColor, LogLevel,
 };
 use talc::{ClaimOnOom, Span, Talc, Talck};
 
@@ -131,6 +132,7 @@ impl Guest for Test {
         log(LogLevel::Info, &format!("I have {} leds", led_count()));
 
         let mut ambient = 0u32;
+        let mut vibrate = 0u32;
         let mut next_status_log = STATUS_LOG_PERIOD;
         let mut prog = 0u8;
         loop {
@@ -139,6 +141,12 @@ impl Guest for Test {
                 let l = get_ambient_light();
                 if l != u32::MAX {
                     ambient = (31 * ambient + l) / 32;
+                }
+            }
+            {
+                let v = get_vibration();
+                if v != u32::MAX {
+                    vibrate = (15 * vibrate + v) / 16;
                 }
             }
             if let Ok(mut state) = CYCLE_STATE.try_lock() {
@@ -166,7 +174,7 @@ impl Guest for Test {
                 next_status_log = STATUS_LOG_PERIOD;
                 log(
                     LogLevel::Info,
-                    &format!("prog={:3}, ambient={}", prog, ambient),
+                    &format!("prog={:3}, ambient={}, vibrate={}", prog, ambient, vibrate),
                 );
             }
         }
