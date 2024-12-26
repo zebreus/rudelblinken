@@ -466,6 +466,32 @@ impl<T: Storage + 'static + Send + Sync, const STATE: FileState> File<T, STATE> 
         self.metadata.age()
     }
 
+    /// Mark the file as important.
+    pub fn set_important(&self) -> Result<(), WriteMetadataError> {
+        let info = unsafe { self.info.as_ref().read().unwrap() };
+
+        unsafe {
+            self.metadata
+                .set_important(info.storage, info.storage_address)
+                .unwrap();
+        }
+
+        return Ok(());
+    }
+
+    /// Increase the age of the file.
+    pub fn increase_age(&self) -> Result<(), WriteMetadataError> {
+        let info = unsafe { self.info.as_ref().read().unwrap() };
+
+        unsafe {
+            self.metadata
+                .increase_age(info.storage, info.storage_address)
+                .unwrap();
+        }
+
+        return Ok(());
+    }
+
     /// Mark this file for deletion.
     ///
     /// No new strong references can be created to a file that's marked for deletion, except with clone on a strong reference.
@@ -488,13 +514,14 @@ impl<T: Storage + 'static + Send + Sync, const STATE: FileState> File<T, STATE> 
     }
 
     /// Check if this file can be deleted right now.
-    pub(crate) fn can_be_deleted(&self) -> Result<Option<&Self>, DeleteFileContentError> {
+    // TODO: Provide a way to prevent creating strong references to files for a short time
+    pub(crate) fn can_be_deleted(&self) -> bool {
         let info = unsafe { self.info.as_ref().read().unwrap() };
 
         if info.writer_count == 0 && info.reader_count == 0 {
-            return Ok(Some(self));
+            return true;
         }
-        return Ok(None);
+        return false;
     }
 
     /// Internal delete function that does not consume the file.

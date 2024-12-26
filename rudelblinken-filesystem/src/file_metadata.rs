@@ -148,7 +148,7 @@ impl FileMetadata {
     /// Increase the age of the metadata in storage
     ///
     /// Assumes that this metadata is located at `address`. Undefined behaviour if it is not or has since been deleted
-    unsafe fn increase_age<T: Storage>(
+    pub unsafe fn increase_age<T: Storage>(
         &self,
         storage: &T,
         address: u32,

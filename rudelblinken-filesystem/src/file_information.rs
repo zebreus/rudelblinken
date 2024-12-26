@@ -111,6 +111,11 @@ impl<T: Storage + 'static + Send + Sync> FileInformation<T> {
         self.content.age()
     }
 
+    /// Check if the file is important
+    pub fn can_be_deleted(&self) -> bool {
+        self.content.can_be_deleted()
+    }
+
     /// Check if the file has this hash
     ///
     /// Returns false, if the file is not ready to be read

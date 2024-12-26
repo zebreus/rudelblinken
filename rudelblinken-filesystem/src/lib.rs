@@ -54,7 +54,12 @@ let mut filesystem = Filesystem::new(static_storage_ref);
 use file::{CommitFileContentError, File, FileState, WriteFileToStorageError};
 use file_information::FileInformation;
 use file_metadata::FileMetadata;
-use std::{collections::BTreeMap, io::Write, ops::Bound::Included};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    io::Write,
+    ops::Bound::Included,
+    u16,
+};
 use storage::{EraseStorageError, Storage};
 use thiserror::Error;
 
@@ -126,8 +131,18 @@ pub struct Filesystem<T: Storage + 'static + Send + Sync> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Importance {
     Free,
-    Unimportant,
+    Unimportant { age: u8 },
     Important,
+}
+
+impl Importance {
+    fn get_cost(&self) -> Option<u8> {
+        return match self {
+            Importance::Free => Some(0),
+            Importance::Unimportant { age } => Some(16 - age),
+            Importance::Important => None,
+        };
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,6 +281,12 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
         );
 
         for file in &self.files {
+            let file_importance = if file.important() || !file.can_be_deleted() {
+                Importance::Important
+            } else {
+                Importance::Unimportant { age: file.age() }
+            };
+
             let start_block = (file.address / T::BLOCK_SIZE) as u16;
             let length_in_blocks =
                 (file.length + size_of::<FileMetadata>() as u32).div_ceil(T::BLOCK_SIZE) as u16;
@@ -300,7 +321,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             free_ranges.insert(
                 surrounding_start + space_before,
                 Range {
-                    importance: Importance::Important,
+                    importance: file_importance,
                     length: length_in_blocks,
                 },
             );
@@ -371,10 +392,16 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
     fn find_free_space(&self, length: u32) -> Result<u32, FindFreeSpaceError> {
         let free_ranges = self.analyze_free_space()?;
 
+        for range in free_ranges.iter() {
+            println!("Free range: {:?}", range);
+        }
+
+        let mut length_in_blocks = length.div_ceil(T::BLOCK_SIZE) as u16;
+
         if let Some((free_range_start, free_range_length)) = free_ranges
             .iter()
             .filter(|(_, range)| range.importance == Importance::Free)
-            .filter(|(_, range)| range.length >= (length.div_ceil(T::BLOCK_SIZE) as u16))
+            .filter(|(_, range)| range.length >= (length_in_blocks))
             .min_by(|(_, range_a), (_, range_b)| range_a.length.cmp(&range_b.length))
             .map(|(a, b)| (*a as u32, b.length as u32))
         {
@@ -386,7 +413,89 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             return Ok(free_range_start * T::BLOCK_SIZE);
         }
 
-        return Err(FindFreeSpaceError::NotEnoughSpace);
+        let mut cheapest_range: VecDeque<(u16, Range)> = VecDeque::new();
+        let mut cheapest_range_cost: u16 = u16::MAX;
+        let mut last_start = 0;
+        let mut last_length = 0;
+        let mut current_range: VecDeque<(u16, Range)> = VecDeque::new();
+        let mut current_range_cost: u16 = 0;
+        let mut current_range_length: u16 = 0;
+        for (check_start, check_range) in free_ranges.iter() {
+            let Some(cost) = check_range.importance.get_cost() else {
+                continue;
+            };
+            if last_start + last_length != *check_start {
+                current_range.clear();
+                current_range_cost = 0;
+                current_range_length = 0;
+                last_length = 0;
+            }
+            current_range.push_back((*check_start, *check_range));
+            current_range_cost += cost as u16;
+            current_range_length += check_range.length;
+
+            if current_range_length >= length_in_blocks {
+                // Try to remove from start of the current range, until it is shortest
+                loop {
+                    let first_range_length = current_range.front().unwrap().1.length;
+                    if current_range_length - first_range_length < length_in_blocks {
+                        break;
+                    }
+                    let removed = current_range.pop_front().unwrap();
+                    let removed_cost = removed.1.importance.get_cost().unwrap();
+                    current_range_cost -= removed_cost as u16;
+                    current_range_length -= removed.1.length;
+                }
+            }
+
+            if current_range_length >= length_in_blocks && current_range_cost < cheapest_range_cost
+            {
+                cheapest_range = current_range.clone();
+                cheapest_range_cost = current_range_cost;
+            }
+        }
+
+        if cheapest_range_cost == u16::MAX {
+            return Err(FindFreeSpaceError::NotEnoughSpace);
+        }
+
+        for range in cheapest_range.iter() {
+            println!("Cheapest range: {:?}", range);
+            let matched_file = self
+                .files
+                .iter()
+                .find(|f| f.address == range.0 as u32 * T::BLOCK_SIZE);
+
+            if let Some(file) = matched_file {
+                file.mark_for_deletion().unwrap();
+                if !file.deleted() {
+                    eprintln!("File should have been deleted");
+                    panic!("File should have been deleted");
+                }
+            }
+        }
+
+        let first = cheapest_range.front().unwrap();
+        let start = first.0 as u32 * T::BLOCK_SIZE;
+        println!("Found unimportant space at {}", start);
+        return Ok(start);
+
+        // todo!("Clear cheapest range and return it");
+        // if let Some((free_range_start, free_range_length)) = free_ranges
+        //     .iter()
+        //     .filter(|(_, range)| range.importance != Importance::Important)
+        //     .filter(|(_, range)| range.length >= (length.div_ceil(T::BLOCK_SIZE) as u16))
+        //     .min_by(|(_, range_a), (_, range_b)| range_a.length.cmp(&range_b.length))
+        //     .map(|(a, b)| (*a as u32, b.length as u32))
+        // {
+        //     // let longest_range_start = longest_range.0 % (T::BLOCKS);
+        //     println!(
+        //         "Found free space at {} with length {}",
+        //         free_range_start, free_range_length
+        //     );
+        //     return Ok(free_range_start * T::BLOCK_SIZE);
+        // }
+        // return Err(FindFreeSpaceError::NotEnoughSpace);
     }
 
     /// Write a file to storage.
@@ -562,6 +671,38 @@ mod tests {
         assert_eq!(result.upgrade().unwrap().as_ref(), file);
         let result = filesystem.read_file("fancy2").unwrap();
         assert_eq!(result.upgrade().unwrap().as_ref(), file);
+    }
+
+    #[test]
+    fn unimportant_files_get_deleted() {
+        let owned_storage = SimulatedStorage::new();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
+        let mut filesystem = Filesystem::new(storage);
+        // A bit bigger than half the storage size
+        let file = vec![0u8; SimulatedStorage::SIZE as usize / 2 + 1 - size_of::<FileMetadata>()];
+        filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
+        filesystem.write_file("fancy2", &file, &[0u8; 32]).unwrap();
+        let result = filesystem.read_file("fancy").unwrap();
+        let result = filesystem.read_file("fancy2").unwrap();
+        assert_eq!(result.upgrade().unwrap().as_ref(), file);
+    }
+
+    #[test]
+    fn important_files_dont_get_deleted() {
+        let owned_storage = SimulatedStorage::new();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
+        let mut filesystem = Filesystem::new(storage);
+        // A bit bigger than half the storage size
+        let file = vec![0u8; SimulatedStorage::SIZE as usize / 2 + 1 - size_of::<FileMetadata>()];
+        filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
+        let result = filesystem.read_file("fancy").unwrap();
+        result.set_important();
+
+        filesystem
+            .write_file("fancy2", &file, &[0u8; 32])
+            .unwrap_err();
     }
 
     #[test]
