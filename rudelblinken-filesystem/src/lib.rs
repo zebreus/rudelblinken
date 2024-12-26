@@ -369,7 +369,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
         // Now the only overlap is the wrapping section
 
-        // Copy all ranges to the back
+        // Duplicate all ranges to the back
         for range in free_ranges.clone().into_iter() {
             free_ranges.insert(range.0 + T::BLOCKS as u16, range.1);
         }
@@ -387,7 +387,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             println!("Free range: {:?}", range);
         }
 
-        let mut length_in_blocks = length.div_ceil(T::BLOCK_SIZE) as u16;
+        let length_in_blocks = length.div_ceil(T::BLOCK_SIZE) as u16;
 
         if let Some((free_range_start, free_range_length)) = free_ranges
             .iter()
