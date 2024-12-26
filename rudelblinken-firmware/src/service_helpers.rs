@@ -1,20 +1,11 @@
-use std::{
-    io::{Seek, Write},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
-    BLE2904Format, BLEServer, DescriptorProperties, NimbleProperties,
+    BLE2904Format, DescriptorProperties,
 };
 use esp_idf_sys as _;
-use rudelblinken_filesystem::{
-    file::{File as FileContent, FileState},
-    Filesystem,
-};
-use thiserror::Error;
 
-use crate::storage::{get_filesystem, FlashStorage};
 
 pub trait DocumentableCharacteristic {
     fn document(&self, name: &str, format: BLE2904Format, exponent: u8, unit: u32);

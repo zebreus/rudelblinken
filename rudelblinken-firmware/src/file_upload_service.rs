@@ -5,7 +5,7 @@ use std::{
 
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
-    BLE2904Format, BLEServer, DescriptorProperties, NimbleProperties,
+    BLE2904Format, BLEServer, NimbleProperties,
 };
 use esp_idf_sys::{self as _, BLE_GATT_CHR_UNIT_UNITLESS};
 use rudelblinken_filesystem::{

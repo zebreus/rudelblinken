@@ -1,6 +1,6 @@
 #![feature(round_char_boundary)]
 
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{LazyLock, OnceLock};
 
 use cat_management_service::CatManagementService;
 use esp32_nimble::{
@@ -12,13 +12,11 @@ use esp_idf_hal::{
     gpio::{self, PinDriver},
     task,
 };
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvsPartition, NvsDefault};
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
 use nrf_logging_service::SerialLoggingService;
 use rudelblinken_runtime::host::{Advertisement, Event};
 use storage::setup_storage;
-use wasm_service::wasm_host;
 
 mod cat_management_service;
 mod config;

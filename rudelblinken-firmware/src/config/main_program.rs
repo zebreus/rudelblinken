@@ -1,4 +1,3 @@
-use core::str;
 use std::sync::{LazyLock, RwLock};
 
 use super::CONFIG_NVS;

@@ -407,7 +407,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
         let mut cheapest_range: VecDeque<(u16, Range)> = VecDeque::new();
         let mut cheapest_range_cost: u16 = u16::MAX;
-        let mut last_start = 0;
+        let last_start = 0;
         let mut last_length = 0;
         let mut current_range: VecDeque<(u16, Range)> = VecDeque::new();
         let mut current_range_cost: u16 = 0;

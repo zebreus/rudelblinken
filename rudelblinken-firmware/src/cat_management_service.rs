@@ -1,29 +1,22 @@
-use crate::config::device_name::{get_device_name, set_device_name};
 use crate::config::main_program::{get_main_program, set_main_program};
 use crate::config::{get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
 use crate::{
-    file_upload_service::{self, FileUploadService},
+    file_upload_service::{FileUploadService},
     service_helpers::DocumentableCharacteristic,
     storage::FlashStorage,
     wasm_service::wasm_host::WasmHost,
 };
 use esp32_nimble::{
-    utilities::{mutex::Mutex, BleUuid},
-    BLEAdvertisementData, BLEAdvertising, BLEDevice, BLEServer, NimbleProperties,
-};
-use esp_idf_hal::{
-    gpio::{self, PinDriver},
-    ledc::LedcDriver,
+    utilities::{mutex::Mutex, BleUuid}, BLEDevice, NimbleProperties,
 };
 use esp_idf_sys::{self as _, BLE_GATT_CHR_UNIT_UNITLESS};
 use rudelblinken_filesystem::file::{File, FileState};
 use rudelblinken_runtime::host::LedColor;
 use std::{
     sync::{mpsc, Arc},
-    time::{Duration, Instant},
+    time::Duration,
 };
-use tracing::{debug, error, info, instrument, Level};
-use wasmi::{AsContext, Caller, Engine, Linker, Module, Store};
+use tracing::{error, info};
 
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
@@ -175,7 +168,7 @@ impl CatManagementService {
         });
         let cat_management_service_clone = cat_management_service.clone();
         program_hash_characteristic.lock().on_write(move |args| {
-            let mut service = cat_management_service_clone.lock();
+            let service = cat_management_service_clone.lock();
             let Ok(hash): Result<[u8; 32], _> = args.recv_data().try_into() else {
                 error!("Wrong hash length");
                 return;

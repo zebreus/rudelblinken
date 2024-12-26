@@ -7,7 +7,7 @@ use std::{
 
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
-    uuid128, BLE2904Format, BLEServer, DescriptorProperties, NimbleProperties,
+    uuid128, BLE2904Format, BLEServer, NimbleProperties,
 };
 use esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS;
 

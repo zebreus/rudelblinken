@@ -3,9 +3,8 @@ use esp_idf_hal::{
     adc::{
         self,
         oneshot::{config::AdcChannelConfig, AdcChannelDriver, AdcDriver},
-        AdcContDriver,
     },
-    gpio::{self, PinDriver},
+    gpio::{self},
     ledc::{self, config::TimerConfig, LedcDriver, LedcTimerDriver},
     units::FromValueType,
 };
@@ -18,14 +17,10 @@ use rudelblinken_runtime::{
     linker::linker::WrappedCaller,
 };
 use std::{
-    cell::RefCell,
     sync::{Arc, LazyLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
-use std::{
-    rc::Rc,
-    sync::mpsc::{channel, Receiver, Sender},
-};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::{
     config::{get_config, DeviceName, LedStripColor, WasmGuestConfig},

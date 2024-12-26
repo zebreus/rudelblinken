@@ -24,18 +24,12 @@
 mod bluetooth;
 mod emulator;
 mod update_target;
-use bluer::{AdapterEvent, Device};
+use bluer::Device;
 use bluetooth::scan_for;
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use emulator::{EmulateCommand, Emulator};
-use futures::{
-    pin_mut,
-    stream::{AbortHandle, Abortable},
-    StreamExt as STTT,
-};
-use futures_time::stream::StreamExt;
 use futures_time::time::Duration;
-use std::{future::Future, path::PathBuf, time::Instant};
+use std::{path::PathBuf, time::Instant};
 use update_target::{UpdateTarget, UpdateTargetError};
 
 /// Rudelblinken cli utility

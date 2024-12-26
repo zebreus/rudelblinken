@@ -1,13 +1,12 @@
 use std::{
-    io::{Error, ErrorKind},
     os::raw::c_void,
-    sync::{Arc, LazyLock, Mutex, RwLock},
+    sync::{Mutex, RwLock},
 };
 
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsDefault};
+use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsDefault};
 use esp_idf_sys::{
     esp_err_to_name, esp_partition_erase_range, esp_partition_find, esp_partition_get,
-    esp_partition_mmap, esp_partition_mmap_memory_t,
+    esp_partition_mmap,
     esp_partition_mmap_memory_t_ESP_PARTITION_MMAP_DATA, esp_partition_next,
     esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_ANY,
     esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_DATA_UNDEFINED,
