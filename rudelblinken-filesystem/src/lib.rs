@@ -336,51 +336,42 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             }
         }
 
-        // Fix the last entry in case of a wraparound
+        // Remove all trailing free space
         let last_free_space_start = free_ranges.last_key_value().map_or(0, |(start, _)| *start);
         let wraparound_length: i64 = last_free_space_start as i64 - T::BLOCKS as i64;
-        if wraparound_length >= 0 {
-            let Some((
-                wrapping_range_start,
-                &Range {
-                    length: wrapping_range_length,
-                    importance: wrapping_range_importance,
-                },
-            )) = free_ranges.iter().rev().skip(1).next()
-            else {
-                // If there is a wraparound on the last file, there always should be something before it.
-                return Err(FindFreeSpaceError::FilesystemError);
-            };
 
-            let wraparound_length = wraparound_length as u16;
-            let Some((
-                0,
-                &Range {
-                    length: first_range_length,
-                    importance: first_range_importance,
-                },
-            )) = free_ranges.first_key_value()
-            else {
-                // If there is wraparound on the last file, there needs to be enough space at the start of the storage to accomodate that overlap
-                return Err(FindFreeSpaceError::FilesystemError);
-            };
+        // Remove the free space that is occupied by the wraparound from the first block
+        if wraparound_length > 0 {
+            let first_entry = free_ranges.first_key_value().unwrap();
+            if Importance::Free == first_entry.1.importance {
+                panic!("In case of wraparound, the first entry should always be free");
+            }
+            if first_entry.1.length < wraparound_length as u16 {
+                panic!("In case of wraparound, the first entry should always be large enough to accomodate the wraparound");
+            }
+            free_ranges.insert(wraparound_length as u16, first_entry.1.clone());
+            free_ranges.remove(&0);
+        }
+
+        // Remove the free space in the end
+        if wraparound_length >= 0 {
+            free_ranges.remove(&last_free_space_start);
+        } else {
+            let end_space = free_ranges.last_key_value().unwrap();
             free_ranges.insert(
-                0,
+                *end_space.0,
                 Range {
-                    length: wraparound_length,
-                    importance: wrapping_range_importance,
+                    importance: end_space.1.importance,
+                    length: end_space.1.length - T::BLOCKS as u16,
                 },
             );
-            let new_first_range_length = first_range_length - wraparound_length;
-            if new_first_range_length > 0 {
-                free_ranges.insert(
-                    wraparound_length,
-                    Range {
-                        length: new_first_range_length,
-                        importance: first_range_importance,
-                    },
-                );
-            }
+        }
+
+        // Now the only overlap is the wrapping section
+
+        // Copy all ranges to the back
+        for range in free_ranges.clone().into_iter() {
+            free_ranges.insert(range.0 + T::BLOCKS as u16, range.1);
         }
 
         return Ok(free_ranges);
@@ -400,6 +391,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
 
         if let Some((free_range_start, free_range_length)) = free_ranges
             .iter()
+            .filter(|(&start, _)| start < T::BLOCKS as u16)
             .filter(|(_, range)| range.importance == Importance::Free)
             .filter(|(_, range)| range.length >= (length_in_blocks))
             .min_by(|(_, range_a), (_, range_b)| range_a.length.cmp(&range_b.length))
@@ -445,6 +437,11 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
                     let removed_cost = removed.1.importance.get_cost().unwrap();
                     current_range_cost -= removed_cost as u16;
                     current_range_length -= removed.1.length;
+                }
+            }
+            if let Some(front) = current_range.front() {
+                if front.0 >= T::BLOCKS as u16 {
+                    break;
                 }
             }
 
@@ -683,7 +680,7 @@ mod tests {
         let file = vec![0u8; SimulatedStorage::SIZE as usize / 2 + 1 - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         filesystem.write_file("fancy2", &file, &[0u8; 32]).unwrap();
-        let result = filesystem.read_file("fancy").unwrap();
+        assert!(filesystem.read_file("fancy").is_none());
         let result = filesystem.read_file("fancy2").unwrap();
         assert_eq!(result.upgrade().unwrap().as_ref(), file);
     }
@@ -699,6 +696,23 @@ mod tests {
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         let result = filesystem.read_file("fancy").unwrap();
         result.set_important();
+
+        filesystem
+            .write_file("fancy2", &file, &[0u8; 32])
+            .unwrap_err();
+    }
+
+    #[test]
+    fn open_reader_protects_files_from_being_deleted() {
+        let owned_storage = SimulatedStorage::new();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
+        let mut filesystem = Filesystem::new(storage);
+        // A bit bigger than half the storage size
+        let file = vec![0u8; SimulatedStorage::SIZE as usize / 2 + 1 - size_of::<FileMetadata>()];
+        filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
+        let result = filesystem.read_file("fancy").unwrap();
+        let _strong_ref = result.upgrade().unwrap();
 
         filesystem
             .write_file("fancy2", &file, &[0u8; 32])
