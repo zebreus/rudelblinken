@@ -1,6 +1,8 @@
 import esp32.espnow
 import encoding.json
 import encoding.ubjson
+import system.storage
+import .upgrade
 
 PMK ::= espnow.Key.from-string "mustbe16bytesaaa"
 
@@ -49,6 +51,11 @@ class Pulse:
     if received-data.contains "dom":
       this.dom = received-data.get "dom" --if-absent=: 0
       this.dom-age = received-data.get "dom-age" --if-absent=: -1
+    if received-data.contains "upgrade":
+      upgrade := received-data.get "upgrade" --if-absent=: 0
+      if upgrade == 9428:
+        require-upgrade
+
     this.length = received-data.get "length" --if-absent=: 0
     return true
 

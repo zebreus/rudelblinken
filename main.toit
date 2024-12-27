@@ -13,12 +13,14 @@ import system.firmware
 import system.api.containers
 import system.assets
 import system
+import system.storage
 import encoding.tison
 import .sync
 import .firefly
 import .communication
 import .led
 import .ambient-light
+import .upgrade
 
 INTERVAL ::= Duration --us=100
 
@@ -41,6 +43,8 @@ device-name:
 main args:
   init-communication
   print "Hey, my name is $device-name"
+
+  enforce-upgrade
 
   firefly := Firefly device-name 1000000
   firefly.dampening = 0.95
