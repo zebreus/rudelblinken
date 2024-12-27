@@ -80,5 +80,5 @@ class Firefly:
       // return
 
     sender-cat := cats.get pulse.sender --init=:
-      Cat pulse.sender 
+      // Cat pulse.sender 
     sender-cat.add-pulse pulse this
