@@ -19,6 +19,7 @@ import .sync
 import .firefly
 import .communication
 import .led
+// import .ws2812
 import .ambient-light
 import .upgrade
 
@@ -46,7 +47,8 @@ main args:
 
   enforce-upgrade
 
-  firefly := Firefly device-name 1000000
+  //firefly := Firefly device-name 490000;
+  firefly := Firefly device-name    1000000
   firefly.dampening = 0.95
   task::
     ambient-light-task
@@ -61,8 +63,8 @@ main args:
       last-time = time
 
       firefly.tick delta
-      brightness := firefly.brightness
+      my-brightness := firefly.brightness
       // print brightness
-      set-brightness (1 + ( math.sin ((brightness * 6.14159) / 255.0)))/2.0
+      set-brightness (1 + ( math.sin ((my-brightness * 6.14159) / 255.0)))/2.0
 
       sleep INTERVAL

@@ -86,7 +86,7 @@ predict-next-duration preferred/PeerInformation last/PeerInformation at/int:
   average-offset += 0.05 * preferred.estimated-duration;
   average-offset += last.estimated-duration;
   information.do:
-    print "PEER: Duration: $(it.estimated-duration) Offset: $(it.estimated-shift)"
+    // print "PEER: Duration: $(it.estimated-duration) Offset: $(it.estimated-shift)"
     average-offset += it.estimated-shift;
     if it.estimated-shift < (it.estimated-duration / 2):
       average-offset += it.estimated-duration

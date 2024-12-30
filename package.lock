@@ -1,0 +1,9 @@
+sdk: ^2.0.0-alpha.144
+prefixes:
+  pixel_strip: toit-pixel-strip
+packages:
+  toit-pixel-strip:
+    url: github.com/toitware/toit-pixel-strip
+    name: pixel_strip
+    version: 1.0.0
+    hash: 2084900a5fe051893dd75b7210bd2f057958db19

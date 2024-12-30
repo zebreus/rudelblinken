@@ -10,12 +10,12 @@ circular-mean samples/List minimum/int maximum/int:
     [math.cos it, math.sin it]
   vector_sum := vectors.reduce --initial=[0.0001,0]: |acc it|
     [acc[0] + it[0], acc[1] + it[1]]
-  print "$vector_sum[0]"
-  print "$vector_sum[1]"
+  // print "$vector_sum[0]"
+  // print "$vector_sum[1]"
   average-offset-angle := math.atan2
     vector-sum[1] / (max 1 vectors.size)
     vector-sum[0] / (max 1 vectors.size)
-  print "$average-offset-angle"
+  // print "$average-offset-angle"
     
   average-offset := ((average-offset-angle * cycle-size ) / (3.1415 * 2.0)).to-int
   average-offset = minimum + ((cycle-size + average-offset) % cycle-size)

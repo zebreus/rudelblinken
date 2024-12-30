@@ -1,5 +1,5 @@
 install-all:
-	jag scan -t 4000ms -o short --list | xargs -n1 jag container install rudelblinken main.toit -d
+	jag scan -t 8000ms -o short --list | xargs -n1 jag container install rudelblinken main.toit -d
 
 uninstall-all:
 	jag scan -t 4000ms -o short --list | xargs -n1 jag container uninstall rudelblinken -d
