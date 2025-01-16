@@ -93,6 +93,7 @@ pub async fn scan_for<Fut, Err>(
     f: &dyn Fn(Device) -> Fut,
 ) -> bluer::Result<()>
 where
+    Err: std::fmt::Debug,
     Fut: Future<Output = Result<(), Err>>,
 {
     let session = bluer::Session::new().await?;
@@ -124,6 +125,7 @@ where
                     if result.is_ok() {
                         programmed_devices += 1;
                     }
+                    println!("Got result {:?}", result);
                     if programmed_devices >= max_devices {
                         abort_handle.abort();
                     }

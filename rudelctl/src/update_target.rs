@@ -174,6 +174,7 @@ impl UpdateTarget {
 
     pub async fn run_program(&self, data: &[u8]) -> Result<(), UpdateTargetError> {
         let program_hash = self.upload_file(data).await?;
+        println!("Uploaded file.");
         self.program_hash_characteristic
             .write_ext(
                 &program_hash,
@@ -185,11 +186,13 @@ impl UpdateTarget {
                 },
             )
             .await?;
+        println!("Wrote program hash.");
         return Ok(());
     }
 
     #[async_recursion]
     pub async fn upload_file(&self, data: &[u8]) -> Result<[u8; 32], UpdateTargetError> {
+        println!("Preparing data for upload...");
         let mut hasher = blake3::Hasher::new();
         hasher.update(&data);
         // TODO: I am sure there is a better way to convert this into an array but I didnt find it after 10 minutes.
@@ -206,7 +209,6 @@ impl UpdateTarget {
             .chunks(chunk_size as usize)
             .map(|chunk| crc8_generator.checksum(chunk))
             .collect();
-
         let chunks: Vec<Vec<u8>> = data
             .chunks(chunk_size as usize)
             .enumerate()
@@ -218,6 +220,7 @@ impl UpdateTarget {
             })
             .collect();
 
+        println!("Sending checksums...");
         let checksums_data = checksums.as_slice();
         if checksums_data.len() < 32 {
             self.checksums_characteristic.write(checksums_data).await?;
@@ -228,6 +231,7 @@ impl UpdateTarget {
                 .await?;
         }
 
+        println!("Sending file information...");
         self.length_characteristic
             .write(&(data.len() as u32).to_le_bytes())
             .await?;
@@ -236,25 +240,42 @@ impl UpdateTarget {
             .await?;
         self.hash_characteristic.write(&hash).await?;
 
-        let mut write_io = self.data_characteristic.write_io().await?;
+        println!("Sending chunks...");
+
+        // let mut write_io = self.data_characteristic.write_io().await?;
         for chunk in chunks {
-            write_io.send(chunk.as_slice()).await?;
+            // write_io.send(chunk.as_slice()).await?;
+            self.data_characteristic
+                .write_ext(
+                    chunk.as_slice(),
+                    &CharacteristicWriteRequest {
+                        offset: 0,
+                        op_type: bluer::gatt::WriteOp::Reliable,
+                        prepare_authorize: false,
+                        _non_exhaustive: (),
+                    },
+                )
+                .await?;
+            // write_io.flush().await?;
         }
-        write_io.flush().await?;
-        write_io.shutdown().await?;
+        println!("Flushing data...");
+        // write_io.flush().await?;
+        // write_io.shutdown().await?;
 
         // Force flushing by doing a reliable write to any property
-        self.length_characteristic
-            .write_ext(
-                &[0, 0, 0, 0],
-                &CharacteristicWriteRequest {
-                    offset: 0,
-                    op_type: bluer::gatt::WriteOp::Reliable,
-                    prepare_authorize: false,
-                    _non_exhaustive: (),
-                },
-            )
-            .await?;
+        // self.length_characteristic
+        //     .write_ext(
+        //         &[0, 0, 0, 0],
+        //         &CharacteristicWriteRequest {
+        //             offset: 0,
+        //             op_type: bluer::gatt::WriteOp::Reliable,
+        //             prepare_authorize: false,
+        //             _non_exhaustive: (),
+        //         },
+        //     )
+        //     .await?;
+
+        println!("Uploaded file {:?}", hash);
 
         return Ok(hash);
     }

@@ -151,10 +151,10 @@ async fn main() -> bluer::Result<()> {
                 999,
                 &async |device: Device| -> Result<(), UpdateTargetError> {
                     let address = device.address();
-                    let update_target = UpdateTarget::new_from_peripheral(&device).await?;
-                    let rssi = device.rssi().await?;
+                    let update_target = UpdateTarget::new_from_peripheral(&device).await.unwrap();
+                    let rssi = device.rssi().await.unwrap();
 
-                    let name = update_target.get_name().await?;
+                    let name = update_target.get_name().await.unwrap();
                     println!("{}, {}, {}", name, address, rssi.unwrap_or(-200));
                     return Ok(());
                     // update_target.device.disconnect().await.unwrap();
