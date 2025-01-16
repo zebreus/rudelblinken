@@ -233,9 +233,11 @@ impl FileUploadService {
         }
         let mut filesystem = get_filesystem().unwrap().write().unwrap();
         // Delete previous file
-        let _ = filesystem.delete_file("firmware");
+        let mut bytes = [0u8; 4];
+        unsafe { esp_idf_sys::esp_fill_random(bytes.as_mut_ptr() as *mut core::ffi::c_void, 4) };
+        let random_name = format!("fw-{}", u32::from_le_bytes(bytes));
         let writer = filesystem
-            .get_file_writer("firmware", length, hash)
+            .get_file_writer(&random_name, length, hash)
             .unwrap();
 
         self.currently_receiving = Some(IncompleteFile::new(
@@ -244,7 +246,7 @@ impl FileUploadService {
             chunk_length,
             length,
             writer,
-            "firmware".into(),
+            random_name,
         ));
 
         Ok(())
