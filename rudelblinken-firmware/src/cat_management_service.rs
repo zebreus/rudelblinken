@@ -1,13 +1,12 @@
 use crate::config::main_program::{get_main_program, set_main_program};
 use crate::config::{get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
 use crate::{
-    file_upload_service::{FileUploadService},
-    service_helpers::DocumentableCharacteristic,
-    storage::FlashStorage,
-    wasm_service::wasm_host::WasmHost,
+    file_upload_service::FileUploadService, service_helpers::DocumentableCharacteristic,
+    storage::FlashStorage, wasm_service::wasm_host::WasmHost,
 };
 use esp32_nimble::{
-    utilities::{mutex::Mutex, BleUuid}, BLEDevice, NimbleProperties,
+    utilities::{mutex::Mutex, BleUuid},
+    BLEDevice, NimbleProperties,
 };
 use esp_idf_sys::{self as _, BLE_GATT_CHR_UNIT_UNITLESS};
 use rudelblinken_filesystem::file::{File, FileState};
@@ -58,6 +57,9 @@ fn wasm_runner(
 ) {
     loop {
         std::thread::sleep(Duration::from_millis(200));
+
+        // Drain the event queue
+        while host.host_events.lock().try_recv().is_ok() {}
 
         let Ok(file) = receiver.try_recv() else {
             continue;
