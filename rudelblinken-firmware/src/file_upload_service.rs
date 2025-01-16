@@ -467,7 +467,7 @@ impl FileUploadService {
 
         let data_characteristic = service.lock().create_characteristic(
             FILE_UPLOAD_SERVICE_DATA_UUID,
-            NimbleProperties::WRITE_NO_RSP,
+            NimbleProperties::WRITE_NO_RSP | NimbleProperties::WRITE,
         );
         data_characteristic.document(
             "Chunk Upload",
