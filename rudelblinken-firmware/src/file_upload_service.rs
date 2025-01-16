@@ -1,39 +1,46 @@
-use std::{
-    io::{Seek, Write},
-    sync::Arc,
+use crate::{
+    service_helpers::DocumentableCharacteristic,
+    storage::{get_filesystem, FlashStorage, SetupStorageError},
 };
-
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
     BLE2904Format, BLEServer, NimbleProperties,
 };
 use esp_idf_sys::{self as _, BLE_GATT_CHR_UNIT_UNITLESS};
+use itertools::Itertools;
 use rudelblinken_filesystem::{
-    file::{File as FileContent, FileState},
+    file::{File as FileContent, FileState, UpgradeFileError},
     Filesystem,
 };
-use thiserror::Error;
-
-use crate::{
-    service_helpers::DocumentableCharacteristic,
-    storage::{get_filesystem, FlashStorage},
+use std::{
+    io::{Seek, Write},
+    sync::Arc,
 };
+use thiserror::Error;
+use zerocopy::{Immutable, IntoBytes, KnownLayout, TryFromBytes};
 
 const FILE_UPLOAD_SERVICE: u16 = 0x7892;
+// Write data chunks here
 const FILE_UPLOAD_SERVICE_DATA: u16 = 0x7893;
-const FILE_UPLOAD_SERVICE_HASH: u16 = 0x7894;
-const FILE_UPLOAD_SERVICE_CHECKSUMS: u16 = 0x7895;
-const FILE_UPLOAD_SERVICE_LENGTH: u16 = 0x7896;
-const FILE_UPLOAD_SERVICE_CHUNK_LENGTH: u16 = 0x7897;
+// Write metadata here to initiate an upload. Returns the metadata of the current upload
+const FILE_UPLOAD_SERVICE_START_UPLOAD: u16 = 0x7894;
+// Read this to get the IDs of some missing chunks. Returns a list of u16
+const FILE_UPLOAD_SERVICE_MISSING_CHUNKS: u16 = 0x7895;
+// Read here to get the last error as a string
+const FILE_UPLOAD_SERVICE_LAST_ERROR: u16 = 0x7896;
+// Read here to get the number of already uploaded chunks
+const FILE_UPLOAD_SERVICE_PROGRESS: u16 = 0x7897;
 
 const FILE_UPLOAD_SERVICE_UUID: BleUuid = BleUuid::from_uuid16(FILE_UPLOAD_SERVICE);
 const FILE_UPLOAD_SERVICE_DATA_UUID: BleUuid = BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_DATA);
-const FILE_UPLOAD_SERVICE_HASH_UUID: BleUuid = BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_HASH);
-const FILE_UPLOAD_SERVICE_CHECKSUMS_UUID: BleUuid =
-    BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_CHECKSUMS);
-const FILE_UPLOAD_SERVICE_LENGTH_UUID: BleUuid = BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_LENGTH);
-const FILE_UPLOAD_SERVICE_CHUNK_LENGTH_UUID: BleUuid =
-    BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_CHUNK_LENGTH);
+const FILE_UPLOAD_SERVICE_HASH_UUID: BleUuid =
+    BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_START_UPLOAD);
+const FILE_UPLOAD_SERVICE_MISSING_CHUNKS_UUID: BleUuid =
+    BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_MISSING_CHUNKS);
+const FILE_UPLOAD_SERVICE_LAST_ERROR_UUID: BleUuid =
+    BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_LAST_ERROR);
+const FILE_UPLOAD_SERVICE_PROGRESS_UUID: BleUuid =
+    BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_PROGRESS);
 
 #[derive(Clone, Debug)]
 pub struct File {
@@ -69,6 +76,33 @@ pub enum VerifyFileError {
     HashMismatch,
 }
 
+// TODO: Implement better debug printing
+#[derive(Debug, Clone, TryFromBytes, IntoBytes, Immutable, KnownLayout, PartialEq, PartialOrd)]
+#[repr(C)]
+pub struct UploadRequest {
+    /// Size of the file in bytes
+    pub file_size: u32,
+    /// Blake3 hash of the file
+    pub hash: [u8; 32],
+    /// CRC checksums of the chunks.
+    /// If the number of chunks is <= 32 then this is interpreted as an array of 1-byte CRC checksums
+    /// If the number of chunks is > 32 then this interpreted as the hash of a previously uploaded file containing an array of 1-byte CRC checksums
+    pub checksums: [u8; 32],
+    /// File name
+    pub file_name: [u8; 16],
+    /// Size of a single chunk
+    pub chunk_size: u16,
+    /// Unused padding. Reserved for future use
+    pub _padding: u16,
+}
+
+impl UploadRequest {
+    // Get the total number of chunks
+    pub fn chunk_count(&self) -> u32 {
+        self.file_size.div_ceil(self.chunk_size as u32)
+    }
+}
+
 impl IncompleteFile {
     pub fn new(
         hash: [u8; 32],
@@ -88,6 +122,7 @@ impl IncompleteFile {
             hash,
         }
     }
+
     pub fn receive_chunk(&mut self, data: &[u8], index: u16) -> Result<(), ReceiveChunkError> {
         // Verify length for all but the last chunk
         if (index as usize != self.checksums.len() - 1)
@@ -121,14 +156,21 @@ impl IncompleteFile {
 
         Ok(())
     }
-    // /// Get the ID of the next missing chunk. Returns [None], if all chunks were already received.
-    // pub fn get_next_missing_chunk(&self) -> Option<usize> {
-    //     self.received_chunks
-    //         .iter()
-    //         .enumerate()
-    //         .find(|(_, received)| received == &&false)
-    //         .map(|(index, _)| index)
-    // }
+    /// Get all chunks that have not yet been received
+    pub fn get_missing_chunks(&self) -> Vec<u16> {
+        self.received_chunks
+            .iter()
+            .enumerate()
+            .filter(|(_, received)| received == &&false)
+            .map(|(index, _)| index as u16)
+            .collect_vec()
+    }
+    /// Get the number of chunks that have been received
+    pub fn count_received_chunks(&self) -> u16 {
+        self.received_chunks
+            .iter()
+            .fold(0, |sum, received| sum + (if *received { 1 } else { 0 }))
+    }
     /// Check if the file is complete
     pub fn is_complete(&self) -> bool {
         self.received_chunks.iter().all(|received| *received)
@@ -166,24 +208,27 @@ impl IncompleteFile {
         let file = self.verify_hash(filesystem)?;
         Ok(file)
     }
+
+    pub fn get_hash(&self) -> &[u8; 32] {
+        &self.hash
+    }
 }
 
 pub struct FileUploadService {
     files: Vec<File>,
     currently_receiving: Option<IncompleteFile>,
 
-    latest_hash: Option<[u8; 32]>,
-    latest_checksums: Option<Vec<u8>>,
-    latest_length: Option<u32>,
-    latest_chunk_length: Option<u16>,
-
+    // latest_hash: Option<[u8; 32]>,
+    // latest_length: Option<u32>,
+    // latest_chunk_length: Option<u16>,
+    // current_checksums: Option<Vec<u8>>,
+    // current_upload: Option<UploadRequest>,
     last_error: Option<FileUploadError>,
 }
 
 #[derive(Error, Debug, Clone)]
+#[repr(u8)]
 pub enum FileUploadError {
-    #[error(transparent)]
-    StartUploadError(#[from] StartUploadError),
     #[error(transparent)]
     ReceiveChunkError(#[from] ReceiveChunkError),
     #[error(transparent)]
@@ -194,73 +239,48 @@ pub enum FileUploadError {
     ReceivedChunkWayTooShort,
     #[error("There is no checksum file with the supplied hash")]
     ChecksumFileDoesNotExist,
-}
-
-#[derive(Error, Debug, Clone)]
-pub enum StartUploadError {
-    #[error("Content length needs to be set before starting an upload")]
-    LengthMissing,
-    #[error("Chunk length needs to be set before starting an upload")]
-    ChunkLengthMissing,
-    #[error("Hash needs to be set before starting an upload")]
-    HashMissing,
-    #[error("Checksums need to be specified before starting an upload")]
-    ChecksumsMissing,
-    #[error("Content length seems incorrect, as it does not match chunk length multiplied by chunk size")]
-    LengthIncorrect,
+    #[error("Failed to decode upload request {0}")]
+    MalformedUploadRequest(String),
+    #[error("There was an error reading the checksums file {0}")]
+    FailedToReadChecksums(UpgradeFileError),
+    #[error("The checksums file does not have the expected size (Expected {expected}; Got {got}")]
+    WrongNumberOfChecksums { expected: u32, got: u32 },
+    #[error(transparent)]
+    SetupFilesystemError(#[from] SetupStorageError),
+    #[error("Failed to lock filesystem")]
+    LockFilesystemError,
+    #[error("Failed to create file: FilesystemWriteError: {0}")]
+    FailedToCreateFile(String),
 }
 
 impl FileUploadService {
     /// Start an upload with the last received settings. Cancels a currently ongoing upload
-    fn start_upload(&mut self) -> Result<(), StartUploadError> {
-        let Some(length) = self.latest_length else {
-            return Err(StartUploadError::LengthMissing);
-        };
-        let Some(chunk_length) = self.latest_chunk_length else {
-            return Err(StartUploadError::ChunkLengthMissing);
-        };
-        let Some(hash) = &self.latest_hash else {
-            return Err(StartUploadError::HashMissing);
-        };
-        let Some(checksums) = &self.latest_checksums else {
-            return Err(StartUploadError::ChecksumsMissing);
-        };
-        let min_length =
-            ((chunk_length as usize) * checksums.len() - (chunk_length as usize - 1)) as u32;
-        let max_length = (chunk_length as usize * checksums.len()) as u32;
-        if (length < min_length) || (length > max_length) {
-            return Err(StartUploadError::LengthIncorrect);
-        }
-        let mut filesystem = get_filesystem().unwrap().write().unwrap();
-        // Delete previous file
+    fn start_upload(
+        &mut self,
+        upload_request: &UploadRequest,
+    ) -> Result<IncompleteFile, FileUploadError> {
+        let mut filesystem = get_filesystem()?
+            .write()
+            .map_err(|_| FileUploadError::LockFilesystemError)?;
+
+        let checksums =
+            self.load_checksums(&upload_request.checksums, &upload_request.chunk_count())?;
+
         let mut bytes = [0u8; 4];
         unsafe { esp_idf_sys::esp_fill_random(bytes.as_mut_ptr() as *mut core::ffi::c_void, 4) };
         let random_name = format!("fw-{}", u32::from_le_bytes(bytes));
         let writer = filesystem
-            .get_file_writer(&random_name, length, hash)
-            .unwrap();
+            .get_file_writer(&random_name, upload_request.file_size, &upload_request.hash)
+            .map_err(|error| FileUploadError::FailedToCreateFile(format!("{}", error)))?;
 
-        self.currently_receiving = Some(IncompleteFile::new(
-            *hash,
+        Ok(IncompleteFile::new(
+            upload_request.hash,
             checksums.clone(),
-            chunk_length,
-            length,
+            upload_request.chunk_size,
+            upload_request.file_size,
             writer,
             random_name,
-        ));
-
-        Ok(())
-    }
-
-    /// Starts an upload if there is no active upload
-    ///
-    /// If this returns Ok, self.currently_receiving is always set to Some
-    fn ensure_upload(&mut self) -> Result<(), StartUploadError> {
-        if self.currently_receiving.is_some() {
-            return Ok(());
-        }
-        self.start_upload()?;
-        Ok(())
+        ))
     }
 
     fn log_error(&mut self, error: FileUploadError) {
@@ -293,7 +313,6 @@ impl FileUploadService {
         let data = &received_data[2..];
 
         ::tracing::info!(target: "file-upload", "Received data chunk {}", index);
-        self.ensure_upload()?;
 
         let Some(current_upload) = &mut self.currently_receiving else {
             // Should never happen, because we called ensure_upload above
@@ -320,26 +339,46 @@ impl FileUploadService {
     /// This will be called on writes to the hash characteristic
     ///
     /// We use this wrapper to make error handling easier
-    fn hash_write(
+    fn request_upload(
         &mut self,
         args: &mut esp32_nimble::OnWriteArgs<'_>,
     ) -> Result<(), FileUploadError> {
         let received_data = args.recv_data();
-        if received_data.len() != 32 {
-            ::tracing::info!(target: "file-upload", "hash length is too short {}", received_data.len());
+        let upload_request = UploadRequest::try_ref_from_bytes(received_data)
+            .map_err(|error| FileUploadError::MalformedUploadRequest(error.to_string()))?;
 
-            return Err(FileUploadError::ReceivedChunkWayTooShort);
-        }
+        ::tracing::info!(target: "file-upload", "Received request {:?}", upload_request);
 
-        let new_hash: [u8; 32] = received_data.try_into().unwrap();
-        ::tracing::info!(target: "file-upload", "Received hash {:?}", new_hash);
-        if self.latest_hash.as_ref() == Some(&new_hash) {
-            return Ok(());
-        }
-        self.latest_hash = Some(new_hash);
-        self.currently_receiving = None;
+        ::tracing::info!(target: "file-upload", "Received hash {:?}", upload_request.hash);
+
+        let incomplete_file = self.start_upload(upload_request)?;
+        self.currently_receiving = Some(incomplete_file);
         Ok(())
     }
+
+    // /// This will be called on writes to the hash characteristic
+    // ///
+    // /// We use this wrapper to make error handling easier
+    // fn hash_write(
+    //     &mut self,
+    //     args: &mut esp32_nimble::OnWriteArgs<'_>,
+    // ) -> Result<(), FileUploadError> {
+    //     let received_data = args.recv_data();
+    //     if received_data.len() != 32 {
+    //         ::tracing::info!(target: "file-upload", "hash length is too short {}", received_data.len());
+
+    //         return Err(FileUploadError::ReceivedChunkWayTooShort);
+    //     }
+
+    //     let new_hash: [u8; 32] = received_data.try_into().unwrap();
+    //     ::tracing::info!(target: "file-upload", "Received hash {:?}", new_hash);
+    //     if self.latest_hash.as_ref() == Some(&new_hash) {
+    //         return Ok(());
+    //     }
+    //     self.latest_hash = Some(new_hash);
+    //     self.currently_receiving = None;
+    //     Ok(())
+    // }
 
     pub fn get_file(&self, hash: &[u8; 32]) -> Option<&File> {
         self.files.iter().find(|file| &file.hash == hash)
@@ -348,120 +387,42 @@ impl FileUploadService {
     /// This will be called on writes to the checksum characteristic
     ///
     /// We use this wrapper to make error handling easier
-    fn checksums_write(
-        &mut self,
-        args: &mut esp32_nimble::OnWriteArgs<'_>,
-    ) -> Result<(), FileUploadError> {
-        let received_data = args.recv_data();
-        ::tracing::info!(target: "file-upload", "Received checksums with length {}", received_data.len());
+    fn load_checksums(
+        &self,
+        checksums: &[u8; 32],
+        chunk_count: &u32,
+    ) -> Result<Vec<u8>, FileUploadError> {
+        if chunk_count <= &32 {
+            ::tracing::info!(target: "file-upload", "Successfully loaded {} checksums from request", chunk_count);
 
-        if received_data.len() < 32 {
-            let new_checksums = received_data.to_vec();
-            if self.latest_checksums.as_ref() == Some(&new_checksums) {
-                return Ok(());
-            }
-            ::tracing::info!(target: "file-upload", "Directly set checksums");
-            self.latest_checksums = Some(new_checksums);
-            self.currently_receiving = None;
-            return Ok(());
+            return Ok(checksums[0..(*chunk_count as usize)].to_vec());
         }
 
-        if received_data.len() == 32 {
-            let hash: &[u8; 32] = received_data.try_into().unwrap();
-            let Some(file) = self.get_file(hash) else {
-                return Err(FileUploadError::ChecksumFileDoesNotExist);
-            };
-            let new_checksums: Vec<u8> = file.content.upgrade().unwrap().to_vec();
-            if self.latest_checksums.as_ref() == Some(&new_checksums) {
-                return Ok(());
-            }
-            ::tracing::info!(target: "file-upload", "Loaded checksums from file");
-            self.latest_checksums = Some(new_checksums);
-            self.currently_receiving = None;
-            return Ok(());
+        let hash: &[u8; 32] = checksums.into();
+        let Some(file) = self.get_file(hash) else {
+            return Err(FileUploadError::ChecksumFileDoesNotExist);
+        };
+        let new_checksums: Vec<u8> = file
+            .content
+            .upgrade()
+            .map_err(|error| FileUploadError::FailedToReadChecksums(error))?
+            .to_vec();
+        if (new_checksums.len() as u32) != *chunk_count {
+            return Err(FileUploadError::WrongNumberOfChecksums {
+                expected: *chunk_count,
+                got: new_checksums.len() as u32,
+            });
         }
 
-        ::tracing::info!(target: "file-upload", "checksums write length is too short {}", received_data.len());
+        ::tracing::info!(target: "file-upload", "Successfully loaded {} checksums from file", new_checksums.len());
 
-        Err(FileUploadError::ReceivedChunkWayTooShort)
-    }
-
-    /// This will be called on writes to the length characteristic
-    ///
-    /// We use this wrapper to make error handling easier
-    fn length_write(
-        &mut self,
-        args: &mut esp32_nimble::OnWriteArgs<'_>,
-    ) -> Result<(), FileUploadError> {
-        let received_data = args.recv_data();
-        if received_data.len() != 4 {
-            ::tracing::info!(target: "file-upload", "length is too short {}", received_data.len());
-
-            return Err(FileUploadError::ReceivedChunkWayTooShort);
-        }
-
-        let new_length = u32::from_le_bytes([
-            received_data[0],
-            received_data[1],
-            received_data[2],
-            received_data[3],
-        ]);
-        ::tracing::info!(target: "file-upload", "Received length {}", new_length);
-
-        if self
-            .latest_length
-            .map_or(false, |old_length| old_length == new_length)
-        {
-            // Not changed, nothing to do
-            return Ok(());
-        }
-
-        self.latest_length = Some(new_length);
-        self.currently_receiving = None;
-
-        Ok(())
-    }
-
-    /// This will be called on writes to the chunk length characteristic
-    ///
-    /// We use this wrapper to make error handling easier
-    fn chunk_length_write(
-        &mut self,
-        args: &mut esp32_nimble::OnWriteArgs<'_>,
-    ) -> Result<(), FileUploadError> {
-        let received_data = args.recv_data();
-        if received_data.len() != 2 {
-            ::tracing::info!(target: "file-upload", "chunk length is too short {}", received_data.len());
-
-            return Err(FileUploadError::ReceivedChunkWayTooShort);
-        }
-
-        let new_chunk_length = u16::from_le_bytes([received_data[0], received_data[1]]);
-        ::tracing::info!(target: "file-upload", "Received chunk length {}", new_chunk_length);
-
-        if self.latest_chunk_length.map_or(false, |old_chunk_length| {
-            old_chunk_length == new_chunk_length
-        }) {
-            // Not changed, nothing to do
-            return Ok(());
-        }
-
-        self.latest_chunk_length = Some(new_chunk_length);
-        self.currently_receiving = None;
-
-        Ok(())
+        return Ok(new_checksums);
     }
 
     pub fn new(server: &mut BLEServer) -> Arc<Mutex<FileUploadService>> {
         let file_upload_service = Arc::new(Mutex::new(FileUploadService {
             files: Vec::new(),
             currently_receiving: None,
-
-            latest_checksums: None,
-            latest_chunk_length: None,
-            latest_hash: None,
-            latest_length: None,
-
             last_error: None,
         }));
 
@@ -478,44 +439,58 @@ impl FileUploadService {
             BLE_GATT_CHR_UNIT_UNITLESS,
         );
 
-        let hash_characteristic = service.lock().create_characteristic(
+        // Write a upload request to start a new upload.
+        // Read to get the hash of the current upload.
+        let upload_request_characteristic = service.lock().create_characteristic(
             FILE_UPLOAD_SERVICE_HASH_UUID,
             NimbleProperties::READ | NimbleProperties::WRITE,
         );
-        hash_characteristic.document(
-            "File Hash",
+        upload_request_characteristic.document(
+            "File Upload Request",
             BLE2904Format::OPAQUE,
             0,
             BLE_GATT_CHR_UNIT_UNITLESS,
         );
 
-        let checksums_characteristic = service
+        // Write a upload request to start a new upload.
+        // Read to get the hash of the current upload.
+        let upload_request_characteristic = service.lock().create_characteristic(
+            FILE_UPLOAD_SERVICE_HASH_UUID,
+            NimbleProperties::READ | NimbleProperties::WRITE,
+        );
+        upload_request_characteristic.document(
+            "File Upload Request",
+            BLE2904Format::OPAQUE,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
+
+        let missing_chunks_characteristic = service.lock().create_characteristic(
+            FILE_UPLOAD_SERVICE_MISSING_CHUNKS_UUID,
+            NimbleProperties::READ,
+        );
+        missing_chunks_characteristic.document(
+            "Missing Chunks",
+            BLE2904Format::OPAQUE,
+            0,
+            BLE_GATT_CHR_UNIT_UNITLESS,
+        );
+
+        let last_error_characteristic = service
             .lock()
-            .create_characteristic(FILE_UPLOAD_SERVICE_CHECKSUMS_UUID, NimbleProperties::WRITE);
-        checksums_characteristic.document(
-            "Chunk Checksums",
-            BLE2904Format::OPAQUE,
+            .create_characteristic(FILE_UPLOAD_SERVICE_LAST_ERROR_UUID, NimbleProperties::READ);
+        last_error_characteristic.document(
+            "Last error code",
+            BLE2904Format::UINT16,
             0,
             BLE_GATT_CHR_UNIT_UNITLESS,
         );
 
-        let length_characteristic = service.lock().create_characteristic(
-            FILE_UPLOAD_SERVICE_LENGTH_UUID,
-            NimbleProperties::READ | NimbleProperties::WRITE,
-        );
-        length_characteristic.document(
-            "File Length",
-            BLE2904Format::UINT32,
-            0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
-        );
-
-        let chunk_length_characteristic = service.lock().create_characteristic(
-            FILE_UPLOAD_SERVICE_CHUNK_LENGTH_UUID,
-            NimbleProperties::READ | NimbleProperties::WRITE,
-        );
-        chunk_length_characteristic.document(
-            "Chunk Length",
+        let progress_characteristic = service
+            .lock()
+            .create_characteristic(FILE_UPLOAD_SERVICE_PROGRESS_UUID, NimbleProperties::READ);
+        progress_characteristic.document(
+            "Number of received chunks",
             BLE2904Format::UINT16,
             0,
             BLE_GATT_CHR_UNIT_UNITLESS,
@@ -530,53 +505,83 @@ impl FileUploadService {
         });
 
         let file_upload_service_clone = file_upload_service.clone();
-        hash_characteristic.lock().on_write(move |args| {
+        upload_request_characteristic.lock().on_write(move |args| {
             let mut service = file_upload_service_clone.lock();
-            if let Err(e) = service.hash_write(args) {
+            if let Err(e) = service.request_upload(args) {
                 service.log_error(e);
             }
         });
         let file_upload_service_clone = file_upload_service.clone();
-        hash_characteristic.lock().on_read(move |value, _| {
+        upload_request_characteristic
+            .lock()
+            .on_read(move |value, _| {
+                let service = file_upload_service_clone.lock();
+                let latest_hash = match &service.currently_receiving {
+                    Some(currently_receiving) => currently_receiving.get_hash(),
+                    None => &[0u8; 32],
+                };
+                value.set_value(latest_hash);
+            });
+
+        let file_upload_service_clone = file_upload_service.clone();
+        missing_chunks_characteristic
+            .lock()
+            .on_read(move |value, _| {
+                let service = file_upload_service_clone.lock();
+                let missing_chunks = &service
+                    .currently_receiving
+                    .as_ref()
+                    .map(|incomplete_file| incomplete_file.get_missing_chunks())
+                    .unwrap_or(Default::default());
+                let missing_chunks: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        std::mem::transmute::<_, *const u8>(missing_chunks.as_slice().as_ptr()),
+                        missing_chunks.len() * 2,
+                    )
+                };
+                value.set_value(missing_chunks);
+            });
+
+        let file_upload_service_clone = file_upload_service.clone();
+        missing_chunks_characteristic
+            .lock()
+            .on_read(move |value, _| {
+                let service = file_upload_service_clone.lock();
+                let missing_chunks = &service
+                    .currently_receiving
+                    .as_ref()
+                    .map(|incomplete_file| incomplete_file.get_missing_chunks())
+                    .unwrap_or(Default::default());
+                let missing_chunks: &[u8] = unsafe {
+                    let length = std::cmp::min(25, missing_chunks.len());
+                    std::slice::from_raw_parts(
+                        std::mem::transmute::<_, *const u8>(missing_chunks[0..length].as_ptr()),
+                        missing_chunks.len() * 2,
+                    )
+                };
+                value.set_value(missing_chunks);
+            });
+
+        let file_upload_service_clone = file_upload_service.clone();
+        last_error_characteristic.lock().on_read(move |value, _| {
             let service = file_upload_service_clone.lock();
-            let hash = service.latest_hash.unwrap_or([0; 32]);
-            value.set_value(&hash);
+            let Some(last_error) = &service.last_error else {
+                value.set_value(&[]);
+                return;
+            };
+
+            value.set_value(&(unsafe { *<*const _>::from(last_error).cast::<u8>() }).to_le_bytes());
         });
 
         let file_upload_service_clone = file_upload_service.clone();
-        checksums_characteristic.lock().on_write(move |args| {
-            let mut service = file_upload_service_clone.lock();
-            if let Err(e) = service.checksums_write(args) {
-                service.log_error(e);
-            }
-        });
-
-        let file_upload_service_clone = file_upload_service.clone();
-        length_characteristic.lock().on_write(move |args| {
-            let mut service = file_upload_service_clone.lock();
-            if let Err(e) = service.length_write(args) {
-                service.log_error(e);
-            }
-        });
-        let file_upload_service_clone = file_upload_service.clone();
-        length_characteristic.lock().on_read(move |value, _| {
+        progress_characteristic.lock().on_read(move |value, _| {
             let service = file_upload_service_clone.lock();
-            let length = service.latest_length.unwrap_or(0).to_le_bytes();
-            value.set_value(&length);
-        });
+            let Some(currently_receiving) = &service.currently_receiving else {
+                value.set_value(&0u16.to_le_bytes());
+                return;
+            };
 
-        let file_upload_service_clone = file_upload_service.clone();
-        chunk_length_characteristic.lock().on_write(move |args| {
-            let mut service = file_upload_service_clone.lock();
-            if let Err(e) = service.chunk_length_write(args) {
-                service.log_error(e);
-            }
-        });
-        let file_upload_service_clone = file_upload_service.clone();
-        chunk_length_characteristic.lock().on_read(move |value, _| {
-            let service = file_upload_service_clone.lock();
-            let chunk_length = service.latest_chunk_length.unwrap_or(0).to_le_bytes();
-            value.set_value(&chunk_length);
+            value.set_value(&currently_receiving.count_received_chunks().to_le_bytes());
         });
 
         file_upload_service

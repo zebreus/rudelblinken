@@ -1358,7 +1358,7 @@ name = "rudelblinken-filesystem"
 version = "0.0.3"
 dependencies = [
  "thiserror 2.0.3",
- "zerocopy 0.8.10",
+ "zerocopy 0.8.14",
 ]
 
 [[package]]
@@ -1381,6 +1381,7 @@ dependencies = [
  "tracing-subscriber",
  "wasmi 0.39.1",
  "wat",
+ "zerocopy 0.8.14",
 ]
 
 [[package]]
@@ -2323,11 +2324,11 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.10"
+version = "0.8.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a13a42ed30c63171d820889b2981318736915150575b8d2d6dbee7edd68336ca"
+checksum = "a367f292d93d4eab890745e75a778da40909cab4d6ff8173693812f79c4a2468"
 dependencies = [
- "zerocopy-derive 0.8.10",
+ "zerocopy-derive 0.8.14",
 ]
 
 [[package]]
@@ -2343,9 +2344,9 @@ dependencies = [
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.10"
+version = "0.8.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "593e7c96176495043fcb9e87cf7659f4d18679b5bab6b92bdef359c76a7795dd"
+checksum = "d3931cb58c62c13adec22e38686b559c86a30565e16ad6e8510a337cedc611e1"
 dependencies = [
  "proc-macro2",
  "quote",

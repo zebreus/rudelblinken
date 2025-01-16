@@ -74,7 +74,7 @@ pub enum WriteFileToStorageError {
 }
 
 /// Represents an error that can occur while upgrading a file
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum UpgradeFileError {
     /// Only weak references and readers can be upgraded.
     #[error("Only weak references and readers can be upgraded.")]
