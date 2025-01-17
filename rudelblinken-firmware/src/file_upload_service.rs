@@ -17,19 +17,21 @@ use std::{
     sync::Arc,
 };
 use thiserror::Error;
-use zerocopy::{Immutable, IntoBytes, KnownLayout, TryFromBytes};
+use upload_request::UploadRequest;
+use zerocopy::TryFromBytes;
+mod upload_request;
 
-const FILE_UPLOAD_SERVICE: u16 = 0x7892;
+const FILE_UPLOAD_SERVICE: u16 = 0x9160;
 // Write data chunks here
-const FILE_UPLOAD_SERVICE_DATA: u16 = 0x7893;
+const FILE_UPLOAD_SERVICE_DATA: u16 = 0x9161;
 // Write metadata here to initiate an upload. Returns the metadata of the current upload
-const FILE_UPLOAD_SERVICE_START_UPLOAD: u16 = 0x7894;
+const FILE_UPLOAD_SERVICE_START_UPLOAD: u16 = 0x9162;
 // Read this to get the IDs of some missing chunks. Returns a list of u16
-const FILE_UPLOAD_SERVICE_MISSING_CHUNKS: u16 = 0x7895;
+const FILE_UPLOAD_SERVICE_MISSING_CHUNKS: u16 = 0x9163;
 // Read here to get the last error as a string
-const FILE_UPLOAD_SERVICE_LAST_ERROR: u16 = 0x7896;
+const FILE_UPLOAD_SERVICE_LAST_ERROR: u16 = 0x9164;
 // Read here to get the number of already uploaded chunks
-const FILE_UPLOAD_SERVICE_PROGRESS: u16 = 0x7897;
+const FILE_UPLOAD_SERVICE_PROGRESS: u16 = 0x9165;
 
 const FILE_UPLOAD_SERVICE_UUID: BleUuid = BleUuid::from_uuid16(FILE_UPLOAD_SERVICE);
 const FILE_UPLOAD_SERVICE_DATA_UUID: BleUuid = BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_DATA);
@@ -74,33 +76,6 @@ pub enum VerifyFileError {
     NotComplete,
     #[error("Hashes do not match")]
     HashMismatch,
-}
-
-// TODO: Implement better debug printing
-#[derive(Debug, Clone, TryFromBytes, IntoBytes, Immutable, KnownLayout, PartialEq, PartialOrd)]
-#[repr(C)]
-pub struct UploadRequest {
-    /// Size of the file in bytes
-    pub file_size: u32,
-    /// Blake3 hash of the file
-    pub hash: [u8; 32],
-    /// CRC checksums of the chunks.
-    /// If the number of chunks is <= 32 then this is interpreted as an array of 1-byte CRC checksums
-    /// If the number of chunks is > 32 then this interpreted as the hash of a previously uploaded file containing an array of 1-byte CRC checksums
-    pub checksums: [u8; 32],
-    /// File name
-    pub file_name: [u8; 16],
-    /// Size of a single chunk
-    pub chunk_size: u16,
-    /// Unused padding. Reserved for future use
-    pub _padding: u16,
-}
-
-impl UploadRequest {
-    // Get the total number of chunks
-    pub fn chunk_count(&self) -> u32 {
-        self.file_size.div_ceil(self.chunk_size as u32)
-    }
 }
 
 impl IncompleteFile {
@@ -216,7 +191,7 @@ impl IncompleteFile {
 
 pub struct FileUploadService {
     files: Vec<File>,
-    currently_receiving: Option<IncompleteFile>,
+    currently_receiving: Mutex<Option<IncompleteFile>>,
 
     // latest_hash: Option<[u8; 32]>,
     // latest_length: Option<u32>,
@@ -256,7 +231,7 @@ pub enum FileUploadError {
 impl FileUploadService {
     /// Start an upload with the last received settings. Cancels a currently ongoing upload
     fn start_upload(
-        &mut self,
+        &self,
         upload_request: &UploadRequest,
     ) -> Result<IncompleteFile, FileUploadError> {
         let mut filesystem = get_filesystem()?
@@ -300,6 +275,7 @@ impl FileUploadService {
         &mut self,
         args: &mut esp32_nimble::OnWriteArgs<'_>,
     ) -> Result<(), FileUploadError> {
+        let mut maybe_current_upload = self.currently_receiving.lock();
         let received_data = args.recv_data();
         ::tracing::info!(target: "file-upload", "chunk length {}", received_data.len());
 
@@ -314,14 +290,13 @@ impl FileUploadService {
 
         ::tracing::info!(target: "file-upload", "Received data chunk {}", index);
 
-        let Some(current_upload) = &mut self.currently_receiving else {
+        let Some(current_upload) = maybe_current_upload.as_mut() else {
             // Should never happen, because we called ensure_upload above
             return Err(FileUploadError::NoUploadActive);
         };
         current_upload.receive_chunk(data, index)?;
         if current_upload.is_complete() {
-            let incomplete_file = self
-                .currently_receiving
+            let incomplete_file = maybe_current_upload
                 .take()
                 .ok_or(FileUploadError::NoUploadActive)?;
             let hash = incomplete_file.hash.clone();
@@ -343,6 +318,7 @@ impl FileUploadService {
         &mut self,
         args: &mut esp32_nimble::OnWriteArgs<'_>,
     ) -> Result<(), FileUploadError> {
+        let mut maybe_current_upload = self.currently_receiving.lock();
         let received_data = args.recv_data();
         let upload_request = UploadRequest::try_ref_from_bytes(received_data)
             .map_err(|error| FileUploadError::MalformedUploadRequest(error.to_string()))?;
@@ -352,7 +328,7 @@ impl FileUploadService {
         ::tracing::info!(target: "file-upload", "Received hash {:?}", upload_request.hash);
 
         let incomplete_file = self.start_upload(upload_request)?;
-        self.currently_receiving = Some(incomplete_file);
+        *maybe_current_upload = Some(incomplete_file);
         Ok(())
     }
 
@@ -422,7 +398,7 @@ impl FileUploadService {
     pub fn new(server: &mut BLEServer) -> Arc<Mutex<FileUploadService>> {
         let file_upload_service = Arc::new(Mutex::new(FileUploadService {
             files: Vec::new(),
-            currently_receiving: None,
+            currently_receiving: Mutex::new(None),
             last_error: None,
         }));
 
@@ -516,11 +492,11 @@ impl FileUploadService {
             .lock()
             .on_read(move |value, _| {
                 let service = file_upload_service_clone.lock();
-                let latest_hash = match &service.currently_receiving {
-                    Some(currently_receiving) => currently_receiving.get_hash(),
-                    None => &[0u8; 32],
+                let latest_hash = match service.currently_receiving.lock().as_ref() {
+                    Some(currently_receiving) => currently_receiving.get_hash().clone(),
+                    None => [0u8; 32],
                 };
-                value.set_value(latest_hash);
+                value.set_value(&latest_hash);
             });
 
         let file_upload_service_clone = file_upload_service.clone();
@@ -530,6 +506,7 @@ impl FileUploadService {
                 let service = file_upload_service_clone.lock();
                 let missing_chunks = &service
                     .currently_receiving
+                    .lock()
                     .as_ref()
                     .map(|incomplete_file| incomplete_file.get_missing_chunks())
                     .unwrap_or(Default::default());
@@ -549,6 +526,7 @@ impl FileUploadService {
                 let service = file_upload_service_clone.lock();
                 let missing_chunks = &service
                     .currently_receiving
+                    .lock()
                     .as_ref()
                     .map(|incomplete_file| incomplete_file.get_missing_chunks())
                     .unwrap_or(Default::default());
@@ -576,7 +554,8 @@ impl FileUploadService {
         let file_upload_service_clone = file_upload_service.clone();
         progress_characteristic.lock().on_read(move |value, _| {
             let service = file_upload_service_clone.lock();
-            let Some(currently_receiving) = &service.currently_receiving else {
+            let maybe_currently_receiving = service.currently_receiving.lock();
+            let Some(currently_receiving) = maybe_currently_receiving.as_ref() else {
                 value.set_value(&0u16.to_le_bytes());
                 return;
             };
