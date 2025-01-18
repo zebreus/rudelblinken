@@ -20,6 +20,9 @@
 //! -h, --help     Print help
 //! ```
 #![feature(async_closure)]
+#![feature(array_chunks)]
+#![feature(int_roundings)]
+#![feature(round_char_boundary)]
 
 mod bluetooth;
 mod emulator;
@@ -98,11 +101,10 @@ async fn main() -> bluer::Result<()> {
                 devices,
                 &async |device: Device| -> Result<(), UpdateTargetError> {
                     let update_target = UpdateTarget::new_from_peripheral(&device).await?;
-
                     let data = &file_content;
 
                     let now = Instant::now();
-                    update_target.upload_file(&data).await?;
+                    update_target.upload_file(&data, "test.txt".into()).await?;
                     let duration = now.elapsed();
                     println!(
                         "Sending {}k took {} millis",
@@ -151,13 +153,13 @@ async fn main() -> bluer::Result<()> {
                 999,
                 &async |device: Device| -> Result<(), UpdateTargetError> {
                     let address = device.address();
-                    let update_target = UpdateTarget::new_from_peripheral(&device).await.unwrap();
-                    let rssi = device.rssi().await.unwrap();
+                    let update_target = UpdateTarget::new_from_peripheral(&device).await?;
+                    let rssi = device.rssi().await.ok().flatten();
 
                     let name = update_target.get_name().await.unwrap();
                     println!("{}, {}, {}", name, address, rssi.unwrap_or(-200));
+                    device.disconnect().await.unwrap();
                     return Ok(());
-                    // update_target.device.disconnect().await.unwrap();
                 },
             )
             .await

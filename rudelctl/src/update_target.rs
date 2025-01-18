@@ -1,19 +1,32 @@
 //! Connects to our Bluetooth GATT service and exercises the characteristic.
 
+use std::time::Duration;
+
 use async_recursion::async_recursion;
 use bluer::{
     gatt::remote::{Characteristic, CharacteristicWriteRequest, Service},
     Device, UuidExt,
 };
+use rand::{distributions::Alphanumeric, Rng};
 use thiserror::Error;
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, time::sleep};
+use upload_request::UploadRequest;
+use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
+mod upload_request;
 
-const FILE_UPLOAD_SERVICE: u16 = 0x7892;
-const FILE_UPLOAD_SERVICE_DATA: u16 = 0x7893;
-const FILE_UPLOAD_SERVICE_HASH: u16 = 0x7894;
-const FILE_UPLOAD_SERVICE_CHECKSUMS: u16 = 0x7895;
-const FILE_UPLOAD_SERVICE_LENGTH: u16 = 0x7896;
-const FILE_UPLOAD_SERVICE_CHUNK_LENGTH: u16 = 0x7897;
+const FILE_UPLOAD_SERVICE: u16 = 0x9160;
+// Write data chunks here
+const FILE_UPLOAD_SERVICE_DATA: u16 = 0x9161;
+// Write metadata here to initiate an upload. Returns the metadata of the current upload
+const FILE_UPLOAD_SERVICE_START_UPLOAD: u16 = 0x9162;
+// Read this to get the IDs of some missing chunks. Returns a list of u16
+const FILE_UPLOAD_SERVICE_MISSING_CHUNKS: u16 = 0x9163;
+// Read here to get the last error as a string
+const FILE_UPLOAD_SERVICE_LAST_ERROR: u16 = 0x9164;
+// Read here to get the number of already uploaded chunks
+const FILE_UPLOAD_SERVICE_PROGRESS: u16 = 0x9165;
+// Read to get the hash of the current upload.
+const FILE_UPLOAD_SERVICE_CURRENT_HASH: u16 = 0x9166;
 
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
@@ -33,6 +46,12 @@ pub enum UpdateTargetError {
     DoesNotProvideUpdateService(#[from] FindUpdateServiceError),
     #[error(transparent)]
     ServiceIsMissingACharacteristic(#[from] FindCharacteristicError),
+    #[error("Failed to upload file. Maybe a timeout or connection loss: {0}")]
+    UploadError(bluer::Error),
+    #[error("The update target seemingly ignored our upload request")]
+    UploadRequestIgnored,
+    #[error("We lost connection to the target device and failed to reconnect")]
+    ReconnectFailed,
 }
 
 #[derive(Error, Debug)]
@@ -76,17 +95,20 @@ pub async fn find_characteristic(
 
 pub struct UpdateTarget {
     data_characteristic: Characteristic,
-    hash_characteristic: Characteristic,
-    checksums_characteristic: Characteristic,
-    length_characteristic: Characteristic,
-    chunk_length_characteristic: Characteristic,
+    start_upload_characteristic: Characteristic,
+    missing_chunks_characteristic: Characteristic,
+    last_error_characteristic: Characteristic,
+    progress_characteristic: Characteristic,
+    current_hash_characteristic: Characteristic,
 
     program_hash_characteristic: Characteristic,
     name_characteristic: Characteristic,
+    device: Device,
 }
 
 impl UpdateTarget {
     pub async fn new_from_peripheral(device: &Device) -> Result<UpdateTarget, UpdateTargetError> {
+        let device = device.clone();
         let address = device.address();
         // println!("Checking {}", address);
         if !(address.0.starts_with(&[0x24, 0xec, 0x4b])) {
@@ -118,14 +140,16 @@ impl UpdateTarget {
 
         let data_characteristic =
             find_characteristic(&update_service, FILE_UPLOAD_SERVICE_DATA).await?;
-        let hash_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_HASH).await?;
-        let checksums_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_CHECKSUMS).await?;
-        let length_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_LENGTH).await?;
-        let chunk_length_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_CHUNK_LENGTH).await?;
+        let start_upload_characteristic =
+            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_START_UPLOAD).await?;
+        let missing_chunks_characteristic =
+            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_MISSING_CHUNKS).await?;
+        let last_error_characteristic =
+            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_LAST_ERROR).await?;
+        let progress_characteristic =
+            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_PROGRESS).await?;
+        let current_hash_characteristic =
+            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_CURRENT_HASH).await?;
 
         let cat_management_service = find_service(&device, CAT_MANAGEMENT_SERVICE).await?;
 
@@ -137,12 +161,14 @@ impl UpdateTarget {
 
         return Ok(UpdateTarget {
             data_characteristic,
-            hash_characteristic,
-            checksums_characteristic,
-            length_characteristic,
-            chunk_length_characteristic,
+            start_upload_characteristic,
+            missing_chunks_characteristic,
+            last_error_characteristic,
+            progress_characteristic,
             name_characteristic,
             program_hash_characteristic,
+            current_hash_characteristic,
+            device,
         });
     }
 
@@ -155,25 +181,13 @@ impl UpdateTarget {
         return Ok(name.to_string());
     }
 
-    // pub async fn set_name(&self, name: String) -> Result<String, UpdateTargetError> {
-    //     let name_bytes = self.name_characteristic.read().await?;
-    //     if name_bytes.len() < 3 || name_bytes.len() > 32 {
-    //         todo!();
-    //     }
-    //     let name = String::from_utf8_lossy(&name_bytes);
-    //     return Ok(name.to_string());
-    // }
-
-    // pub async fn get_program_hash(&self) -> Result<[u8; 32], UpdateTargetError> {
-    //     let program_hash = self.program_hash_characteristic.read().await?;
-    //     let Ok(program_hash): Result<[u8; 32], _> = program_hash.try_into() else {
-    //         todo!();
-    //     };
-    //     return Ok(program_hash);
-    // }
-
     pub async fn run_program(&self, data: &[u8]) -> Result<(), UpdateTargetError> {
-        let program_hash = self.upload_file(data).await?;
+        let file_name: Vec<u8> = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(10)
+            .collect();
+        let file_name = String::from_utf8(file_name).unwrap();
+        let program_hash = self.upload_file(data, file_name).await?;
         println!("Uploaded file.");
         self.program_hash_characteristic
             .write_ext(
@@ -190,25 +204,17 @@ impl UpdateTarget {
         return Ok(());
     }
 
-    #[async_recursion]
-    pub async fn upload_file(&self, data: &[u8]) -> Result<[u8; 32], UpdateTargetError> {
+    #[async_recursion(?Send)]
+    pub async fn upload_file(
+        &self,
+        data: &[u8],
+        file_name: String,
+    ) -> Result<[u8; 32], UpdateTargetError> {
         println!("Preparing data for upload...");
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&data);
-        // TODO: I am sure there is a better way to convert this into an array but I didnt find it after 10 minutes.
-        let mut hash: [u8; 32] = [0; 32];
-        hash.copy_from_slice(hasher.finalize().as_bytes());
 
         // -2 for the length
         // -28 was found to be good by empirical methods
         let chunk_size: u16 = (self.data_characteristic.mtu().await? as u16) - 28 - 2;
-        // println!("{chunk_size}");
-
-        let crc8_generator = crc::Crc::<u8>::new(&crc::CRC_8_LTE);
-        let checksums: Vec<u8> = data
-            .chunks(chunk_size as usize)
-            .map(|chunk| crc8_generator.checksum(chunk))
-            .collect();
         let chunks: Vec<Vec<u8>> = data
             .chunks(chunk_size as usize)
             .enumerate()
@@ -220,63 +226,127 @@ impl UpdateTarget {
             })
             .collect();
 
-        println!("Sending checksums...");
-        let checksums_data = checksums.as_slice();
-        if checksums_data.len() < 32 {
-            self.checksums_characteristic.write(checksums_data).await?;
-        } else {
-            let checksums_file_hash = self.upload_file(checksums_data).await?;
-            self.checksums_characteristic
-                .write(&checksums_file_hash)
-                .await?;
-        }
+        // TODO: Fix the name story on both sides.
+        // file_name[0..9].copy_from_slice(&"test.wasm".as_bytes());
 
+        let upload_request = UploadRequest::new(&file_name, data, chunk_size, async |data| {
+            self.upload_file(data, "checksums.temp".into()).await
+        })
+        .await?;
+
+        self.start_upload(&upload_request).await?;
+        self.upload_chunks(chunks).await?;
+        println!("Uploaded file {:?}", upload_request.hash);
+        return Ok(upload_request.hash);
+    }
+
+    async fn start_upload(&self, upload_request: &UploadRequest) -> Result<(), UpdateTargetError> {
+        let upload_request_bytes = upload_request.as_bytes();
         println!("Sending file information...");
-        self.length_characteristic
-            .write(&(data.len() as u32).to_le_bytes())
-            .await?;
-        self.chunk_length_characteristic
-            .write(&(chunk_size as u16).to_le_bytes())
-            .await?;
-        self.hash_characteristic.write(&hash).await?;
 
-        println!("Sending chunks...");
+        // let notify = self.start_upload_characteristic.notify().await?;
 
-        // let mut write_io = self.data_characteristic.write_io().await?;
-        for chunk in chunks {
-            // write_io.send(chunk.as_slice()).await?;
-            self.data_characteristic
-                .write_ext(
-                    chunk.as_slice(),
-                    &CharacteristicWriteRequest {
-                        offset: 0,
-                        op_type: bluer::gatt::WriteOp::Reliable,
-                        prepare_authorize: false,
-                        _non_exhaustive: (),
-                    },
-                )
+        // Do a unreliable write to prevent bluez from caching stuff
+        self.start_upload_characteristic
+            .write(&upload_request_bytes)
+            .await?;
+
+        const MAX_RETRIES: usize = 10;
+        let mut retries_left = MAX_RETRIES;
+        loop {
+            let current_target_hash = self.current_hash_characteristic.read().await?;
+            // dbg!(&current_target_hash);
+            if current_target_hash == upload_request.hash {
+                break;
+            }
+
+            if retries_left == 0 {
+                return Err(UpdateTargetError::UploadRequestIgnored);
+            }
+            println!(
+                "Target did not process our upload request. Retry {}/{}...",
+                MAX_RETRIES - retries_left,
+                MAX_RETRIES
+            );
+            retries_left -= 1;
+            // Do a unreliable write to prevent bluez from caching stuff
+            self.start_upload_characteristic
+                .write(&upload_request_bytes)
                 .await?;
-            // write_io.flush().await?;
+            sleep(Duration::from_secs(1)).await;
         }
-        println!("Flushing data...");
-        // write_io.flush().await?;
-        // write_io.shutdown().await?;
+        Ok(())
+    }
 
-        // Force flushing by doing a reliable write to any property
-        // self.length_characteristic
-        //     .write_ext(
-        //         &[0, 0, 0, 0],
-        //         &CharacteristicWriteRequest {
-        //             offset: 0,
-        //             op_type: bluer::gatt::WriteOp::Reliable,
-        //             prepare_authorize: false,
-        //             _non_exhaustive: (),
-        //         },
-        //     )
-        //     .await?;
+    async fn upload_chunks(&self, chunks: Vec<Vec<u8>>) -> Result<(), UpdateTargetError> {
+        println!("Uploading {} chunks", chunks.len());
 
-        println!("Uploaded file {:?}", hash);
+        // The number of chunks we send between checking for missing chunks
+        // The read after the write will wait until this number of chunks is written. If we send too many chunks at once, we get timeouts
+        let mut simultaneous_chunks = 100usize;
+        // How many times we will reconnect to the device
+        let mut reconnects_left = 10usize;
+        loop {
+            // Reading a property will wait until the writes are done
+            let missing_chunks = match self.missing_chunks_characteristic.read().await {
+                Ok(missing_chunks) => missing_chunks,
+                Err(error) => {
+                    // // Does not seem to work
+                    // let is_connected = self.device.is_connected().await?;
+                    let error_message_looks_like_connection_error =
+                        error.to_string().contains("connect")
+                            || error.to_string().contains("reset")
+                            || error.to_string().contains("present")
+                            || error.to_string().contains("removed");
+                    if error_message_looks_like_connection_error {
+                        if reconnects_left == 0 {
+                            return Err(UpdateTargetError::ReconnectFailed);
+                        }
+                        println!("Reconnecting to device...");
+                        let _ = self.device.connect().await;
+                        sleep(Duration::from_secs(2)).await;
+                        reconnects_left -= 1;
+                        continue;
+                    }
 
-        return Ok(hash);
+                    println!("Failed to read missing chunks: {}", error);
+                    let new_simultaneous_chunks =
+                        std::cmp::max(1, simultaneous_chunks.div_floor(2));
+                    if new_simultaneous_chunks == 1 {
+                        reconnects_left = reconnects_left.saturating_sub(1);
+                        if reconnects_left == 0 {
+                            return Err(UpdateTargetError::UploadError(error));
+                        }
+                    }
+                    println!(
+                        "Reducing simultaneous chunks from {} to {}",
+                        simultaneous_chunks, new_simultaneous_chunks
+                    );
+                    sleep(Duration::from_secs(3)).await;
+
+                    simultaneous_chunks = new_simultaneous_chunks;
+                    continue;
+                }
+            };
+
+            let missing_chunks = missing_chunks
+                .array_chunks::<2>()
+                .map(|chunk_id_bytes| u16::from_le_bytes(*chunk_id_bytes))
+                .collect::<Vec<u16>>();
+            if missing_chunks.len() == 0 {
+                break;
+            }
+            println!("Missing chunks: {:?}", missing_chunks);
+
+            // Upload at most 10 chunks at a time, because we may get timeouts otherwise
+            let mut write_io = self.data_characteristic.write_io().await?;
+            for chunk_id in missing_chunks.iter().take(simultaneous_chunks) {
+                println!("Sending missing chunk {}", chunk_id);
+                write_io.send(&chunks[*chunk_id as usize]).await.unwrap();
+            }
+            write_io.flush().await.unwrap();
+        }
+
+        Ok(())
     }
 }
