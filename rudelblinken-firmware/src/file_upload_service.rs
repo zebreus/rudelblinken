@@ -433,19 +433,6 @@ impl FileUploadService {
             BLE_GATT_CHR_UNIT_UNITLESS,
         );
 
-        // Write a upload request to start a new upload.
-        // Read to get the hash of the current upload.
-        let upload_request_characteristic = service.lock().create_characteristic(
-            FILE_UPLOAD_SERVICE_START_UPLOAD_UUID,
-            NimbleProperties::WRITE,
-        );
-        upload_request_characteristic.document(
-            "File Upload Request",
-            BLE2904Format::OPAQUE,
-            0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
-        );
-
         let current_hash_characteristic = service.lock().create_characteristic(
             FILE_UPLOAD_SERVICE_CURRENT_HASH_UUID,
             NimbleProperties::READ,
@@ -502,7 +489,6 @@ impl FileUploadService {
         upload_request_characteristic.lock().on_write(move |args| {
             println!("Writing upload request");
             let mut service = file_upload_service_clone.lock();
-            println!("Writing upload request got lock");
             if let Err(e) = service.request_upload(args) {
                 service.log_error(e);
             }
@@ -526,7 +512,7 @@ impl FileUploadService {
             println!("Read current hash");
             let service = file_upload_service_clone.lock();
             let current_hash = match service.currently_receiving.lock().as_ref() {
-                Some(currently_receiving) => currently_receiving.get_hash().clone(),
+                Some(currently_receiving) => dbg!(currently_receiving.get_hash().clone()),
                 None => [0u8; 32],
             };
             value.set_value(&current_hash);
