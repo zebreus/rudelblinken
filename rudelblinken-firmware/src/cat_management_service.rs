@@ -163,7 +163,6 @@ impl CatManagementService {
             BLE_GATT_CHR_UNIT_UNITLESS,
         );
 
-        let cat_management_service_clone = cat_management_service.clone();
         program_hash_characteristic.lock().on_read(move |value, _| {
             let hash = get_main_program();
             value.set_value(&hash.unwrap_or([0u8; 32]));

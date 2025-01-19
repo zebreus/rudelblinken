@@ -18,7 +18,7 @@ pub static CONFIG_NVS: LazyLock<RwLock<EspNvs<NvsDefault>>> = LazyLock::new(|| {
     RwLock::new(nvs)
 });
 
-trait StorableValue: Clone {
+pub trait StorableValue: Clone {
     fn initial_value() -> Self;
     fn decode(encoded: &[u8]) -> Option<Self>;
     fn encode(&self) -> impl AsRef<[u8]>;
@@ -28,7 +28,7 @@ pub trait InnerConfig {
     type V;
 }
 
-trait ConfigValue: Sized + StorableValue + InnerConfig + 'static {
+pub trait ConfigValue: Sized + StorableValue + InnerConfig + 'static {
     const IDENTIFIER: &'static str;
 
     fn storage() -> &'static LazyLock<RwLock<Self>>;

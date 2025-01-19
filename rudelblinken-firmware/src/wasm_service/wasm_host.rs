@@ -16,11 +16,11 @@ use rudelblinken_runtime::{
     },
     linker::linker::WrappedCaller,
 };
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
-use std::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::{
     config::{get_config, DeviceName, LedStripColor, WasmGuestConfig},
@@ -90,14 +90,13 @@ impl Default for WasmHostConfiguration {
     }
 }
 
-pub enum WasmEvent {
-    SetAdvertismentSettings(AdvertisementSettings),
-    SetAdvertismentData(Vec<u8>),
-}
+pub enum WasmEvent {}
 
 #[derive(Clone)]
 pub struct WasmHost {
     pub host_events: Arc<Mutex<Receiver<Event>>>,
+    // TODO: Actually use this. We build this to allow bidirectional communication between the host and the wasm guest in the emulator, but dont need that currently
+    #[allow(dead_code)]
     pub wasm_events: Sender<WasmEvent>,
     config: WasmHostConfiguration,
 }
@@ -281,8 +280,7 @@ impl Host for WasmHost {
         let min_interval = settings.min_interval.clamp(400, 1000);
         let max_interval = settings.max_interval.clamp(min_interval, 1500);
 
-        let ble_device = unsafe { BLE_DEVICE.get_mut().unwrap() };
-        let mut ble_advertising = ble_device.get_advertising().lock();
+        let mut ble_advertising = BLE_DEVICE.get_advertising().lock();
         ble_advertising
             .stop()
             .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
@@ -299,8 +297,7 @@ impl Host for WasmHost {
         caller: &mut WrappedCaller<'_, Self>,
         data: &[u8],
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        let ble_device = unsafe { BLE_DEVICE.get_mut().unwrap() };
-        let mut ble_advertising = ble_device.get_advertising().lock();
+        let mut ble_advertising = BLE_DEVICE.get_advertising().lock();
         ble_advertising
             .stop()
             .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;

@@ -1,6 +1,5 @@
 #![feature(round_char_boundary)]
-
-use std::sync::{LazyLock, OnceLock};
+#![feature(once_cell_try)]
 
 use cat_management_service::CatManagementService;
 use esp32_nimble::{
@@ -16,7 +15,8 @@ use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
 use nrf_logging_service::SerialLoggingService;
 use rudelblinken_runtime::host::{Advertisement, Event};
-use storage::setup_storage;
+use std::sync::LazyLock;
+use storage::get_filesystem;
 
 mod cat_management_service;
 mod config;
@@ -24,8 +24,8 @@ mod file_upload_service;
 mod nrf_logging_service;
 pub mod service_helpers;
 pub mod storage;
-mod telid_logging_service;
 mod wasm_service;
+// mod telid_logging_service;
 
 /// Changes the OUI of the base mac address to 24:ec:4b which is not assigned
 ///
@@ -132,7 +132,7 @@ pub fn print_memory_info() {
     }
 }
 
-pub static mut BLE_DEVICE: OnceLock<&mut BLEDevice> = OnceLock::new();
+pub static BLE_DEVICE: LazyLock<&'static mut BLEDevice> = LazyLock::new(|| BLEDevice::take());
 pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>>> =
     LazyLock::new(|| {
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"))
@@ -152,21 +152,21 @@ fn main() {
 
     setup_ble_server();
 
-    let ble_device = unsafe { BLE_DEVICE.get_or_init(|| BLEDevice::take()) };
+    let ble_device = &BLE_DEVICE;
 
-    let serial_logging_service = SerialLoggingService::new(ble_device.get_server());
+    let _serial_logging_service = SerialLoggingService::new(ble_device.get_server());
 
-    setup_storage().unwrap();
+    get_filesystem().unwrap();
     print_memory_info();
 
-    let led_pin =
+    let _led_pin =
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
 
     let file_upload_service = FileUploadService::new(ble_device.get_server());
     LazyLock::force(&LED_PIN);
-    let (sender, receiver, host) = wasm_service::wasm_host::WasmHost::new();
-    let cat_management_service =
-        CatManagementService::new(ble_device, file_upload_service.clone(), host);
+    let (sender, _receiver, host) = wasm_service::wasm_host::WasmHost::new();
+    let _cat_management_service =
+        CatManagementService::new(&ble_device, file_upload_service.clone(), host);
 
     {
         let ble_advertising = ble_device.get_advertising();
@@ -191,14 +191,14 @@ fn main() {
             .unwrap();
     }
 
-    ble_device.get_server().on_connect(|server, connection| {
-        let ble_device = unsafe { BLE_DEVICE.get_mut().unwrap() };
+    ble_device.get_server().on_connect(|_server, connection| {
+        let ble_device = &BLE_DEVICE;
         let ble_advertising = ble_device.get_advertising();
         ble_advertising.lock().start().unwrap();
         tracing::info!("Client connected, {:?}", connection);
     });
     ble_device.get_server().on_disconnect(|connection, result| {
-        let ble_device = unsafe { BLE_DEVICE.get_mut().unwrap() };
+        let ble_device = &BLE_DEVICE;
         let ble_advertising = ble_device.get_advertising();
         ble_advertising.lock().start().unwrap();
         tracing::info!("Client disconnected, {:?}", connection);
@@ -212,7 +212,7 @@ fn main() {
         tracing::info!("Scanning for BLE devices");
         task::block_on(async {
             ble_scan
-                .start(ble_device, 1000, |dev, data| {
+                .start(&ble_device, 1000, |dev, data| {
                     if let Some(md) = data.manufacture_data() {
                         let now = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
 
@@ -221,13 +221,15 @@ fn main() {
                         let mut data = [0u8; 32];
                         let data_length = std::cmp::min(md.payload.len(), 32);
                         data[..data_length].copy_from_slice(&md.payload[..data_length]);
-                        sender.send(Event::AdvertisementReceived(Advertisement {
-                            company: md.company_identifier,
-                            address: padded_mac,
-                            data,
-                            data_length: data_length as u8,
-                            received_at: now,
-                        }));
+                        sender
+                            .send(Event::AdvertisementReceived(Advertisement {
+                                company: md.company_identifier,
+                                address: padded_mac,
+                                data,
+                                data_length: data_length as u8,
+                                received_at: now,
+                            }))
+                            .unwrap();
                     }
                     None::<()>
                 })

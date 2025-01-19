@@ -1,32 +1,6 @@
-use async_recursion::async_recursion;
-use bluer::{
-    gatt::remote::{Characteristic, CharacteristicWriteRequest, Service},
-    Device, UuidExt,
-};
-use std::time::Duration;
-use thiserror::Error;
-use tokio::{io::AsyncWriteExt, time::sleep};
 use zerocopy::{Immutable, IntoBytes, KnownLayout, TryFromBytes};
 
 use super::UpdateTargetError;
-
-#[derive(Error, Debug)]
-pub enum CreateUploadRequestError {
-    #[error("BlueR error")]
-    BluerError(#[from] bluer::Error),
-    #[error("io error")]
-    IoError(#[from] std::io::Error),
-    #[error("Not an update target")]
-    MacDoesNotLookLikeAnUpdateTarget,
-    #[error("Failed to connect to device")]
-    FailedToConnect(bluer::Error),
-    #[error("Failed to upload file. Maybe a timeout or connection loss: {0}")]
-    UploadError(bluer::Error),
-    #[error("The update target seemingly ignored our upload request")]
-    UploadRequestIgnored,
-    #[error("We lost connection to the target device and failed to reconnect")]
-    ReconnectFailed,
-}
 
 // TODO: Implement better debug printing
 #[derive(Debug, Clone, TryFromBytes, IntoBytes, Immutable, KnownLayout, PartialEq, PartialOrd)]
@@ -64,10 +38,6 @@ impl UploadRequest {
             chunk_size,
             _padding: 0,
         }
-    }
-    // Get the total number of chunks
-    pub fn chunk_count(&self) -> u32 {
-        self.file_size.div_ceil(self.chunk_size as u32)
     }
 
     pub async fn new(

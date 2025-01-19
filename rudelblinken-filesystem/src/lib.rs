@@ -695,7 +695,7 @@ mod tests {
         let file = vec![0u8; SimulatedStorage::SIZE as usize / 2 + 1 - size_of::<FileMetadata>()];
         filesystem.write_file("fancy", &file, &[0u8; 32]).unwrap();
         let result = filesystem.read_file("fancy").unwrap();
-        result.set_important();
+        result.set_important().unwrap();
 
         filesystem
             .write_file("fancy2", &file, &[0u8; 32])

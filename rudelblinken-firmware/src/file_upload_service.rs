@@ -1,6 +1,6 @@
 use crate::{
     service_helpers::DocumentableCharacteristic,
-    storage::{get_filesystem, FlashStorage, SetupStorageError},
+    storage::{get_filesystem, CreateStorageError, FlashStorage},
 };
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
@@ -51,6 +51,8 @@ const FILE_UPLOAD_SERVICE_CURRENT_HASH_UUID: BleUuid =
 #[derive(Clone, Debug)]
 pub struct File {
     hash: [u8; 32],
+    // TODO: Fix the filename story
+    #[allow(dead_code)]
     name: String,
     pub content: FileContent<FlashStorage, { FileState::Weak }>,
 }
@@ -225,7 +227,7 @@ pub enum FileUploadError {
     #[error("The checksums file does not have the expected size (Expected {expected}; Got {got}")]
     WrongNumberOfChecksums { expected: u32, got: u32 },
     #[error(transparent)]
-    SetupFilesystemError(#[from] SetupStorageError),
+    SetupFilesystemError(#[from] CreateStorageError),
     #[error("Failed to lock filesystem")]
     LockFilesystemError,
     #[error("Failed to create file: FilesystemWriteError: {0}")]

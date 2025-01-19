@@ -31,16 +31,13 @@ impl EmulatedHost {
 
 impl Host for EmulatedHost {
     fn yield_now(caller: &mut WrappedCaller<'_, Self>, micros: u64) -> Result<u32, wasmi::Error> {
-        //YIELD here
-        // callbacks = return Ok(());
-        // todo!();
+        std::thread::sleep(Duration::from_micros(micros));
         while let Ok(event) = caller.data_mut().events.try_recv() {
             match event {
                 Event::AdvertisementReceived(advertisement) => {
                     caller.on_advertisement(advertisement)?;
                 }
             }
-            // Self::log(caller, LogLevel::Warn, "Got something").unwrap();
         }
         caller.inner().set_fuel(999_999).unwrap();
         return Ok(999_999);

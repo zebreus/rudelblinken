@@ -11,7 +11,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use thiserror::Error;
 use tokio::{io::AsyncWriteExt, time::sleep};
 use upload_request::UploadRequest;
-use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
+use zerocopy::IntoBytes;
 mod upload_request;
 
 const FILE_UPLOAD_SERVICE: u16 = 0x9160;
@@ -97,7 +97,11 @@ pub struct UpdateTarget {
     data_characteristic: Characteristic,
     start_upload_characteristic: Characteristic,
     missing_chunks_characteristic: Characteristic,
+    // TODO: Use this
+    #[allow(dead_code)]
     last_error_characteristic: Characteristic,
+    // TODO: Use this
+    #[allow(dead_code)]
     progress_characteristic: Characteristic,
     current_hash_characteristic: Characteristic,
 

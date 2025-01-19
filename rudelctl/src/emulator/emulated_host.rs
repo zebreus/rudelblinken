@@ -17,7 +17,11 @@ pub struct EmulatedHost {
     pub start_time: Instant,
     pub host_events: Receiver<Event>,
     pub wasm_events: Sender<WasmEvent>,
+    // TODO: Actually use this
+    #[allow(dead_code)]
     pub address: [u8; 6],
+    // TODO: Actually use this
+    #[allow(dead_code)]
     pub name: String,
 }
 
@@ -42,7 +46,7 @@ impl EmulatedHost {
 impl Host for EmulatedHost {
     fn yield_now(
         caller: &mut WrappedCaller<'_, Self>,
-        micros: u64,
+        _micros: u64,
     ) -> Result<u32, rudelblinken_runtime::Error> {
         while let Ok(event) = caller.data_mut().host_events.try_recv() {
             match event {
@@ -151,7 +155,8 @@ impl Host for EmulatedHost {
         caller
             .data_mut()
             .wasm_events
-            .blocking_send(WasmEvent::SetAdvertismentSettings(settings));
+            .blocking_send(WasmEvent::SetAdvertismentSettings(settings))
+            .map_err(|error| rudelblinken_runtime::Error::new(error.to_string()))?;
         Ok(0)
     }
 
@@ -162,7 +167,8 @@ impl Host for EmulatedHost {
         caller
             .data_mut()
             .wasm_events
-            .blocking_send(WasmEvent::SetAdvertismentData(data.into()));
+            .blocking_send(WasmEvent::SetAdvertismentData(data.into()))
+            .map_err(|error| rudelblinken_runtime::Error::new(error.to_string()))?;
         Ok(0)
     }
 }

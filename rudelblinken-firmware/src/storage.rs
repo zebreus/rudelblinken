@@ -1,13 +1,12 @@
 use std::{
     os::raw::c_void,
-    sync::{Mutex, RwLock},
+    sync::{Mutex, OnceLock, RwLock},
 };
 
 use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsDefault};
 use esp_idf_sys::{
     esp_err_to_name, esp_partition_erase_range, esp_partition_find, esp_partition_get,
-    esp_partition_mmap,
-    esp_partition_mmap_memory_t_ESP_PARTITION_MMAP_DATA, esp_partition_next,
+    esp_partition_mmap, esp_partition_mmap_memory_t_ESP_PARTITION_MMAP_DATA, esp_partition_next,
     esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_ANY,
     esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_DATA_UNDEFINED,
     esp_partition_type_t_ESP_PARTITION_TYPE_ANY, esp_partition_type_t_ESP_PARTITION_TYPE_DATA,
@@ -22,14 +21,16 @@ use thiserror::Error;
 use crate::config::NVS_PARTITION;
 
 pub struct FlashStorage {
-    size: usize,
-
     partition: *const esp_idf_sys::esp_partition_t,
     nvs: Mutex<EspNvs<NvsDefault>>,
 
     storage_arena: *mut u8,
+    // Storage handles are needed when I want to unmap the memory
+    #[allow(dead_code)]
     storage_handle_a: u32,
+    #[allow(dead_code)]
     storage_handle_b: u32,
+    #[allow(dead_code)]
     storage_handle_c: u32,
 }
 
@@ -160,7 +161,6 @@ impl FlashStorage {
                 partition: partition,
                 nvs: Mutex::new(nvs),
 
-                size: (*partition).size as usize,
                 storage_arena: memory_mapped_flash,
                 storage_handle_a,
                 storage_handle_b,
@@ -282,38 +282,14 @@ impl Storage for FlashStorage {
     }
 }
 
-static mut STORAGE_SINGLETON: Option<FlashStorage> = None;
-static mut FILESYSTEM_SINGLETON: Option<RwLock<Filesystem<FlashStorage>>> = None;
+static STORAGE_SINGLETON: OnceLock<FlashStorage> = OnceLock::new();
+static FILESYSTEM_SINGLETON: OnceLock<RwLock<Filesystem<FlashStorage>>> = OnceLock::new();
 
-#[derive(Error, Debug, Clone)]
-pub enum SetupStorageError {
-    #[error("Storage is already initialized.")]
-    AlreadyInitialized,
-    #[error(transparent)]
-    CreateStorageError(#[from] CreateStorageError),
-}
-
-pub fn setup_storage() -> Result<(), SetupStorageError> {
-    unsafe {
-        if STORAGE_SINGLETON.is_some() || FILESYSTEM_SINGLETON.is_some() {
-            return Err(SetupStorageError::AlreadyInitialized);
-        }
-        STORAGE_SINGLETON = Some(FlashStorage::new()?);
-        FILESYSTEM_SINGLETON = Some(RwLock::new(Filesystem::new(
-            STORAGE_SINGLETON.as_ref().unwrap(),
-        )));
-        // dbg!(&FILESYSTEM_SINGLETON.as_ref().unwrap().read().unwrap().files);
-    }
-    return Ok(());
-}
-
-pub fn get_filesystem() -> Result<&'static RwLock<Filesystem<FlashStorage>>, SetupStorageError> {
-    unsafe {
-        if FILESYSTEM_SINGLETON.is_none() {
-            setup_storage()?;
-        }
-        Ok(FILESYSTEM_SINGLETON.as_ref().unwrap())
-    }
+pub fn get_filesystem() -> Result<&'static RwLock<Filesystem<FlashStorage>>, CreateStorageError> {
+    FILESYSTEM_SINGLETON.get_or_try_init(|| {
+        let storage = STORAGE_SINGLETON.get_or_try_init(|| FlashStorage::new())?;
+        Ok(RwLock::new(Filesystem::new(storage)))
+    })
 }
 
 // fn get_first_block() -> u16 {

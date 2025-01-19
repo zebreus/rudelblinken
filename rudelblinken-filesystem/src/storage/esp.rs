@@ -303,7 +303,7 @@ pub enum SetupStorageError {
 }
 
 /// Setup the global storage singleton
-pub fn setup_storage() -> Result<(), SetupStorageError> {
+fn setup_storage() -> Result<(), SetupStorageError> {
     unsafe {
         STORAGE_SINGLETON = Some(FlashStorage::new()?);
         FILESYSTEM_SINGLETON = Some(RwLock::new(Filesystem::new(
@@ -315,7 +315,7 @@ pub fn setup_storage() -> Result<(), SetupStorageError> {
 }
 
 /// Get the global filesystem singleton
-pub fn get_filesystem() -> Result<&'static RwLock<Filesystem<FlashStorage>>, SetupStorageError> {
+fn get_filesystem() -> Result<&'static RwLock<Filesystem<FlashStorage>>, SetupStorageError> {
     unsafe {
         if FILESYSTEM_SINGLETON.is_none() {
             setup_storage()?;
