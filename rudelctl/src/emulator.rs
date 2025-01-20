@@ -92,7 +92,7 @@ impl Into<DataType> for u8 {
 
 impl Emulator {
     pub async fn new(command: EmulateCommand) -> Result<Self, EmulatorError> {
-        eprintln!("Emulating WASM file: {:?}", command.file);
+        log::debug!("Emulating WASM file: {:?}", command.file);
         let wasm = read(&command.file).await?;
 
         let mac: [u8; 6] = random_mac();
@@ -107,7 +107,7 @@ impl Emulator {
         if name.as_bytes().len() > 16 {
             return Err(EmulatorError::NameTooLong());
         }
-        println!("Using name: {}", name);
+        log::debug!("Using name: {}", name);
         if !name
             .chars()
             .all(|c| char::is_ascii_alphanumeric(&c) || c == '-' || c == '_')
@@ -117,7 +117,7 @@ impl Emulator {
 
         let tempdir = std::env::temp_dir().join("rudelblinken/emulator");
         create_dir_all(&tempdir).await?;
-        println!(
+        log::debug!(
             "Using socket: {}",
             tempdir.join(format!("{}.socket", name)).display()
         );
@@ -154,7 +154,7 @@ impl Emulator {
                         // println!("Sent data to {}", socket.display());
                     }
                     Err(err) => {
-                        eprintln!("Failed to send data to {}: {}", socket_name.display(), err);
+                        log::info!("Failed to send data to {}: {}", socket_name.display(), err);
                         remove_file(socket_name).await?;
                     }
                 }

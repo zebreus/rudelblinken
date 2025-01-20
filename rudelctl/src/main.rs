@@ -32,7 +32,9 @@ use bluetooth::scan_for;
 use clap::{Parser, Subcommand};
 use emulator::{EmulateCommand, Emulator};
 use futures_time::time::Duration;
-use std::{path::PathBuf, time::Instant};
+use indicatif::MultiProgress;
+use indicatif_log_bridge::LogWrapper;
+use std::{path::PathBuf, sync::LazyLock, time::Instant};
 use update_target::{UpdateTarget, UpdateTargetError};
 
 /// Rudelblinken cli utility
@@ -52,8 +54,8 @@ enum Commands {
         timeout: f32,
 
         /// Maximum number of devices to program
-        #[arg(short, long, default_value = "1")]
-        devices: u32,
+        #[arg(short, long)]
+        devices: Option<u32>,
 
         /// WASM file that will get flashed to the devices
         file: PathBuf,
@@ -65,8 +67,8 @@ enum Commands {
         timeout: f32,
 
         /// Maximum number of devices to program
-        #[arg(short, long, default_value = "1")]
-        devices: u32,
+        #[arg(short, long)]
+        devices: Option<u32>,
 
         /// WASM file that will get flashed to the devices
         file: PathBuf,
@@ -81,9 +83,21 @@ enum Commands {
     Emulate(EmulateCommand),
 }
 
+pub static GLOBAL_LOGGER: LazyLock<MultiProgress> = LazyLock::new(|| {
+    let logger =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .format_timestamp(None)
+            .build();
+    let level = logger.filter();
+    let multi = MultiProgress::new();
+    LogWrapper::new(multi.clone(), logger).try_init().unwrap();
+    log::set_max_level(level);
+    multi
+});
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> bluer::Result<()> {
-    env_logger::init();
+    LazyLock::force(&GLOBAL_LOGGER);
     let cli = Cli::parse();
 
     match cli.command {
@@ -101,22 +115,29 @@ async fn main() -> bluer::Result<()> {
                 devices,
                 &async |device: Device| -> Result<(), UpdateTargetError> {
                     let update_target = UpdateTarget::new_from_peripheral(&device).await?;
+
                     let data = &file_content;
 
                     let now = Instant::now();
+                    log::info!(
+                        "Sending {:.2}kB to {}",
+                        data.len() as f32 / 1024.0,
+                        device
+                            .name()
+                            .await
+                            .ok()
+                            .flatten()
+                            .unwrap_or(device.address().to_string())
+                    );
                     update_target.upload_file(&data, "test.txt".into()).await?;
                     let duration = now.elapsed();
-                    println!(
-                        "Sending {}k took {} millis",
+                    log::info!(
+                        "Sending {:.2}kB took {} millis ({:.3}kB/s)",
                         data.len() as f32 / 1024.0,
-                        duration.as_millis()
-                    );
-                    println!(
-                        "Thats {}kb/s",
+                        duration.as_millis(),
                         (data.len() as f64 / duration.as_millis() as f64)
                     );
                     return Ok(());
-                    // update_target.device.disconnect().await.unwrap();
                 },
             )
             .await
@@ -147,10 +168,10 @@ async fn main() -> bluer::Result<()> {
             .unwrap();
         }
         Commands::Scan { timeout } => {
-            eprintln!("name, mac, rssi");
+            println!("name, mac, rssi");
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
-                999,
+                None,
                 &async |device: Device| -> Result<(), UpdateTargetError> {
                     let address = device.address();
                     let update_target = UpdateTarget::new_from_peripheral(&device).await?;

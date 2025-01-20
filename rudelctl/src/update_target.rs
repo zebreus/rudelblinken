@@ -1,17 +1,20 @@
 //! Connects to our Bluetooth GATT service and exercises the characteristic.
 
-use std::time::Duration;
+use std::{fmt::Write, time::Duration};
 
 use async_recursion::async_recursion;
 use bluer::{
     gatt::remote::{Characteristic, CharacteristicWriteRequest, Service},
     Device, UuidExt,
 };
+use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use rand::{distributions::Alphanumeric, Rng};
 use thiserror::Error;
 use tokio::{io::AsyncWriteExt, time::sleep};
 use upload_request::UploadRequest;
 use zerocopy::IntoBytes;
+
+use crate::GLOBAL_LOGGER;
 mod upload_request;
 
 const FILE_UPLOAD_SERVICE: u16 = 0x9160;
@@ -19,12 +22,10 @@ const FILE_UPLOAD_SERVICE: u16 = 0x9160;
 const FILE_UPLOAD_SERVICE_DATA: u16 = 0x9161;
 // Write metadata here to initiate an upload. Returns the metadata of the current upload
 const FILE_UPLOAD_SERVICE_START_UPLOAD: u16 = 0x9162;
-// Read this to get the IDs of some missing chunks. Returns a list of u16
-const FILE_UPLOAD_SERVICE_MISSING_CHUNKS: u16 = 0x9163;
+// Read this to get the number of uploaded chunks and the IDs of some missing chunks. Returns a list of u16
+const FILE_UPLOAD_SERVICE_UPLOAD_PROGRESS: u16 = 0x9163;
 // Read here to get the last error as a string
 const FILE_UPLOAD_SERVICE_LAST_ERROR: u16 = 0x9164;
-// Read here to get the number of already uploaded chunks
-const FILE_UPLOAD_SERVICE_PROGRESS: u16 = 0x9165;
 // Read to get the hash of the current upload.
 const FILE_UPLOAD_SERVICE_CURRENT_HASH: u16 = 0x9166;
 
@@ -52,6 +53,8 @@ pub enum UpdateTargetError {
     UploadRequestIgnored,
     #[error("We lost connection to the target device and failed to reconnect")]
     ReconnectFailed,
+    #[error("The upload status did not contain the current progress")]
+    FailedToParseUploadStatus,
 }
 
 #[derive(Error, Debug)]
@@ -100,9 +103,6 @@ pub struct UpdateTarget {
     // TODO: Use this
     #[allow(dead_code)]
     last_error_characteristic: Characteristic,
-    // TODO: Use this
-    #[allow(dead_code)]
-    progress_characteristic: Characteristic,
     current_hash_characteristic: Characteristic,
 
     program_hash_characteristic: Characteristic,
@@ -111,47 +111,52 @@ pub struct UpdateTarget {
 }
 
 impl UpdateTarget {
-    pub async fn new_from_peripheral(device: &Device) -> Result<UpdateTarget, UpdateTargetError> {
-        let device = device.clone();
-        let address = device.address();
-        // println!("Checking {}", address);
-        if !(address.0.starts_with(&[0x24, 0xec, 0x4b])) {
-            return Err(UpdateTargetError::MacDoesNotLookLikeAnUpdateTarget);
+    pub async fn connect_to_device(device: &Device) -> Result<(), UpdateTargetError> {
+        let max_attempts = 3;
+        if device.is_connected().await? {
+            return Ok(());
         }
-        // println!("Found MAC {}", address);
-
-        if !device.is_connected().await? {
-            // println!("Connecting...");
-            for attempt in 0..=2 {
-                match device.connect().await {
-                    Ok(()) => break,
-                    Err(err) if attempt == 2 => {
-                        if !(device.is_connected().await.unwrap_or(false)) {
-                            return Err(UpdateTargetError::FailedToConnect(err));
-                        }
-                        break;
+        log::debug!("Connecting...");
+        for attempt in 0..=max_attempts {
+            match device.connect().await {
+                Ok(()) => break,
+                Err(err) => {
+                    log::debug!("Connect error {}/{}: {}", attempt, max_attempts, &err);
+                    if attempt < max_attempts {
+                        sleep(Duration::from_secs(1)).await;
+                        continue;
                     }
-                    Err(err) => {
-                        eprintln!("Connect error: {}", &err);
+                    if !(device.is_connected().await.unwrap_or(false)) {
+                        return Err(UpdateTargetError::FailedToConnect(err));
                     }
+                    break;
                 }
             }
         }
+        return Ok(());
+    }
 
-        // // // Sometimes this is required to actually discover services
+    pub async fn new_from_peripheral(device: &Device) -> Result<UpdateTarget, UpdateTargetError> {
+        let device = device.clone();
+        let address = device.address();
+        log::debug!("Checking {}", address);
+        if !(address.0.starts_with(&[0x24, 0xec, 0x4b])) {
+            return Err(UpdateTargetError::MacDoesNotLookLikeAnUpdateTarget);
+        }
+        log::debug!("Found MAC {}", address);
+
+        Self::connect_to_device(&device).await?;
+
         let update_service = find_service(&device, FILE_UPLOAD_SERVICE).await?;
-        // println!("Found service UUID for {}", address);
 
         let data_characteristic =
             find_characteristic(&update_service, FILE_UPLOAD_SERVICE_DATA).await?;
         let start_upload_characteristic =
             find_characteristic(&update_service, FILE_UPLOAD_SERVICE_START_UPLOAD).await?;
         let missing_chunks_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_MISSING_CHUNKS).await?;
+            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_UPLOAD_PROGRESS).await?;
         let last_error_characteristic =
             find_characteristic(&update_service, FILE_UPLOAD_SERVICE_LAST_ERROR).await?;
-        let progress_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_PROGRESS).await?;
         let current_hash_characteristic =
             find_characteristic(&update_service, FILE_UPLOAD_SERVICE_CURRENT_HASH).await?;
 
@@ -168,7 +173,6 @@ impl UpdateTarget {
             start_upload_characteristic,
             missing_chunks_characteristic,
             last_error_characteristic,
-            progress_characteristic,
             name_characteristic,
             program_hash_characteristic,
             current_hash_characteristic,
@@ -192,7 +196,7 @@ impl UpdateTarget {
             .collect();
         let file_name = String::from_utf8(file_name).unwrap();
         let program_hash = self.upload_file(data, file_name).await?;
-        println!("Uploaded file.");
+        log::debug!("Uploaded file.");
         self.program_hash_characteristic
             .write_ext(
                 &program_hash,
@@ -204,7 +208,7 @@ impl UpdateTarget {
                 },
             )
             .await?;
-        println!("Wrote program hash.");
+        log::debug!("Wrote program hash.");
         return Ok(());
     }
 
@@ -214,7 +218,7 @@ impl UpdateTarget {
         data: &[u8],
         file_name: String,
     ) -> Result<[u8; 32], UpdateTargetError> {
-        println!("Preparing data for upload...");
+        log::debug!("Preparing data for upload...");
 
         // -2 for the length
         // -28 was found to be good by empirical methods
@@ -240,13 +244,13 @@ impl UpdateTarget {
 
         self.start_upload(&upload_request).await?;
         self.upload_chunks(chunks).await?;
-        println!("Uploaded file {:?}", upload_request.hash);
+        log::debug!("Uploaded file {:?}", upload_request.hash);
         return Ok(upload_request.hash);
     }
 
     async fn start_upload(&self, upload_request: &UploadRequest) -> Result<(), UpdateTargetError> {
         let upload_request_bytes = upload_request.as_bytes();
-        println!("Sending file information...");
+        log::debug!("Sending file information...");
 
         // let notify = self.start_upload_characteristic.notify().await?;
 
@@ -267,7 +271,7 @@ impl UpdateTarget {
             if retries_left == 0 {
                 return Err(UpdateTargetError::UploadRequestIgnored);
             }
-            println!(
+            log::debug!(
                 "Target did not process our upload request. Retry {}/{}...",
                 MAX_RETRIES - retries_left,
                 MAX_RETRIES
@@ -282,19 +286,71 @@ impl UpdateTarget {
         Ok(())
     }
 
+    // async fn handle_connection_error(
+    //     &self,
+    //     error: bluer::Error,
+    //     progress_bar: Option<&ProgressBar>,
+    // ) -> Result<(), UpdateTargetError> {
+    //     progress_bar.map(|bar| bar.set_message("error"));
+    //     // // Does not seem to work
+    //     let is_connected = self.device.is_connected().await.unwrap_or(false);
+    //     let error_message_looks_like_connection_error = error.to_string().contains("connect")
+    //         || error.to_string().contains("reset")
+    //         || error.to_string().contains("present")
+    //         || error.to_string().contains("removed");
+
+    //     if error_message_looks_like_connection_error || !is_connected {
+    //         let max_reconnects = 10;
+    //         let mut reconnects_left = max_reconnects;
+    //         while reconnects_left != 0 {
+    //             if reconnects_left == 0 {
+    //                 progress_bar
+    //                     .map(|progress_bar| progress_bar.abandon_with_message("reconnect failed"));
+    // GLOBAL_LOGGER.remove(&progress_bar);
+
+    //                 return Err(UpdateTargetError::ReconnectFailed);
+    //             }
+    //             log::debug!("Reconnecting to device...");
+    //             progress_bar.map(|progress_bar| {
+    //                 progress_bar.set_message(format!(
+    //                     "reconnect {:>2}/{:2}",
+    //                     reconnects_left, max_reconnects
+    //                 ))
+    //             });
+    //             let _ = self.device.connect().await;
+    //             sleep(Duration::from_secs(2)).await;
+    //             reconnects_left -= 1;
+    //             if self.device.is_connected().await.unwrap_or(false) {
+    //                 return Ok(());
+    //             }
+    //         }
+    //     }
+
+    //     return Ok(());
+    // }
+
     async fn upload_chunks(&self, chunks: Vec<Vec<u8>>) -> Result<(), UpdateTargetError> {
-        println!("Uploading {} chunks", chunks.len());
+        let progress_bar = GLOBAL_LOGGER.add(ProgressBar::new(chunks.len() as u64));
+        // let progress_bar = ProgressBar::new(chunks.len() as u64);
+        progress_bar.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos:>5}/{len:5} {msg:20}")
+          .unwrap()
+          .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+          .progress_chars("#>-"));
+        progress_bar.set_message("starting");
+        progress_bar.enable_steady_tick(Duration::from_millis(100));
 
         // The number of chunks we send between checking for missing chunks
         // The read after the write will wait until this number of chunks is written. If we send too many chunks at once, we get timeouts
-        let mut simultaneous_chunks = 100usize;
+        let mut simultaneous_chunks = 20usize;
         // How many times we will reconnect to the device
+        let total_reconnects = 10usize;
         let mut reconnects_left = 10usize;
         loop {
             // Reading a property will wait until the writes are done
-            let missing_chunks = match self.missing_chunks_characteristic.read().await {
-                Ok(missing_chunks) => missing_chunks,
+            let upload_status = match self.missing_chunks_characteristic.read().await {
+                Ok(upload_status) => upload_status,
                 Err(error) => {
+                    progress_bar.set_message("error");
                     // // Does not seem to work
                     // let is_connected = self.device.is_connected().await?;
                     let error_message_looks_like_connection_error =
@@ -302,30 +358,46 @@ impl UpdateTarget {
                             || error.to_string().contains("reset")
                             || error.to_string().contains("present")
                             || error.to_string().contains("removed");
+
                     if error_message_looks_like_connection_error {
                         if reconnects_left == 0 {
+                            log::info!("Reconnect failed. Aborting upload.");
+                            progress_bar.abandon_with_message("reconnect failed");
+                            GLOBAL_LOGGER.remove(&progress_bar);
+
                             return Err(UpdateTargetError::ReconnectFailed);
                         }
-                        println!("Reconnecting to device...");
+                        log::info!(
+                            "Connection lost. Attempting reconnect {:>2}/{:2}...",
+                            reconnects_left,
+                            total_reconnects
+                        );
+                        progress_bar.set_message(format!(
+                            "reconnect {:>2}/{:2}",
+                            reconnects_left, total_reconnects
+                        ));
                         let _ = self.device.connect().await;
                         sleep(Duration::from_secs(2)).await;
                         reconnects_left -= 1;
                         continue;
                     }
 
-                    println!("Failed to read missing chunks: {}", error);
+                    log::debug!("Failed to read missing chunks: {}", error);
                     let new_simultaneous_chunks =
                         std::cmp::max(1, simultaneous_chunks.div_floor(2));
+                    log::info!("Failed to transfer chunks. Reducing the number of chunks per transfer to {}", new_simultaneous_chunks);
+                    progress_bar
+                        .set_message(format!("retry with size {}", new_simultaneous_chunks));
                     if new_simultaneous_chunks == 1 {
                         reconnects_left = reconnects_left.saturating_sub(1);
                         if reconnects_left == 0 {
+                            progress_bar.abandon_with_message("upload failed");
+                            GLOBAL_LOGGER.remove(&progress_bar);
+
                             return Err(UpdateTargetError::UploadError(error));
                         }
                     }
-                    println!(
-                        "Reducing simultaneous chunks from {} to {}",
-                        simultaneous_chunks, new_simultaneous_chunks
-                    );
+
                     sleep(Duration::from_secs(3)).await;
 
                     simultaneous_chunks = new_simultaneous_chunks;
@@ -333,23 +405,40 @@ impl UpdateTarget {
                 }
             };
 
-            let missing_chunks = missing_chunks
+            let upload_status = upload_status
                 .array_chunks::<2>()
                 .map(|chunk_id_bytes| u16::from_le_bytes(*chunk_id_bytes))
                 .collect::<Vec<u16>>();
-            if missing_chunks.len() == 0 {
+            if upload_status.len() <= 1 {
                 break;
             }
-            println!("Missing chunks: {:?}", missing_chunks);
+            let Some(([transferred_chunks], missing_chunks)) = upload_status.split_at_checked(1)
+            else {
+                progress_bar.abandon_with_message("failed to parse upload status");
+                GLOBAL_LOGGER.remove(&progress_bar);
+
+                return Err(UpdateTargetError::FailedToParseUploadStatus);
+            };
+            log::info!(
+                "Transferring {} chunks",
+                std::cmp::min(missing_chunks.len(), simultaneous_chunks)
+            );
+            progress_bar.set_message("active");
+            progress_bar.set_position(*transferred_chunks as u64);
+            progress_bar.enable_steady_tick(Duration::from_millis(100));
+
+            log::debug!("Transferring the following chunks: {:?}", missing_chunks);
 
             // Upload at most 10 chunks at a time, because we may get timeouts otherwise
             let mut write_io = self.data_characteristic.write_io().await?;
             for chunk_id in missing_chunks.iter().take(simultaneous_chunks) {
-                println!("Sending missing chunk {}", chunk_id);
                 write_io.send(&chunks[*chunk_id as usize]).await.unwrap();
             }
             write_io.flush().await.unwrap();
         }
+        log::info!("File uploaded successfully.");
+        progress_bar.finish_with_message("uploaded");
+        GLOBAL_LOGGER.remove(&progress_bar);
 
         Ok(())
     }

@@ -1,4 +1,3 @@
-use bluer::Device;
 use futures::{
     pin_mut,
     stream::{AbortHandle, Abortable},
@@ -87,10 +86,32 @@ use std::future::Future;
 //     }
 // }
 
+// struct Address {
+//     address: bluer::Address,
+// }
+
+// struct MyDevice {
+//     device: bluer::Device,
+// }
+
+// impl MyDevice {
+//     pub fn address(&self) -> Result<Address, BluetoothError> {
+//         self.device.address().into()
+//     }
+//     pub async fn is_connected(&self) -> Result<bool, BluetoothError> {
+//         self.device.is_connected().await?
+//     }
+// }
+
+// struct MyDescriptor {
+//     descriptor: bluer::Descriptor,
+// }
+
 pub async fn scan_for<Fut, Err>(
     duration: Duration,
-    max_devices: u32,
-    f: &dyn Fn(Device) -> Fut,
+    // None, if no limit
+    max_devices: Option<u32>,
+    f: &dyn Fn(bluer::Device) -> Fut,
 ) -> bluer::Result<()>
 where
     Err: std::fmt::Debug,
@@ -101,7 +122,7 @@ where
     adapter.set_powered(true).await?;
 
     {
-        // eprintln!(
+        // log::debug!(
         //     "Discovering on Bluetooth adapter {} with address {}\n",
         //     adapter.name(),
         //     adapter.address().await?
@@ -122,16 +143,19 @@ where
                     // let wrapped_device = Device::Ble { device: device };
                     // let result = f(wrapped_device).await;
                     let result = f(device).await;
-                    if result.is_ok() {
-                        programmed_devices += 1;
+                    if let Err(error) = result {
+                        log::debug!("Failed with {:?}", error);
+                        continue;
                     }
-                    println!("Got result {:?}", result);
-                    if programmed_devices >= max_devices {
-                        abort_handle.abort();
+                    programmed_devices += 1;
+                    if let Some(max_devices) = max_devices {
+                        if programmed_devices >= max_devices {
+                            abort_handle.abort();
+                        }
                     }
                 }
                 // AdapterEvent::DeviceRemoved(addr) => {
-                //     // println!("Device removed {addr}");
+                //     // log::debug!("Device removed {addr}");
                 // }
                 _ => (),
             }

@@ -76,7 +76,17 @@ impl Host for EmulatedHost {
         level: LogLevel,
         message: &str,
     ) -> Result<(), rudelblinken_runtime::Error> {
-        println!("{}: {}", level, message);
+        log::log!(
+            match level {
+                LogLevel::Error => log::Level::Error,
+                LogLevel::Warn => log::Level::Warn,
+                LogLevel::Info => log::Level::Info,
+                LogLevel::Debug => log::Level::Debug,
+                LogLevel::Trace => log::Level::Trace,
+            },
+            "{}",
+            message
+        );
         return Ok(());
     }
 

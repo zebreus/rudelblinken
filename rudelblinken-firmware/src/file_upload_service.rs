@@ -26,12 +26,10 @@ const FILE_UPLOAD_SERVICE: u16 = 0x9160;
 const FILE_UPLOAD_SERVICE_DATA: u16 = 0x9161;
 // Write metadata here to initiate an upload.
 const FILE_UPLOAD_SERVICE_START_UPLOAD: u16 = 0x9162;
-// Read this to get the IDs of some missing chunks. Returns a list of u16
-const FILE_UPLOAD_SERVICE_MISSING_CHUNKS: u16 = 0x9163;
+// Read this to get the number of uploaded chunks and the IDs of some missing chunks. Returns a list of u16
+const FILE_UPLOAD_SERVICE_UPLOAD_PROGRESS: u16 = 0x9163;
 // Read here to get the last error as a string
 const FILE_UPLOAD_SERVICE_LAST_ERROR: u16 = 0x9164;
-// Read here to get the number of already uploaded chunks
-const FILE_UPLOAD_SERVICE_PROGRESS: u16 = 0x9165;
 // Read to get the hash of the current upload.
 const FILE_UPLOAD_SERVICE_CURRENT_HASH: u16 = 0x9166;
 
@@ -40,11 +38,9 @@ const FILE_UPLOAD_SERVICE_DATA_UUID: BleUuid = BleUuid::from_uuid16(FILE_UPLOAD_
 const FILE_UPLOAD_SERVICE_START_UPLOAD_UUID: BleUuid =
     BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_START_UPLOAD);
 const FILE_UPLOAD_SERVICE_MISSING_CHUNKS_UUID: BleUuid =
-    BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_MISSING_CHUNKS);
+    BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_UPLOAD_PROGRESS);
 const FILE_UPLOAD_SERVICE_LAST_ERROR_UUID: BleUuid =
     BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_LAST_ERROR);
-const FILE_UPLOAD_SERVICE_PROGRESS_UUID: BleUuid =
-    BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_PROGRESS);
 const FILE_UPLOAD_SERVICE_CURRENT_HASH_UUID: BleUuid =
     BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_CURRENT_HASH);
 
@@ -146,11 +142,8 @@ impl IncompleteFile {
             .map(|(index, _)| index as u16)
             .collect_vec()
     }
-    /// Get the number of chunks that have been received
-    pub fn count_received_chunks(&self) -> u16 {
-        self.received_chunks
-            .iter()
-            .fold(0, |sum, received| sum + (if *received { 1 } else { 0 }))
+    pub fn chunk_count(&self) -> u16 {
+        self.received_chunks.len() as u16
     }
     /// Check if the file is complete
     pub fn is_complete(&self) -> bool {
@@ -446,12 +439,12 @@ impl FileUploadService {
             BLE_GATT_CHR_UNIT_UNITLESS,
         );
 
-        let missing_chunks_characteristic = service.lock().create_characteristic(
+        let upload_status_characteristic = service.lock().create_characteristic(
             FILE_UPLOAD_SERVICE_MISSING_CHUNKS_UUID,
             NimbleProperties::READ,
         );
-        missing_chunks_characteristic.document(
-            "Missing Chunks",
+        upload_status_characteristic.document(
+            "Number of received chunks + Missing Chunks",
             BLE2904Format::OPAQUE,
             0,
             BLE_GATT_CHR_UNIT_UNITLESS,
@@ -462,16 +455,6 @@ impl FileUploadService {
             .create_characteristic(FILE_UPLOAD_SERVICE_LAST_ERROR_UUID, NimbleProperties::READ);
         last_error_characteristic.document(
             "Last error code",
-            BLE2904Format::UINT16,
-            0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
-        );
-
-        let progress_characteristic = service
-            .lock()
-            .create_characteristic(FILE_UPLOAD_SERVICE_PROGRESS_UUID, NimbleProperties::READ);
-        progress_characteristic.document(
-            "Number of received chunks",
             BLE2904Format::UINT16,
             0,
             BLE_GATT_CHR_UNIT_UNITLESS,
@@ -521,29 +504,36 @@ impl FileUploadService {
         });
 
         let file_upload_service_clone = file_upload_service.clone();
-        missing_chunks_characteristic
+        upload_status_characteristic
             .lock()
             .on_read(move |value, _| {
                 println!("Reading missing chunks");
                 let service = file_upload_service_clone.lock();
-                println!("Reading missing chunks got lock");
-                let missing_chunks = &service
-                    .currently_receiving
-                    .lock()
-                    .as_ref()
+                let maybe_currently_receiving = service.currently_receiving.lock();
+                let maybe_currently_receiving = maybe_currently_receiving.as_ref();
+                let missing_chunks = maybe_currently_receiving
                     .map(|incomplete_file| incomplete_file.get_missing_chunks())
                     .unwrap_or(Default::default());
-                let missing_chunks: &[u8] = unsafe {
-                    std::slice::from_raw_parts(
-                        std::mem::transmute::<_, *const u8>(missing_chunks.as_slice().as_ptr()),
-                        missing_chunks.len() * 2,
-                    )
-                };
-                value.set_value(missing_chunks);
+
+                let chunk_count = maybe_currently_receiving
+                    .map(|incomplete_file| incomplete_file.chunk_count())
+                    .unwrap_or(0);
+                let progress = chunk_count - missing_chunks.len() as u16;
+
+                let mut upload_status: Vec<u8> = Vec::new();
+                upload_status.extend_from_slice(&progress.to_le_bytes());
+                upload_status.extend(
+                    missing_chunks
+                        .into_iter()
+                        .take(25)
+                        .flat_map(u16::to_le_bytes),
+                );
+
+                value.set_value(&upload_status);
             });
 
         // let file_upload_service_clone = file_upload_service.clone();
-        // missing_chunks_characteristic
+        // upload_status_characteristic
         //     .lock()
         //     .on_read(move |value, _| {
         //         let service = file_upload_service_clone.lock();
@@ -574,17 +564,16 @@ impl FileUploadService {
             value.set_value(&(unsafe { *<*const _>::from(last_error).cast::<u8>() }).to_le_bytes());
         });
 
-        let file_upload_service_clone = file_upload_service.clone();
-        progress_characteristic.lock().on_read(move |value, _| {
-            let service = file_upload_service_clone.lock();
-            let maybe_currently_receiving = service.currently_receiving.lock();
-            let Some(currently_receiving) = maybe_currently_receiving.as_ref() else {
-                value.set_value(&0u16.to_le_bytes());
-                return;
-            };
-
-            value.set_value(&currently_receiving.count_received_chunks().to_le_bytes());
-        });
+        // let file_upload_service_clone = file_upload_service.clone();
+        // progress_characteristic.lock().on_read(move |value, _| {
+        //     let service = file_upload_service_clone.lock();
+        //     let maybe_currently_receiving = service.currently_receiving.lock();
+        //     let Some(currently_receiving) = maybe_currently_receiving.as_ref() else {
+        //         value.set_value(&0u16.to_le_bytes());
+        //         return;
+        //     };
+        //     value.set_value(&currently_receiving.count_received_chunks().to_le_bytes());
+        // });
 
         file_upload_service
     }
