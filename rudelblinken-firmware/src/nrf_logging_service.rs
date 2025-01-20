@@ -7,7 +7,7 @@ use esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS;
 use std::{
     ffi::CStr,
     io::{self, BufRead, Read},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     u8,
 };
 
@@ -42,11 +42,15 @@ extern "C" fn logger(format_string_pointer: *const i8, va_args: *mut core::ffi::
 fn write_ble(content: &[u8]) -> usize {
     // SAFETY: The logger functionality is only used after TX_CHARACTERISTIC has been initialized
     #[allow(static_mut_refs)]
-    let Some(tx_characteristic) = (unsafe { TX_CHARACTERISTIC.as_ref() }) else {
+    let Some(ble_logging) = BLE_LOGGING_GLOBALS.get() else {
         return 0;
     };
+    if ble_logging.subscribers.lock().len() == 0 {
+        // No subscribers, don't send anything
+        return content.len();
+    }
 
-    let mut tx_characteristic = tx_characteristic.lock();
+    let mut tx_characteristic = ble_logging.tx_characteristic.lock();
     let mut sent_bytes = 0;
 
     for chunk in content.chunks(200) {
@@ -59,8 +63,15 @@ fn write_ble(content: &[u8]) -> usize {
     return sent_bytes;
 }
 
-static mut RX_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
-static mut TX_CHARACTERISTIC: Option<Arc<Mutex<esp32_nimble::BLECharacteristic>>> = None;
+// We need these in the write_ble function, which needs to be used from a C function.
+struct BleLoggingGlobals {
+    // TODO: Figure out if we really need this
+    #[allow(dead_code)]
+    rx_characteristic: Arc<Mutex<esp32_nimble::BLECharacteristic>>,
+    tx_characteristic: Arc<Mutex<esp32_nimble::BLECharacteristic>>,
+    subscribers: Mutex<Vec<[u8; 6]>>,
+}
+static BLE_LOGGING_GLOBALS: OnceLock<BleLoggingGlobals> = OnceLock::new();
 
 pub struct SerialLoggingService {
     connection: SerialConnection,
@@ -162,16 +173,45 @@ impl SerialLoggingService {
             BLE_GATT_CHR_UNIT_UNITLESS,
         );
 
+        let ble_logging = BleLoggingGlobals {
+            rx_characteristic: rx_characteristic.clone(),
+            tx_characteristic: tx_characteristic.clone(),
+            subscribers: Mutex::new(Vec::new()),
+        };
+        BLE_LOGGING_GLOBALS.get_or_init(move || ble_logging);
+
         let cc = serial_logging_service.clone();
         rx_characteristic.lock().on_write(move |args| {
             cc.lock().connection.ble_receive_line(args.recv_data());
         });
 
+        // Track active subscribers
+        tx_characteristic.lock().on_subscribe(|_char, desc, sub| {
+            let ble_logging = BLE_LOGGING_GLOBALS.get().unwrap();
+
+            tracing::info!("Subscribed: {} {:?}", desc.address(), sub);
+
+            let address = desc.address().as_le_bytes();
+            match sub.is_empty() {
+                true => {
+                    // Unsubscribed
+                    ble_logging
+                        .subscribers
+                        .lock()
+                        .retain(|subscriber| *subscriber != address);
+                }
+                false => {
+                    // Subscribed
+                    ble_logging.subscribers.lock().push(address);
+                }
+            }
+        });
+
+        // SAFETY: I dont see a reason why this would be unsafe.
         unsafe {
-            RX_CHARACTERISTIC = Some(rx_characteristic);
-            TX_CHARACTERISTIC = Some(tx_characteristic);
             esp_idf_sys::esp_log_set_vprintf(Some(logger));
         }
+
         std::panic::set_hook(Box::new(|args| {
             ::tracing::error!(target: "panic", "{}", args);
         }));

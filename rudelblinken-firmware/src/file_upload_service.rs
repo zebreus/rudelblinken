@@ -276,10 +276,9 @@ impl FileUploadService {
     ) -> Result<(), FileUploadError> {
         let mut maybe_current_upload = self.currently_receiving.lock();
         let received_data = args.recv_data();
-        ::tracing::info!(target: "file-upload", "chunk length {}", received_data.len());
 
         if received_data.len() < 3 {
-            ::tracing::info!(target: "file-upload", "data length is too short {}", received_data.len());
+            ::tracing::warn!(target: "file-upload", "data length is too short {}", received_data.len());
 
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
@@ -287,7 +286,7 @@ impl FileUploadService {
         let index = u16::from_le_bytes([received_data[0], received_data[1]]);
         let data = &received_data[2..];
 
-        ::tracing::info!(target: "file-upload", "Received data chunk {}", index);
+        ::tracing::info!(target: "file-upload", "Received chunk #{}", index);
 
         let Some(current_upload) = maybe_current_upload.as_mut() else {
             // Should never happen, because we called ensure_upload above
