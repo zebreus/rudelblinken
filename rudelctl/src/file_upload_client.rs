@@ -236,14 +236,17 @@ impl FileUploadClient {
 
         // The number of chunks we send between checking for missing chunks
         // The read after the write will wait until this number of chunks is written. If we send too many chunks at once, we get timeouts
-        let mut simultaneous_chunks = 20usize;
+        let mut simultaneous_chunks = 2usize;
+        // The smallest number of chunks, where we had a bad transfer
+        let mut min_bad_chunks = 1000usize;
+        // let mut max_good_chunks = 1;
         // How many times we will reconnect to the device
         let total_reconnects = 10usize;
         let mut reconnects_left = 10usize;
         let mut estimated_speed = Duration::from_secs(1);
         let mut measurement_valid = false;
         let mut last_transfer_start = std::time::Instant::now();
-        let mut last_transfer_blocks = 3usize;
+        let mut last_transfer_chunks = 1usize;
         let mut cancel_auto_increment = CancellationToken::new();
         loop {
             // Reading a property will wait until the writes are done
@@ -285,9 +288,10 @@ impl FileUploadClient {
                         continue;
                     }
 
+                    min_bad_chunks = std::cmp::min(last_transfer_chunks, min_bad_chunks);
                     log::debug!("Failed to read missing chunks: {}", error);
                     let new_simultaneous_chunks =
-                        std::cmp::max(1, simultaneous_chunks.div_floor(2));
+                        std::cmp::max(1, last_transfer_chunks.div_floor(2));
                     log::info!("Failed to transfer chunks. Reducing the number of chunks per transfer to {}", new_simultaneous_chunks);
                     progress_bar
                         .set_message(format!("retry with size {}", new_simultaneous_chunks));
@@ -311,7 +315,15 @@ impl FileUploadClient {
             let progress_bar = progress_bar_arc.lock().await;
             if measurement_valid {
                 let last_transfer_duration = last_transfer_start.elapsed();
-                estimated_speed = last_transfer_duration.div(last_transfer_blocks as u32);
+                estimated_speed = last_transfer_duration.div(last_transfer_chunks as u32);
+
+                simultaneous_chunks = std::cmp::max(
+                    1,
+                    std::cmp::min(
+                        min_bad_chunks - 1,
+                        simultaneous_chunks + simultaneous_chunks.div_ceil(3),
+                    ),
+                );
             }
 
             let upload_status = upload_status
@@ -354,7 +366,7 @@ impl FileUploadClient {
                 cloned_progress_bar.lock().await.set_message("waiting");
             });
             last_transfer_start = std::time::Instant::now();
-            last_transfer_blocks = number_of_chunks;
+            last_transfer_chunks = number_of_chunks;
             measurement_valid = true;
 
             // Upload at most 10 chunks at a time, because we may get timeouts otherwise
