@@ -404,27 +404,31 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
             );
             return Ok(free_range_start * T::BLOCK_SIZE);
         }
+        // println!("No unused free space found");
 
         let mut cheapest_range: VecDeque<(u16, Range)> = VecDeque::new();
         let mut cheapest_range_cost: u16 = u16::MAX;
-        let last_start = 0;
-        let mut last_length = 0;
         let mut current_range: VecDeque<(u16, Range)> = VecDeque::new();
         let mut current_range_cost: u16 = 0;
         let mut current_range_length: u16 = 0;
         for (check_start, check_range) in free_ranges.iter() {
             let Some(cost) = check_range.importance.get_cost() else {
+                // println!("Skipping important range {:?}", check_range);
                 continue;
             };
-            if last_start + last_length != *check_start {
+            let current_start = current_range.front().map_or(0, |front| front.0);
+            if current_start + current_range_length != *check_start {
                 current_range.clear();
                 current_range_cost = 0;
                 current_range_length = 0;
-                last_length = 0;
             }
             current_range.push_back((*check_start, *check_range));
             current_range_cost += cost as u16;
             current_range_length += check_range.length;
+            // println!(
+            //     "Current range: {:?}, cost: {}, length: {}",
+            //     current_range, current_range_cost, current_range_length
+            // );
 
             if current_range_length >= length_in_blocks {
                 // Try to remove from start of the current range, until it is shortest
@@ -818,6 +822,42 @@ mod tests {
         filesystem.delete_file("fancy").unwrap();
         filesystem.write_file("fancy2", &file, &[0u8; 32]).unwrap();
         let result = filesystem.read_file("fancy2").unwrap();
+        assert_eq!(result.upgrade().unwrap().as_ref(), file);
+    }
+
+    #[test]
+    fn can_write_a_big_file() {
+        let owned_storage = SimulatedStorage::new();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
+        let mut filesystem = Filesystem::new(storage);
+
+        let file = [42u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
+        filesystem
+            .write_file("big_file", &file, &[0u8; 32])
+            .unwrap();
+        let result = filesystem.read_file("big_file").unwrap();
+        assert_eq!(result.upgrade().unwrap().as_ref(), file);
+    }
+
+    #[test]
+    fn multiple_unimportant_files_can_get_overwritten() {
+        let owned_storage = SimulatedStorage::new();
+        let storage =
+            unsafe { std::mem::transmute::<_, &'static SimulatedStorage>(&owned_storage) };
+        let mut filesystem = Filesystem::new(storage);
+
+        for i in 0..SimulatedStorage::BLOCKS {
+            filesystem
+                .write_file(&format!("small_file_{}", i), &[0; 32], &[0u8; 32])
+                .unwrap();
+        }
+
+        let file = [42u8; SimulatedStorage::SIZE as usize - size_of::<FileMetadata>()];
+        filesystem
+            .write_file("big_file", &file, &[0u8; 32])
+            .unwrap();
+        let result = filesystem.read_file("big_file").unwrap();
         assert_eq!(result.upgrade().unwrap().as_ref(), file);
     }
 
