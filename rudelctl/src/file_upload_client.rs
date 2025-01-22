@@ -1,20 +1,21 @@
 //! Connects to our Bluetooth GATT service and exercises the characteristic.
-
-use std::{fmt::Write, time::Duration};
-
+use crate::GLOBAL_LOGGER;
 use async_recursion::async_recursion;
 use bluer::{
-    gatt::remote::{Characteristic, CharacteristicWriteRequest, Service},
-    Device, UuidExt,
+    gatt::remote::{Characteristic, CharacteristicWriteRequest},
+    Device,
+};
+use helpers::{
+    connect_to_device, find_characteristic, find_service, FindCharacteristicError, FindServiceError,
 };
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use rand::{distributions::Alphanumeric, Rng};
+use std::{fmt::Write, time::Duration};
 use thiserror::Error;
 use tokio::{io::AsyncWriteExt, time::sleep};
 use upload_request::UploadRequest;
 use zerocopy::IntoBytes;
-
-use crate::GLOBAL_LOGGER;
+mod helpers;
 mod upload_request;
 
 const FILE_UPLOAD_SERVICE: u16 = 0x9160;
@@ -40,11 +41,11 @@ pub enum UpdateTargetError {
     #[error("io error")]
     IoError(#[from] std::io::Error),
     #[error("Not an update target")]
-    MacDoesNotLookLikeAnUpdateTarget,
+    MacDoesNotLookLikeAnUploadServiceProvider,
     #[error("Failed to connect to device")]
     FailedToConnect(bluer::Error),
     #[error(transparent)]
-    DoesNotProvideUpdateService(#[from] FindUpdateServiceError),
+    DoesNotProvideUpdateService(#[from] FindServiceError),
     #[error(transparent)]
     ServiceIsMissingACharacteristic(#[from] FindCharacteristicError),
     #[error("Failed to upload file. Maybe a timeout or connection loss: {0}")]
@@ -57,46 +58,7 @@ pub enum UpdateTargetError {
     FailedToParseUploadStatus,
 }
 
-#[derive(Error, Debug)]
-pub enum FindUpdateServiceError {
-    #[error("BlueR error")]
-    BluerError(#[from] bluer::Error),
-    #[error("Does not contain the requested service")]
-    NoUpdateService,
-}
-
-pub async fn find_service(device: &Device, uuid: u16) -> Result<Service, FindUpdateServiceError> {
-    for service in device.services().await? {
-        if service.uuid().await? == uuid::Uuid::from_u16(uuid) {
-            return Ok(service);
-        }
-    }
-
-    return Err(FindUpdateServiceError::NoUpdateService);
-}
-
-#[derive(Error, Debug)]
-pub enum FindCharacteristicError {
-    #[error("BlueR error")]
-    BluerError(#[from] bluer::Error),
-    #[error("Does not contain the specified characteristic")]
-    NotFound,
-}
-
-pub async fn find_characteristic(
-    service: &Service,
-    uuid: u16,
-) -> Result<Characteristic, FindCharacteristicError> {
-    for characteristic in service.characteristics().await? {
-        if characteristic.uuid().await? == uuid::Uuid::from_u16(uuid) {
-            return Ok(characteristic);
-        }
-    }
-
-    return Err(FindCharacteristicError::NotFound);
-}
-
-pub struct UpdateTarget {
+pub struct FileUploadClient {
     data_characteristic: Characteristic,
     start_upload_characteristic: Characteristic,
     missing_chunks_characteristic: Characteristic,
@@ -110,51 +72,19 @@ pub struct UpdateTarget {
     device: Device,
 }
 
-impl UpdateTarget {
-    pub async fn connect_to_device(device: &Device) -> Result<(), UpdateTargetError> {
-        let max_attempts = 3;
-        if device.is_connected().await? {
-            return Ok(());
-        }
-        log::debug!("Connecting...");
-        for attempt in 0..=max_attempts {
-            match device.connect().await {
-                Ok(()) => break,
-                Err(err) => {
-                    log::debug!("Connect error {}/{}: {}", attempt, max_attempts, &err);
-                    if attempt < max_attempts {
-                        sleep(Duration::from_secs(1)).await;
-                        continue;
-                    }
-                    if !(device.is_connected().await.unwrap_or(false)) {
-                        return Err(UpdateTargetError::FailedToConnect(err));
-                    }
-                    break;
-                }
-            }
-        }
-        return Ok(());
-    }
-
-    pub async fn new_from_peripheral(device: &Device) -> Result<UpdateTarget, UpdateTargetError> {
+impl FileUploadClient {
+    pub async fn new_from_peripheral(
+        device: &Device,
+    ) -> Result<FileUploadClient, UpdateTargetError> {
         let device = device.clone();
         let address = device.address();
         log::debug!("Checking {}", address);
         if !(address.0.starts_with(&[0x24, 0xec, 0x4b])) {
-            return Err(UpdateTargetError::MacDoesNotLookLikeAnUpdateTarget);
+            return Err(UpdateTargetError::MacDoesNotLookLikeAnUploadServiceProvider);
         }
         log::debug!("Found MAC {}", address);
-        // {
-        //     let device = device.clone();
-        //     tokio::spawn(async move {
-        //         let mut events = device.events().await.unwrap();
-        //         while let Some(ev) = events.next().await {
-        //             log::info!("On device {:?}, received event {:?}", device, ev);
-        //         }
-        //     });
-        // }
 
-        Self::connect_to_device(&device).await?;
+        connect_to_device(&device).await?;
 
         let update_service = find_service(&device, FILE_UPLOAD_SERVICE).await?;
 
@@ -177,7 +107,7 @@ impl UpdateTarget {
             find_characteristic(&cat_management_service, CAT_MANAGEMENT_SERVICE_PROGRAM_HASH)
                 .await?;
 
-        return Ok(UpdateTarget {
+        return Ok(FileUploadClient {
             data_characteristic,
             start_upload_characteristic,
             missing_chunks_characteristic,
@@ -262,9 +192,6 @@ impl UpdateTarget {
         let upload_request_bytes = upload_request.as_bytes();
         log::debug!("Sending file information...");
 
-        // let notify = self.start_upload_characteristic.notify().await?;
-
-        // Do a unreliable write to prevent bluez from caching stuff
         self.start_upload_characteristic
             .write(&upload_request_bytes)
             .await?;
@@ -273,7 +200,6 @@ impl UpdateTarget {
         let mut retries_left = MAX_RETRIES;
         loop {
             let current_target_hash = self.current_hash_characteristic.read().await?;
-            // dbg!(&current_target_hash);
             if current_target_hash == upload_request.hash {
                 break;
             }
@@ -287,7 +213,6 @@ impl UpdateTarget {
                 MAX_RETRIES
             );
             retries_left -= 1;
-            // Do a unreliable write to prevent bluez from caching stuff
             self.start_upload_characteristic
                 .write(&upload_request_bytes)
                 .await?;
@@ -295,49 +220,6 @@ impl UpdateTarget {
         }
         Ok(())
     }
-
-    // async fn handle_connection_error(
-    //     &self,
-    //     error: bluer::Error,
-    //     progress_bar: Option<&ProgressBar>,
-    // ) -> Result<(), UpdateTargetError> {
-    //     progress_bar.map(|bar| bar.set_message("error"));
-    //     // // Does not seem to work
-    //     let is_connected = self.device.is_connected().await.unwrap_or(false);
-    //     let error_message_looks_like_connection_error = error.to_string().contains("connect")
-    //         || error.to_string().contains("reset")
-    //         || error.to_string().contains("present")
-    //         || error.to_string().contains("removed");
-
-    //     if error_message_looks_like_connection_error || !is_connected {
-    //         let max_reconnects = 10;
-    //         let mut reconnects_left = max_reconnects;
-    //         while reconnects_left != 0 {
-    //             if reconnects_left == 0 {
-    //                 progress_bar
-    //                     .map(|progress_bar| progress_bar.abandon_with_message("reconnect failed"));
-    // GLOBAL_LOGGER.remove(&progress_bar);
-
-    //                 return Err(UpdateTargetError::ReconnectFailed);
-    //             }
-    //             log::debug!("Reconnecting to device...");
-    //             progress_bar.map(|progress_bar| {
-    //                 progress_bar.set_message(format!(
-    //                     "reconnect {:>2}/{:2}",
-    //                     reconnects_left, max_reconnects
-    //                 ))
-    //             });
-    //             let _ = self.device.connect().await;
-    //             sleep(Duration::from_secs(2)).await;
-    //             reconnects_left -= 1;
-    //             if self.device.is_connected().await.unwrap_or(false) {
-    //                 return Ok(());
-    //             }
-    //         }
-    //     }
-
-    //     return Ok(());
-    // }
 
     async fn upload_chunks(&self, chunks: Vec<Vec<u8>>) -> Result<(), UpdateTargetError> {
         let progress_bar = GLOBAL_LOGGER.add(ProgressBar::new(chunks.len() as u64));

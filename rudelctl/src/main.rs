@@ -31,7 +31,7 @@ use bluer::Device;
 use bluetooth::{scan_for, Outcome};
 use clap::{Parser, Subcommand};
 use emulator::{EmulateCommand, Emulator};
-use file_upload_client::{UpdateTarget, UpdateTargetError};
+use file_upload_client::{FileUploadClient, UpdateTargetError};
 use futures_time::time::Duration;
 use indicatif::MultiProgress;
 use indicatif_log_bridge::LogWrapper;
@@ -114,7 +114,8 @@ async fn main() -> bluer::Result<()> {
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
                 &async |device: Device, abort| -> Result<Outcome, UpdateTargetError> {
-                    let Ok(update_target) = UpdateTarget::new_from_peripheral(&device).await else {
+                    let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
+                    else {
                         return Ok(Outcome::Ignored);
                     };
                     if devices == 1 {
@@ -168,7 +169,8 @@ async fn main() -> bluer::Result<()> {
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
                 &async |device: Device, _| -> Result<Outcome, UpdateTargetError> {
-                    let Ok(update_target) = UpdateTarget::new_from_peripheral(&device).await else {
+                    let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
+                    else {
                         return Ok(Outcome::Ignored);
                     };
 
@@ -188,7 +190,7 @@ async fn main() -> bluer::Result<()> {
                 u32::MAX,
                 &async |device: Device, _| -> Result<Outcome, UpdateTargetError> {
                     let address = device.address();
-                    let update_target = UpdateTarget::new_from_peripheral(&device).await?;
+                    let update_target = FileUploadClient::new_from_peripheral(&device).await?;
                     let rssi = device.rssi().await.ok().flatten();
 
                     let name = update_target.get_name().await.unwrap();
