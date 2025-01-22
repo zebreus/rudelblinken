@@ -180,7 +180,7 @@ impl CatManagementService {
             let file = file_upload_service
                 .get_file(&hash)
                 .expect("failed to get file");
-            let content = file.content.upgrade().unwrap();
+            let content = file.upgrade().unwrap();
 
             service
                 .wasm_runner
@@ -249,7 +249,7 @@ impl CatManagementService {
         let Some(file) = file_upload_service.get_file(&hash) else {
             return;
         };
-        let Ok(content) = file.content.upgrade() else {
+        let Ok(content) = file.upgrade() else {
             return;
         };
         self.wasm_runner

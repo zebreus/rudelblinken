@@ -44,14 +44,14 @@ const FILE_UPLOAD_SERVICE_LAST_ERROR_UUID: BleUuid =
 const FILE_UPLOAD_SERVICE_CURRENT_HASH_UUID: BleUuid =
     BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_CURRENT_HASH);
 
-#[derive(Clone, Debug)]
-pub struct File {
-    hash: [u8; 32],
-    // TODO: Fix the filename story
-    #[allow(dead_code)]
-    name: String,
-    pub content: FileContent<FlashStorage, { FileState::Weak }>,
-}
+// #[derive(Clone, Debug)]
+// pub struct File {
+//     hash: [u8; 32],
+//     // TODO: Fix the filename story
+//     #[allow(dead_code)]
+//     name: String,
+//     pub content: FileContent<FlashStorage, { FileState::Weak }>,
+// }
 
 #[derive(Debug)]
 struct IncompleteFile {
@@ -188,9 +188,10 @@ impl IncompleteFile {
     }
 }
 
+#[derive(Debug)]
 pub struct FileUploadService {
-    files: Vec<File>,
-    currently_receiving: Mutex<Option<IncompleteFile>>,
+    // files: Vec<File>,
+    currently_receiving: Option<IncompleteFile>,
 
     // latest_hash: Option<[u8; 32]>,
     // latest_length: Option<u32>,
@@ -233,19 +234,20 @@ impl FileUploadService {
         &self,
         upload_request: &UploadRequest,
     ) -> Result<IncompleteFile, FileUploadError> {
-        let mut filesystem = get_filesystem()?
-            .write()
-            .map_err(|_| FileUploadError::LockFilesystemError)?;
-
         let checksums =
             self.load_checksums(&upload_request.checksums, &upload_request.chunk_count())?;
 
         let mut bytes = [0u8; 4];
         unsafe { esp_idf_sys::esp_fill_random(bytes.as_mut_ptr() as *mut core::ffi::c_void, 4) };
         let random_name = format!("fw-{}", u32::from_le_bytes(bytes));
-        let writer = filesystem
-            .get_file_writer(&random_name, upload_request.file_size, &upload_request.hash)
-            .map_err(|error| FileUploadError::FailedToCreateFile(format!("{}", error)))?;
+        let writer = {
+            let mut filesystem_writer = get_filesystem()?
+                .write()
+                .map_err(|_| FileUploadError::LockFilesystemError)?;
+            filesystem_writer
+                .get_file_writer(&random_name, upload_request.file_size, &upload_request.hash)
+                .map_err(|error| FileUploadError::FailedToCreateFile(format!("{}", error)))?
+        };
 
         Ok(IncompleteFile::new(
             upload_request.hash,
@@ -274,7 +276,7 @@ impl FileUploadService {
         &mut self,
         args: &mut esp32_nimble::OnWriteArgs<'_>,
     ) -> Result<(), FileUploadError> {
-        let mut maybe_current_upload = self.currently_receiving.lock();
+        let maybe_current_upload = &mut self.currently_receiving;
         let received_data = args.recv_data();
 
         if received_data.len() < 3 {
@@ -297,14 +299,14 @@ impl FileUploadService {
             let incomplete_file = maybe_current_upload
                 .take()
                 .ok_or(FileUploadError::NoUploadActive)?;
-            let hash = incomplete_file.hash.clone();
-            let name = incomplete_file.name.clone();
-            let file = incomplete_file.into_file(&get_filesystem().unwrap().read().unwrap())?;
-            self.files.push(File {
-                hash,
-                name: name,
-                content: file,
-            });
+            // let hash = incomplete_file.hash.clone();
+            // let name = incomplete_file.name.clone();
+            let _file = incomplete_file.into_file(&get_filesystem().unwrap().read().unwrap())?;
+            // self.files.push(File {
+            //     hash,
+            //     name: name,
+            //     content: file,
+            // });
         }
         Ok(())
     }
@@ -316,7 +318,6 @@ impl FileUploadService {
         &mut self,
         args: &mut esp32_nimble::OnWriteArgs<'_>,
     ) -> Result<(), FileUploadError> {
-        let mut maybe_current_upload = self.currently_receiving.lock();
         let received_data = args.recv_data();
         let upload_request = UploadRequest::try_ref_from_bytes(received_data)
             .map_err(|error| FileUploadError::MalformedUploadRequest(error.to_string()))?;
@@ -326,7 +327,7 @@ impl FileUploadService {
         ::tracing::info!(target: "file-upload", "Received hash {:?}", upload_request.hash);
 
         let incomplete_file = self.start_upload(upload_request)?;
-        *maybe_current_upload = Some(incomplete_file);
+        self.currently_receiving = Some(incomplete_file);
 
         Ok(())
     }
@@ -355,8 +356,13 @@ impl FileUploadService {
     //     Ok(())
     // }
 
-    pub fn get_file(&self, hash: &[u8; 32]) -> Option<&File> {
-        self.files.iter().find(|file| &file.hash == hash)
+    pub fn get_file(
+        &self,
+        hash: &[u8; 32],
+    ) -> Option<rudelblinken_filesystem::file::File<FlashStorage, { FileState::Weak }>> {
+        let filesystem = get_filesystem().unwrap();
+        let filesystem_reader = filesystem.read().unwrap();
+        filesystem_reader.read_file_by_hash(hash)
     }
 
     /// This will be called on writes to the checksum characteristic
@@ -378,7 +384,6 @@ impl FileUploadService {
             return Err(FileUploadError::ChecksumFileDoesNotExist);
         };
         let new_checksums: Vec<u8> = file
-            .content
             .upgrade()
             .map_err(|error| FileUploadError::FailedToReadChecksums(error))?
             .to_vec();
@@ -396,8 +401,7 @@ impl FileUploadService {
 
     pub fn new(server: &mut BLEServer) -> Arc<Mutex<FileUploadService>> {
         let file_upload_service = Arc::new(Mutex::new(FileUploadService {
-            files: Vec::new(),
-            currently_receiving: Mutex::new(None),
+            currently_receiving: None,
             last_error: None,
         }));
 
@@ -495,11 +499,11 @@ impl FileUploadService {
         current_hash_characteristic.lock().on_read(move |value, _| {
             println!("Read current hash");
             let service = file_upload_service_clone.lock();
-            let current_hash = match service.currently_receiving.lock().as_ref() {
-                Some(currently_receiving) => dbg!(currently_receiving.get_hash().clone()),
-                None => [0u8; 32],
+            let current_hash = match &service.currently_receiving {
+                Some(currently_receiving) => currently_receiving.get_hash(),
+                None => &[0u8; 32],
             };
-            value.set_value(&current_hash);
+            value.set_value(current_hash);
         });
 
         let file_upload_service_clone = file_upload_service.clone();
@@ -508,8 +512,7 @@ impl FileUploadService {
             .on_read(move |value, _| {
                 println!("Reading missing chunks");
                 let service = file_upload_service_clone.lock();
-                let maybe_currently_receiving = service.currently_receiving.lock();
-                let maybe_currently_receiving = maybe_currently_receiving.as_ref();
+                let maybe_currently_receiving = service.currently_receiving.as_ref();
                 let missing_chunks = maybe_currently_receiving
                     .map(|incomplete_file| incomplete_file.get_missing_chunks())
                     .unwrap_or(Default::default());
