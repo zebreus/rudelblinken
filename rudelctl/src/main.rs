@@ -26,16 +26,16 @@
 
 mod bluetooth;
 mod emulator;
-mod update_target;
+mod file_upload_client;
 use bluer::Device;
 use bluetooth::{scan_for, Outcome};
 use clap::{Parser, Subcommand};
 use emulator::{EmulateCommand, Emulator};
+use file_upload_client::{UpdateTarget, UpdateTargetError};
 use futures_time::time::Duration;
 use indicatif::MultiProgress;
 use indicatif_log_bridge::LogWrapper;
 use std::{path::PathBuf, sync::LazyLock, time::Instant, u32};
-use update_target::{UpdateTarget, UpdateTargetError};
 
 /// Rudelblinken cli utility
 #[derive(Parser, Debug)]
