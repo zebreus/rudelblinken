@@ -5,7 +5,7 @@ use bluer::{
     gatt::remote::{Characteristic, CharacteristicWriteRequest},
     Device,
 };
-use futures::{channel::oneshot::Cancellation, lock::Mutex};
+use futures::lock::Mutex;
 use helpers::{
     connect_to_device, find_characteristic, find_service, FindCharacteristicError, FindServiceError,
 };
@@ -224,9 +224,13 @@ impl FileUploadClient {
     }
 
     async fn upload_chunks(&self, chunks: Vec<Vec<u8>>) -> Result<(), UpdateTargetError> {
-        let progress_bar = GLOBAL_LOGGER.add(ProgressBar::new(chunks.len() as u64));
+        // Chunk size without the index
+        let chunk_size = chunks.first().map_or(0, |chunk| chunk.len() - 2);
+        // Total size without the indexes
+        let total_size = chunks.iter().map(|chunk| chunk.len() - 2).sum::<usize>() as u64;
+        let progress_bar = GLOBAL_LOGGER.add(ProgressBar::new(total_size));
         // let progress_bar = ProgressBar::new(chunks.len() as u64);
-        progress_bar.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos:>5}/{len:5} {msg:20}")
+        progress_bar.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg:20}")
           .unwrap()
           .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
           .progress_chars("#>-"));
@@ -346,7 +350,10 @@ impl FileUploadClient {
             log::info!("Transferring {} chunks", number_of_chunks);
             cancel_auto_increment.cancel();
             progress_bar.set_message("active");
-            progress_bar.set_position(*transferred_chunks as u64);
+            progress_bar.set_position(std::cmp::min(
+                total_size,
+                *transferred_chunks as u64 * chunk_size as u64,
+            ));
             progress_bar.enable_steady_tick(Duration::from_millis(100));
             drop(progress_bar);
             log::debug!("Transferring the following chunks: {:?}", missing_chunks);
@@ -361,7 +368,8 @@ impl FileUploadClient {
                     if cloned_token.is_cancelled() {
                         return;
                     }
-                    progress_bar.inc(1);
+                    let previous_value = progress_bar.position();
+                    progress_bar.set_position(previous_value + chunk_size as u64);
                 }
                 cloned_progress_bar.lock().await.set_message("waiting");
             });
