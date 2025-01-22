@@ -527,7 +527,7 @@ impl FileUploadService {
                 upload_status.extend(
                     missing_chunks
                         .into_iter()
-                        .take(25)
+                        .take(100)
                         .flat_map(u16::to_le_bytes),
                 );
 

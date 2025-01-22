@@ -54,6 +54,7 @@ fn setup_ble_server() -> &'static mut BLEServer {
             esp_idf_sys::BLE_GAP_LE_PHY_2M_MASK as u8,
             esp_idf_sys::BLE_GAP_LE_PHY_2M_MASK as u8,
         );
+        esp_idf_sys::ble_att_set_preferred_mtu(esp_idf_sys::BLE_ATT_MTU_MAX as u16);
     }
     ble_device
         .set_preferred_mtu(esp_idf_sys::BLE_ATT_MTU_MAX as u16)
@@ -191,19 +192,19 @@ fn main() {
             .unwrap();
     }
 
-    ble_device.get_server().on_connect(|_server, connection| {
-        let ble_device = &BLE_DEVICE;
-        let ble_advertising = ble_device.get_advertising();
-        ble_advertising.lock().start().unwrap();
-        tracing::info!("Client connected, {:?}", connection);
-    });
-    ble_device.get_server().on_disconnect(|connection, result| {
-        let ble_device = &BLE_DEVICE;
-        let ble_advertising = ble_device.get_advertising();
-        ble_advertising.lock().start().unwrap();
-        tracing::info!("Client disconnected, {:?}", connection);
-        tracing::info!("with result {:?}", result);
-    });
+    // ble_device.get_server().on_connect(|_server, connection| {
+    //     tracing::info!("Client connected, {:?}", connection);
+    //     let ble_device = &BLE_DEVICE;
+    //     let ble_advertising = ble_device.get_advertising();
+    //     ble_advertising.lock().start().unwrap();
+    // });
+    // ble_device.get_server().on_disconnect(|connection, result| {
+    //     tracing::info!("Client disconnected, {:?}", connection);
+    //     tracing::info!("with result {:?}", result);
+    //     let ble_device = &BLE_DEVICE;
+    //     let ble_advertising = ble_device.get_advertising();
+    //     ble_advertising.lock().start().unwrap();
+    // });
 
     let mut ble_scan = BLEScan::new();
     ble_scan.active_scan(false).interval(100).window(99);
