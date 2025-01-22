@@ -123,7 +123,7 @@ impl IncompleteFile {
             return Err(ReceiveChunkError::WrongChecksum);
         }
 
-        let offset = (self.chunk_length * index) as usize;
+        let offset = self.chunk_length as usize * index as usize;
         self.incomplete_file
             .seek(std::io::SeekFrom::Start(offset as u64))
             .unwrap();
