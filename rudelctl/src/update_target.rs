@@ -144,6 +144,15 @@ impl UpdateTarget {
             return Err(UpdateTargetError::MacDoesNotLookLikeAnUpdateTarget);
         }
         log::debug!("Found MAC {}", address);
+        // {
+        //     let device = device.clone();
+        //     tokio::spawn(async move {
+        //         let mut events = device.events().await.unwrap();
+        //         while let Some(ev) = events.next().await {
+        //             log::info!("On device {:?}, received event {:?}", device, ev);
+        //         }
+        //     });
+        // }
 
         Self::connect_to_device(&device).await?;
 
@@ -223,6 +232,7 @@ impl UpdateTarget {
         // -2 for the length
         // -28 was found to be good by empirical methods
         let chunk_size: u16 = (self.data_characteristic.mtu().await? as u16) - 28 - 2;
+        log::debug!("Using a chunk size of {}", chunk_size);
         let chunks: Vec<Vec<u8>> = data
             .chunks(chunk_size as usize)
             .enumerate()

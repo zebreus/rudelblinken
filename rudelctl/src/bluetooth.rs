@@ -107,29 +107,50 @@ use std::future::Future;
 //     descriptor: bluer::Descriptor,
 // }
 
+#[derive(Debug)]
+pub enum Outcome {
+    // Processed device
+    Processed,
+    // Ignored device, but continue scanning
+    Ignored,
+}
+
 pub async fn scan_for<Fut, Err>(
     duration: Duration,
-    // None, if no limit
-    max_devices: Option<u32>,
-    f: &dyn Fn(bluer::Device) -> Fut,
+    // Just give a big number if you dont want a limit
+    max_devices: u32,
+    f: &dyn Fn(bluer::Device, AbortHandle) -> Fut,
 ) -> bluer::Result<()>
 where
     Err: std::fmt::Debug,
-    Fut: Future<Output = Result<(), Err>>,
+    Fut: Future<Output = Result<Outcome, Err>>,
 {
     let session = bluer::Session::new().await?;
+
     let adapter = session.default_adapter().await?;
     adapter.set_powered(true).await?;
+    // TODO: Also set filters here, when I figured out how to do discovery
+    // adapter
+    //     .set_discovery_filter(&bluer::DiscoveryFilter {})
+    //     .await?;
+
+    // {
+    //     // Enable logging of adapter events
+    //     let adapter = adapter.clone();
+    //     tokio::spawn(async move {
+    //         let mut events = adapter.events().await.unwrap();
+    //         while let Some(ev) = events.next().await {
+    //             log::info!("On adapter {:?}, received event {:?}", adapter, ev);
+    //         }
+    //     });
+    // }
 
     {
-        // log::debug!(
-        //     "Discovering on Bluetooth adapter {} with address {}\n",
-        //     adapter.name(),
-        //     adapter.address().await?
-        // );
-        let (abort_handle, abort_registration) = AbortHandle::new_pair();
+        // Starts a discovery session
+        // Monitor would be way more appropriate here, but that requires the user to enable experimental features in their bluetoothd
         let discover = adapter.discover_devices().await?;
         pin_mut!(discover);
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
         let stream = Abortable::new(discover, abort_registration);
         let mut stream = stream.timeout(duration);
         let mut programmed_devices = 0;
@@ -140,23 +161,20 @@ where
             match evt {
                 bluer::AdapterEvent::DeviceAdded(addr) => {
                     let device = adapter.device(addr)?;
-                    // let wrapped_device = Device::Ble { device: device };
-                    // let result = f(wrapped_device).await;
-                    let result = f(device).await;
+                    let result = f(device, abort_handle.clone()).await;
                     if let Err(error) = result {
-                        log::debug!("Failed with {:?}", error);
+                        log::error!("Failed processing device with {:?}", error);
                         continue;
                     }
-                    programmed_devices += 1;
-                    if let Some(max_devices) = max_devices {
+                    if let Ok(Outcome::Processed) = result {
+                        programmed_devices += 1;
                         if programmed_devices >= max_devices {
+                            log::info!("Done after programming {} devices", max_devices);
                             abort_handle.abort();
+                            continue;
                         }
                     }
                 }
-                // AdapterEvent::DeviceRemoved(addr) => {
-                //     // log::debug!("Device removed {addr}");
-                // }
                 _ => (),
             }
         }

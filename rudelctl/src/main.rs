@@ -28,13 +28,13 @@ mod bluetooth;
 mod emulator;
 mod update_target;
 use bluer::Device;
-use bluetooth::scan_for;
+use bluetooth::{scan_for, Outcome};
 use clap::{Parser, Subcommand};
 use emulator::{EmulateCommand, Emulator};
 use futures_time::time::Duration;
 use indicatif::MultiProgress;
 use indicatif_log_bridge::LogWrapper;
-use std::{path::PathBuf, sync::LazyLock, time::Instant};
+use std::{path::PathBuf, sync::LazyLock, time::Instant, u32};
 use update_target::{UpdateTarget, UpdateTargetError};
 
 /// Rudelblinken cli utility
@@ -54,8 +54,8 @@ enum Commands {
         timeout: f32,
 
         /// Maximum number of devices to program
-        #[arg(short, long)]
-        devices: Option<u32>,
+        #[arg(short, long, default_value = "1")]
+        devices: u32,
 
         /// WASM file that will get flashed to the devices
         file: PathBuf,
@@ -67,8 +67,8 @@ enum Commands {
         timeout: f32,
 
         /// Maximum number of devices to program
-        #[arg(short, long)]
-        devices: Option<u32>,
+        #[arg(short, long, default_value = "1")]
+        devices: u32,
 
         /// WASM file that will get flashed to the devices
         file: PathBuf,
@@ -113,8 +113,13 @@ async fn main() -> bluer::Result<()> {
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
-                &async |device: Device| -> Result<(), UpdateTargetError> {
-                    let update_target = UpdateTarget::new_from_peripheral(&device).await?;
+                &async |device: Device, abort| -> Result<Outcome, UpdateTargetError> {
+                    let Ok(update_target) = UpdateTarget::new_from_peripheral(&device).await else {
+                        return Ok(Outcome::Ignored);
+                    };
+                    if devices == 1 {
+                        abort.abort();
+                    }
                     let target_name = device
                         .name()
                         .await
@@ -144,7 +149,7 @@ async fn main() -> bluer::Result<()> {
                         duration.as_millis(),
                         (data.len() as f64 / duration.as_millis() as f64)
                     );
-                    return Ok(());
+                    return Ok(Outcome::Processed);
                 },
             )
             .await
@@ -162,13 +167,15 @@ async fn main() -> bluer::Result<()> {
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
-                &async |device: Device| -> Result<(), UpdateTargetError> {
-                    let update_target = UpdateTarget::new_from_peripheral(&device).await?;
+                &async |device: Device, _| -> Result<Outcome, UpdateTargetError> {
+                    let Ok(update_target) = UpdateTarget::new_from_peripheral(&device).await else {
+                        return Ok(Outcome::Ignored);
+                    };
 
                     let data = &file_content;
 
                     update_target.run_program(&data).await?;
-                    return Ok(());
+                    return Ok(Outcome::Processed);
                 },
             )
             .await
@@ -178,8 +185,8 @@ async fn main() -> bluer::Result<()> {
             println!("name, mac, rssi");
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
-                None,
-                &async |device: Device| -> Result<(), UpdateTargetError> {
+                u32::MAX,
+                &async |device: Device, _| -> Result<Outcome, UpdateTargetError> {
                     let address = device.address();
                     let update_target = UpdateTarget::new_from_peripheral(&device).await?;
                     let rssi = device.rssi().await.ok().flatten();
@@ -187,7 +194,7 @@ async fn main() -> bluer::Result<()> {
                     let name = update_target.get_name().await.unwrap();
                     println!("{}, {}, {}", name, address, rssi.unwrap_or(-200));
                     device.disconnect().await.unwrap();
-                    return Ok(());
+                    return Ok(Outcome::Processed);
                 },
             )
             .await
