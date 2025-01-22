@@ -115,6 +115,13 @@ async fn main() -> bluer::Result<()> {
                 devices,
                 &async |device: Device| -> Result<(), UpdateTargetError> {
                     let update_target = UpdateTarget::new_from_peripheral(&device).await?;
+                    let target_name = device
+                        .name()
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(device.address().to_string());
+                    log::info!("Connected to {}", target_name);
 
                     let data = &file_content;
 
