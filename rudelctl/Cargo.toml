@@ -33,3 +33,4 @@ zerocopy = { version = "0.8.13", features = ["derive"] }
 indicatif = "0.17.9"
 log = "0.4.25"
 indicatif-log-bridge = "0.2.3"
+tokio-util = "0.7.13"

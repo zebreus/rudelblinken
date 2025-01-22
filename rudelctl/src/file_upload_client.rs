@@ -5,14 +5,16 @@ use bluer::{
     gatt::remote::{Characteristic, CharacteristicWriteRequest},
     Device,
 };
+use futures::{channel::oneshot::Cancellation, lock::Mutex};
 use helpers::{
     connect_to_device, find_characteristic, find_service, FindCharacteristicError, FindServiceError,
 };
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use rand::{distributions::Alphanumeric, Rng};
-use std::{fmt::Write, time::Duration};
+use std::{fmt::Write, ops::Div, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::{io::AsyncWriteExt, time::sleep};
+use tokio_util::sync::CancellationToken;
 use upload_request::UploadRequest;
 use zerocopy::IntoBytes;
 mod helpers;
@@ -230,6 +232,7 @@ impl FileUploadClient {
           .progress_chars("#>-"));
         progress_bar.set_message("starting");
         progress_bar.enable_steady_tick(Duration::from_millis(100));
+        let progress_bar_arc = Arc::new(Mutex::new(progress_bar));
 
         // The number of chunks we send between checking for missing chunks
         // The read after the write will wait until this number of chunks is written. If we send too many chunks at once, we get timeouts
@@ -237,11 +240,18 @@ impl FileUploadClient {
         // How many times we will reconnect to the device
         let total_reconnects = 10usize;
         let mut reconnects_left = 10usize;
+        let mut estimated_speed = Duration::from_secs(1);
+        let mut measurement_valid = false;
+        let mut last_transfer_start = std::time::Instant::now();
+        let mut last_transfer_blocks = 3usize;
+        let mut cancel_auto_increment = CancellationToken::new();
         loop {
             // Reading a property will wait until the writes are done
             let upload_status = match self.missing_chunks_characteristic.read().await {
                 Ok(upload_status) => upload_status,
                 Err(error) => {
+                    measurement_valid = false;
+                    let progress_bar = progress_bar_arc.lock().await;
                     progress_bar.set_message("error");
                     // // Does not seem to work
                     // let is_connected = self.device.is_connected().await?;
@@ -268,6 +278,7 @@ impl FileUploadClient {
                             "reconnect {:>2}/{:2}",
                             reconnects_left, total_reconnects
                         ));
+                        drop(progress_bar);
                         let _ = self.device.connect().await;
                         sleep(Duration::from_secs(2)).await;
                         reconnects_left -= 1;
@@ -289,6 +300,7 @@ impl FileUploadClient {
                             return Err(UpdateTargetError::UploadError(error));
                         }
                     }
+                    drop(progress_bar);
 
                     sleep(Duration::from_secs(3)).await;
 
@@ -296,6 +308,11 @@ impl FileUploadClient {
                     continue;
                 }
             };
+            let progress_bar = progress_bar_arc.lock().await;
+            if measurement_valid {
+                let last_transfer_duration = last_transfer_start.elapsed();
+                estimated_speed = last_transfer_duration.div(last_transfer_blocks as u32);
+            }
 
             let upload_status = upload_status
                 .array_chunks::<2>()
@@ -311,24 +328,44 @@ impl FileUploadClient {
 
                 return Err(UpdateTargetError::FailedToParseUploadStatus);
             };
-            log::info!(
-                "Transferring {} chunks",
-                std::cmp::min(missing_chunks.len(), simultaneous_chunks)
-            );
+
+            // The number of chunks that will be uploaded this transfer
+            let number_of_chunks = std::cmp::min(missing_chunks.len(), simultaneous_chunks);
+            log::info!("Transferring {} chunks", number_of_chunks);
+            cancel_auto_increment.cancel();
             progress_bar.set_message("active");
             progress_bar.set_position(*transferred_chunks as u64);
             progress_bar.enable_steady_tick(Duration::from_millis(100));
-
+            drop(progress_bar);
             log::debug!("Transferring the following chunks: {:?}", missing_chunks);
+
+            cancel_auto_increment = CancellationToken::new();
+            let cloned_token = cancel_auto_increment.clone();
+            let cloned_progress_bar = progress_bar_arc.clone();
+            tokio::spawn(async move {
+                for _ in 0..number_of_chunks {
+                    sleep(estimated_speed).await;
+                    let progress_bar = cloned_progress_bar.lock().await;
+                    if cloned_token.is_cancelled() {
+                        return;
+                    }
+                    progress_bar.inc(1);
+                }
+                cloned_progress_bar.lock().await.set_message("waiting");
+            });
+            last_transfer_start = std::time::Instant::now();
+            last_transfer_blocks = number_of_chunks;
+            measurement_valid = true;
 
             // Upload at most 10 chunks at a time, because we may get timeouts otherwise
             let mut write_io = self.data_characteristic.write_io().await?;
-            for chunk_id in missing_chunks.iter().take(simultaneous_chunks) {
+            for chunk_id in missing_chunks.iter().take(number_of_chunks) {
                 write_io.send(&chunks[*chunk_id as usize]).await.unwrap();
             }
             write_io.flush().await.unwrap();
         }
         log::info!("File uploaded successfully.");
+        let progress_bar = progress_bar_arc.lock().await;
         progress_bar.finish_with_message("uploaded");
         GLOBAL_LOGGER.remove(&progress_bar);
 
