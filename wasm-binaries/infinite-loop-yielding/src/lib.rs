@@ -14,7 +14,7 @@ impl Guest for TestGuest {
     fn run() {
         loop {
             log(LogLevel::Info, "Hello, world from WASM!");
-            yield_now();
+            yield_now(0);
         }
     }
 }
