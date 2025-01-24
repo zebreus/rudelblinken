@@ -1,5 +1,6 @@
 #![feature(round_char_boundary)]
 #![feature(once_cell_try)]
+#![feature(never_type)]
 
 use cat_management_service::CatManagementService;
 use esp32_nimble::{
@@ -18,11 +19,11 @@ use rudelblinken_runtime::host::{Advertisement, Event};
 use std::sync::LazyLock;
 use storage::get_filesystem;
 
+pub mod ble_abstraction;
 mod cat_management_service;
 mod config;
 mod file_upload_service;
 mod nrf_logging_service;
-pub mod service_helpers;
 pub mod storage;
 mod wasm_service;
 // mod telid_logging_service;

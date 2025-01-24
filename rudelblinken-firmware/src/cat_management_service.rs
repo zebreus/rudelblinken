@@ -1,7 +1,7 @@
 use crate::config::main_program::{get_main_program, set_main_program};
 use crate::config::{get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
 use crate::{
-    file_upload_service::FileUploadService, service_helpers::DocumentableCharacteristic,
+    ble_abstraction::DocumentableCharacteristic, file_upload_service::FileUploadService,
     storage::FlashStorage, wasm_service::wasm_host::WasmHost,
 };
 use esp32_nimble::{

@@ -1,10 +1,10 @@
 use crate::{
-    service_helpers::DocumentableCharacteristic,
+    ble_abstraction::DocumentableCharacteristic,
     storage::{get_filesystem, CreateStorageError, FlashStorage},
 };
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
-    BLE2904Format, BLEServer, NimbleProperties,
+    BLE2904Format, BLEServer, BLEService, NimbleProperties,
 };
 use esp_idf_sys::{self as _, ble_svc_gatt_changed, BLE_GATT_CHR_UNIT_UNITLESS};
 use itertools::Itertools;
@@ -190,14 +190,7 @@ impl IncompleteFile {
 
 #[derive(Debug)]
 pub struct FileUploadService {
-    // files: Vec<File>,
     currently_receiving: Option<IncompleteFile>,
-
-    // latest_hash: Option<[u8; 32]>,
-    // latest_length: Option<u32>,
-    // latest_chunk_length: Option<u16>,
-    // current_checksums: Option<Vec<u8>>,
-    // current_upload: Option<UploadRequest>,
     last_error: Option<FileUploadError>,
 }
 
@@ -407,17 +400,6 @@ impl FileUploadService {
 
         let service = server.create_service(FILE_UPLOAD_SERVICE_UUID);
 
-        let data_characteristic = service.lock().create_characteristic(
-            FILE_UPLOAD_SERVICE_DATA_UUID,
-            NimbleProperties::WRITE_NO_RSP | NimbleProperties::WRITE,
-        );
-        data_characteristic.document(
-            "Chunk Upload",
-            BLE2904Format::OPAQUE,
-            0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
-        );
-
         // Write a upload request to start a new upload.
         // Read to get the hash of the current upload.
         let upload_request_characteristic = service.lock().create_characteristic(
@@ -464,16 +446,6 @@ impl FileUploadService {
         );
 
         let file_upload_service_clone = file_upload_service.clone();
-        data_characteristic.lock().on_write(move |args| {
-            let mut service = file_upload_service_clone.lock();
-            if let Err(e) = service.data_write(args) {
-                service.log_error(e);
-            }
-            args.reject_with_error_code(0x4f);
-        });
-
-        let file_upload_service_clone = file_upload_service.clone();
-        // let cloned_upload_request_characteristic = upload_request_characteristic.clone();
         upload_request_characteristic.lock().on_write(move |args| {
             println!("Writing upload request");
             let mut service = file_upload_service_clone.lock();
@@ -483,17 +455,6 @@ impl FileUploadService {
             unsafe {
                 ble_svc_gatt_changed(FILE_UPLOAD_SERVICE_DATA, FILE_UPLOAD_SERVICE_DATA);
             };
-            // // Try to break caching
-            // let mut characteristic = cloned_upload_request_characteristic.lock();
-            // characteristic.set_value(
-            //     service
-            //         .currently_receiving
-            //         .lock()
-            //         .as_ref()
-            //         .unwrap()
-            //         .get_hash(),
-            // );
-            // characteristic.notify();
         });
         let file_upload_service_clone = file_upload_service.clone();
         current_hash_characteristic.lock().on_read(move |value, _| {
@@ -534,27 +495,6 @@ impl FileUploadService {
                 value.set_value(&upload_status);
             });
 
-        // let file_upload_service_clone = file_upload_service.clone();
-        // upload_status_characteristic
-        //     .lock()
-        //     .on_read(move |value, _| {
-        //         let service = file_upload_service_clone.lock();
-        //         let missing_chunks = &service
-        //             .currently_receiving
-        //             .lock()
-        //             .as_ref()
-        //             .map(|incomplete_file| incomplete_file.get_missing_chunks())
-        //             .unwrap_or(Default::default());
-        //         let missing_chunks: &[u8] = unsafe {
-        //             let length = std::cmp::min(25, missing_chunks.len());
-        //             std::slice::from_raw_parts(
-        //                 std::mem::transmute::<_, *const u8>(missing_chunks[0..length].as_ptr()),
-        //                 missing_chunks.len() * 2,
-        //             )
-        //         };
-        //         value.set_value(missing_chunks);
-        //     });
-
         let file_upload_service_clone = file_upload_service.clone();
         last_error_characteristic.lock().on_read(move |value, _| {
             let service = file_upload_service_clone.lock();
@@ -566,17 +506,29 @@ impl FileUploadService {
             value.set_value(&(unsafe { *<*const _>::from(last_error).cast::<u8>() }).to_le_bytes());
         });
 
-        // let file_upload_service_clone = file_upload_service.clone();
-        // progress_characteristic.lock().on_read(move |value, _| {
-        //     let service = file_upload_service_clone.lock();
-        //     let maybe_currently_receiving = service.currently_receiving.lock();
-        //     let Some(currently_receiving) = maybe_currently_receiving.as_ref() else {
-        //         value.set_value(&0u16.to_le_bytes());
-        //         return;
-        //     };
-        //     value.set_value(&currently_receiving.count_received_chunks().to_le_bytes());
-        // });
-
         file_upload_service
     }
+}
+
+fn setup_data_characteristic(
+    upload_service: Arc<Mutex<FileUploadService>>,
+    ble_service: &mut BLEService,
+) {
+    let data_characteristic = ble_service.create_characteristic(
+        FILE_UPLOAD_SERVICE_DATA_UUID,
+        NimbleProperties::WRITE_NO_RSP | NimbleProperties::WRITE,
+    );
+    data_characteristic.document(
+        "Chunk Upload",
+        BLE2904Format::OPAQUE,
+        0,
+        BLE_GATT_CHR_UNIT_UNITLESS,
+    );
+
+    data_characteristic.lock().on_write(move |args| {
+        let mut service = upload_service.lock();
+        if let Err(e) = service.data_write(args) {
+            service.log_error(e);
+        }
+    });
 }

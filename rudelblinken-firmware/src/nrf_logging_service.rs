@@ -1,4 +1,4 @@
-use crate::service_helpers::DocumentableCharacteristic;
+use crate::ble_abstraction::DocumentableCharacteristic;
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
     uuid128, BLE2904Format, BLEServer, NimbleProperties,
