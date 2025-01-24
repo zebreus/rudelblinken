@@ -96,9 +96,6 @@ impl IncompleteFile {
             .map(|(index, _)| index as u16)
             .collect_vec()
     }
-    pub fn chunk_count(&self) -> u16 {
-        self.received_chunks.len() as u16
-    }
     /// Check if the file is complete
     pub fn is_complete(&self) -> bool {
         self.received_chunks.iter().all(|received| *received)
@@ -139,5 +136,11 @@ impl IncompleteFile {
 
     pub fn get_hash(&self) -> &[u8; 32] {
         &self.hash
+    }
+
+    pub fn get_status(&self) -> (u16, Vec<u16>) {
+        let missing_chunks = self.get_missing_chunks();
+        let progress = self.received_chunks.len() as u16 - missing_chunks.len() as u16;
+        (progress, missing_chunks)
     }
 }

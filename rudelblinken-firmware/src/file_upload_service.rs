@@ -3,7 +3,6 @@ use incomplete_file::{IncompleteFile, ReceiveChunkError, VerifyFileError};
 use rudelblinken_filesystem::file::{FileState, UpgradeFileError};
 use thiserror::Error;
 use upload_request::UploadRequest;
-use zerocopy::TryFromBytes;
 mod incomplete_file;
 mod low_level;
 mod upload_request;
@@ -43,10 +42,10 @@ pub enum FileUploadError {
 
 impl FileUploadService {
     /// Start an upload with the last received settings. Cancels a currently ongoing upload
-    fn start_upload(
-        &self,
-        upload_request: &UploadRequest,
-    ) -> Result<IncompleteFile, FileUploadError> {
+    fn start_upload(&mut self, upload_request: &UploadRequest) -> Result<(), FileUploadError> {
+        ::tracing::info!(target: "file-upload", "Received request {:?}", upload_request);
+        ::tracing::info!(target: "file-upload", "Received hash {:?}", upload_request.hash);
+
         let checksums =
             self.load_checksums(&upload_request.checksums, &upload_request.chunk_count())?;
 
@@ -62,39 +61,36 @@ impl FileUploadService {
                 .map_err(|error| FileUploadError::FailedToCreateFile(format!("{}", error)))?
         };
 
-        Ok(IncompleteFile::new(
+        let file = IncompleteFile::new(
             upload_request.hash,
             checksums.clone(),
             upload_request.chunk_size,
             upload_request.file_size,
             writer,
             random_name,
-        ))
+        );
+        self.currently_receiving = Some(file);
+        Ok(())
     }
 
+    /// Called when an error occurs
     fn log_error(&mut self, error: FileUploadError) {
         ::tracing::error!(target: "file-upload", "{}", error);
         self.last_error = Some(error);
     }
 
-    /// This will be called on writes to the data characteristic
-    ///
-    /// We use this wrapper to make error handling easier
-    fn data_write(
-        &mut self,
-        args: &mut esp32_nimble::OnWriteArgs<'_>,
-    ) -> Result<(), FileUploadError> {
+    /// Called when a new chunk is received
+    fn data_write(&mut self, chunk: &[u8]) -> Result<(), FileUploadError> {
         let maybe_current_upload = &mut self.currently_receiving;
-        let received_data = args.recv_data();
 
-        if received_data.len() < 3 {
-            ::tracing::warn!(target: "file-upload", "data length is too short {}", received_data.len());
+        if chunk.len() < 3 {
+            ::tracing::warn!(target: "file-upload", "data length is too short {}", chunk.len());
 
             return Err(FileUploadError::ReceivedChunkWayTooShort);
         }
 
-        let index = u16::from_le_bytes([received_data[0], received_data[1]]);
-        let data = &received_data[2..];
+        let index = u16::from_le_bytes([chunk[0], chunk[1]]);
+        let data = &chunk[2..];
 
         ::tracing::info!(target: "file-upload", "Received chunk #{}", index);
 
@@ -112,39 +108,20 @@ impl FileUploadService {
         Ok(())
     }
 
-    /// This will be called on writes to the hash characteristic
-    ///
-    /// We use this wrapper to make error handling easier
-    fn request_upload(
-        &mut self,
-        args: &mut esp32_nimble::OnWriteArgs<'_>,
-    ) -> Result<(), FileUploadError> {
-        let received_data = args.recv_data();
-        let upload_request = UploadRequest::try_ref_from_bytes(received_data)
-            .map_err(|error| FileUploadError::MalformedUploadRequest(error.to_string()))?;
-
-        ::tracing::info!(target: "file-upload", "Received request {:?}", upload_request);
-
-        ::tracing::info!(target: "file-upload", "Received hash {:?}", upload_request.hash);
-
-        let incomplete_file = self.start_upload(upload_request)?;
-        self.currently_receiving = Some(incomplete_file);
-
-        Ok(())
-    }
-
+    /// Read a file from the filesystem
     pub fn get_file(
         &self,
         hash: &[u8; 32],
     ) -> Option<rudelblinken_filesystem::file::File<FlashStorage, { FileState::Weak }>> {
         let filesystem = get_filesystem().unwrap();
-        let filesystem_reader = filesystem.read().unwrap();
+        let filesystem_reader: std::sync::RwLockReadGuard<
+            '_,
+            rudelblinken_filesystem::Filesystem<FlashStorage>,
+        > = filesystem.read().unwrap();
         filesystem_reader.read_file_by_hash(hash)
     }
 
-    /// This will be called on writes to the checksum characteristic
-    ///
-    /// We use this wrapper to make error handling easier
+    /// Load
     fn load_checksums(
         &self,
         checksums: &[u8; 32],
@@ -174,5 +151,19 @@ impl FileUploadService {
         ::tracing::info!(target: "file-upload", "Successfully loaded {} checksums from file", new_checksums.len());
 
         return Ok(new_checksums);
+    }
+
+    /// Get the hash of the currently uploaded file.
+    fn current_hash(&self) -> Option<&[u8; 32]> {
+        self.currently_receiving
+            .as_ref()
+            .map(|incomplete_file| incomplete_file.get_hash())
+    }
+
+    /// Get the status of the currently uploaded file.
+    fn get_status(&self) -> Option<(u16, Vec<u16>)> {
+        self.currently_receiving
+            .as_ref()
+            .map(|incomplete_file| incomplete_file.get_status())
     }
 }

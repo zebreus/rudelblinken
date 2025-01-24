@@ -1,10 +1,14 @@
-use crate::service_helpers::DocumentableCharacteristic;
+use crate::{
+    file_upload_service::{upload_request::UploadRequest, FileUploadError},
+    service_helpers::DocumentableCharacteristic,
+};
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
     BLE2904Format, BLEServer, BLEService, NimbleProperties,
 };
 use esp_idf_sys::{ble_svc_gatt_changed, BLE_GATT_CHR_UNIT_UNITLESS};
 use std::sync::Arc;
+use zerocopy::TryFromBytes;
 
 use super::FileUploadService;
 
@@ -53,7 +57,8 @@ fn setup_data_characteristic(
     let file_upload_service_clone = file_upload_service.clone();
     data_characteristic.lock().on_write(move |args| {
         let mut service = file_upload_service_clone.lock();
-        if let Err(e) = service.data_write(args) {
+        let chunk = args.recv_data();
+        if let Err(e) = service.data_write(chunk) {
             service.log_error(e);
         }
     });
@@ -80,7 +85,16 @@ fn setup_upload_request_characteristic(
     upload_request_characteristic.lock().on_write(move |args| {
         println!("Writing upload request");
         let mut service = file_upload_service_clone.lock();
-        if let Err(e) = service.request_upload(args) {
+        let received_data = args.recv_data();
+        let upload_request = match UploadRequest::try_ref_from_bytes(received_data) {
+            Ok(upload_request) => upload_request,
+            Err(e) => {
+                service.log_error(FileUploadError::MalformedUploadRequest(e.to_string()));
+                return;
+            }
+        };
+
+        if let Err(e) = service.start_upload(upload_request) {
             service.log_error(e);
         }
         unsafe {
@@ -108,8 +122,8 @@ fn setup_current_hash_characteristic(
     current_hash_characteristic.lock().on_read(move |value, _| {
         println!("Read current hash");
         let service = file_upload_service_clone.lock();
-        let current_hash = match &service.currently_receiving {
-            Some(currently_receiving) => currently_receiving.get_hash(),
+        let current_hash = match service.current_hash() {
+            Some(current_hash) => current_hash,
             None => &[0u8; 32],
         };
         value.set_value(current_hash);
@@ -137,15 +151,7 @@ fn setup_upload_status_characteristic(
         .on_read(move |value, _| {
             println!("Reading missing chunks");
             let service = file_upload_service_clone.lock();
-            let maybe_currently_receiving = service.currently_receiving.as_ref();
-            let missing_chunks = maybe_currently_receiving
-                .map(|incomplete_file| incomplete_file.get_missing_chunks())
-                .unwrap_or(Default::default());
-
-            let chunk_count = maybe_currently_receiving
-                .map(|incomplete_file| incomplete_file.chunk_count())
-                .unwrap_or(0);
-            let progress = chunk_count - missing_chunks.len() as u16;
+            let (progress, missing_chunks) = service.get_status().unwrap_or((0, Vec::new()));
 
             let mut upload_status: Vec<u8> = Vec::new();
             upload_status.extend_from_slice(&progress.to_le_bytes());
@@ -160,6 +166,7 @@ fn setup_upload_status_characteristic(
         });
 }
 
+// TODO: Refactor and actually use last error
 fn setup_last_error_characteristic(
     service: &Arc<Mutex<BLEService>>,
     file_upload_service: &Arc<Mutex<FileUploadService>>,
