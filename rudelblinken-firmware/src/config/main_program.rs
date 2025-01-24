@@ -5,7 +5,7 @@ use super::CONFIG_NVS;
 static MAIN_PROGRAM_HASH: LazyLock<RwLock<Option<[u8; 32]>>> = LazyLock::new(|| {
     let nvs = CONFIG_NVS.read().unwrap();
 
-    let mut buffer = [0u8; 16];
+    let mut buffer = [0u8; 32];
     if let Ok(Some(hash)) = nvs.get_blob("main_program", &mut buffer) {
         if let Result::<&[u8; 32], _>::Ok(hash) = hash.try_into() {
             return RwLock::new(Some(hash.clone()));

@@ -11,6 +11,7 @@ use esp32_nimble::{
 use esp_idf_sys::{self as _, BLE_GATT_CHR_UNIT_UNITLESS};
 use rudelblinken_filesystem::file::{File, FileState};
 use rudelblinken_runtime::host::LedColor;
+use std::thread::spawn;
 use std::{
     sync::{mpsc, Arc},
     time::Duration,
@@ -238,7 +239,37 @@ impl CatManagementService {
             });
         cat_management_service.lock().on_boot();
 
+        let cat_management_service_clone = cat_management_service.clone();
+        spawn(|| {
+            std::thread::sleep(Duration::from_secs(5));
+            CatManagementService::launch_main_program(cat_management_service_clone);
+        });
+
         cat_management_service
+    }
+
+    fn launch_main_program(cat_management_service: Arc<Mutex<CatManagementService>>) {
+        // Launch main program if it is set
+        let main_program = get_main_program();
+        if let Some(main_program) = main_program {
+            let cat_management_service = cat_management_service.lock();
+            let file_upload_service = cat_management_service.file_upload_service.lock();
+            let Some(file) = file_upload_service.get_file(&main_program) else {
+                tracing::warn!("failed");
+                return;
+            };
+            let Ok(content) = file.upgrade() else {
+                tracing::warn!("failed to get initial wasm module");
+                return;
+            };
+
+            let Ok(_) = cat_management_service.wasm_runner.send(content) else {
+                tracing::warn!("failed to send initial wasm module to runner");
+                return;
+            };
+
+            tracing::debug!("Launched main program");
+        }
     }
 
     fn on_boot(&mut self) {
