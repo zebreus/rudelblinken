@@ -44,15 +44,6 @@ const FILE_UPLOAD_SERVICE_LAST_ERROR_UUID: BleUuid =
 const FILE_UPLOAD_SERVICE_CURRENT_HASH_UUID: BleUuid =
     BleUuid::from_uuid16(FILE_UPLOAD_SERVICE_CURRENT_HASH);
 
-// #[derive(Clone, Debug)]
-// pub struct File {
-//     hash: [u8; 32],
-//     // TODO: Fix the filename story
-//     #[allow(dead_code)]
-//     name: String,
-//     pub content: FileContent<FlashStorage, { FileState::Weak }>,
-// }
-
 #[derive(Debug)]
 struct IncompleteFile {
     incomplete_file: FileContent<FlashStorage, { FileState::Writer }>,
@@ -190,14 +181,7 @@ impl IncompleteFile {
 
 #[derive(Debug)]
 pub struct FileUploadService {
-    // files: Vec<File>,
     currently_receiving: Option<IncompleteFile>,
-
-    // latest_hash: Option<[u8; 32]>,
-    // latest_length: Option<u32>,
-    // latest_chunk_length: Option<u16>,
-    // current_checksums: Option<Vec<u8>>,
-    // current_upload: Option<UploadRequest>,
     last_error: Option<FileUploadError>,
 }
 
@@ -299,14 +283,7 @@ impl FileUploadService {
             let incomplete_file = maybe_current_upload
                 .take()
                 .ok_or(FileUploadError::NoUploadActive)?;
-            // let hash = incomplete_file.hash.clone();
-            // let name = incomplete_file.name.clone();
-            let _file = incomplete_file.into_file(&get_filesystem().unwrap().read().unwrap())?;
-            // self.files.push(File {
-            //     hash,
-            //     name: name,
-            //     content: file,
-            // });
+            incomplete_file.into_file(&get_filesystem().unwrap().read().unwrap())?;
         }
         Ok(())
     }
@@ -331,30 +308,6 @@ impl FileUploadService {
 
         Ok(())
     }
-
-    // /// This will be called on writes to the hash characteristic
-    // ///
-    // /// We use this wrapper to make error handling easier
-    // fn hash_write(
-    //     &mut self,
-    //     args: &mut esp32_nimble::OnWriteArgs<'_>,
-    // ) -> Result<(), FileUploadError> {
-    //     let received_data = args.recv_data();
-    //     if received_data.len() != 32 {
-    //         ::tracing::info!(target: "file-upload", "hash length is too short {}", received_data.len());
-
-    //         return Err(FileUploadError::ReceivedChunkWayTooShort);
-    //     }
-
-    //     let new_hash: [u8; 32] = received_data.try_into().unwrap();
-    //     ::tracing::info!(target: "file-upload", "Received hash {:?}", new_hash);
-    //     if self.latest_hash.as_ref() == Some(&new_hash) {
-    //         return Ok(());
-    //     }
-    //     self.latest_hash = Some(new_hash);
-    //     self.currently_receiving = None;
-    //     Ok(())
-    // }
 
     pub fn get_file(
         &self,
@@ -473,7 +426,6 @@ impl FileUploadService {
         });
 
         let file_upload_service_clone = file_upload_service.clone();
-        // let cloned_upload_request_characteristic = upload_request_characteristic.clone();
         upload_request_characteristic.lock().on_write(move |args| {
             println!("Writing upload request");
             let mut service = file_upload_service_clone.lock();
@@ -483,17 +435,6 @@ impl FileUploadService {
             unsafe {
                 ble_svc_gatt_changed(FILE_UPLOAD_SERVICE_DATA, FILE_UPLOAD_SERVICE_DATA);
             };
-            // // Try to break caching
-            // let mut characteristic = cloned_upload_request_characteristic.lock();
-            // characteristic.set_value(
-            //     service
-            //         .currently_receiving
-            //         .lock()
-            //         .as_ref()
-            //         .unwrap()
-            //         .get_hash(),
-            // );
-            // characteristic.notify();
         });
         let file_upload_service_clone = file_upload_service.clone();
         current_hash_characteristic.lock().on_read(move |value, _| {
@@ -534,27 +475,6 @@ impl FileUploadService {
                 value.set_value(&upload_status);
             });
 
-        // let file_upload_service_clone = file_upload_service.clone();
-        // upload_status_characteristic
-        //     .lock()
-        //     .on_read(move |value, _| {
-        //         let service = file_upload_service_clone.lock();
-        //         let missing_chunks = &service
-        //             .currently_receiving
-        //             .lock()
-        //             .as_ref()
-        //             .map(|incomplete_file| incomplete_file.get_missing_chunks())
-        //             .unwrap_or(Default::default());
-        //         let missing_chunks: &[u8] = unsafe {
-        //             let length = std::cmp::min(25, missing_chunks.len());
-        //             std::slice::from_raw_parts(
-        //                 std::mem::transmute::<_, *const u8>(missing_chunks[0..length].as_ptr()),
-        //                 missing_chunks.len() * 2,
-        //             )
-        //         };
-        //         value.set_value(missing_chunks);
-        //     });
-
         let file_upload_service_clone = file_upload_service.clone();
         last_error_characteristic.lock().on_read(move |value, _| {
             let service = file_upload_service_clone.lock();
@@ -565,17 +485,6 @@ impl FileUploadService {
 
             value.set_value(&(unsafe { *<*const _>::from(last_error).cast::<u8>() }).to_le_bytes());
         });
-
-        // let file_upload_service_clone = file_upload_service.clone();
-        // progress_characteristic.lock().on_read(move |value, _| {
-        //     let service = file_upload_service_clone.lock();
-        //     let maybe_currently_receiving = service.currently_receiving.lock();
-        //     let Some(currently_receiving) = maybe_currently_receiving.as_ref() else {
-        //         value.set_value(&0u16.to_le_bytes());
-        //         return;
-        //     };
-        //     value.set_value(&currently_receiving.count_received_chunks().to_le_bytes());
-        // });
 
         file_upload_service
     }
