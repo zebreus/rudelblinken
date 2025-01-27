@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "hello-world",
+    "hello-world", "printing-beta", "printing-alpha",
     "infinite-loop",
     "infinite-loop-yielding",
     "test-logging",

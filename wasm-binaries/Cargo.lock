@@ -160,6 +160,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "printing-alpha"
+version = "0.1.0"
+dependencies = [
+ "rudelblinken-sdk",
+ "spin",
+ "talc",
+]
+
+[[package]]
+name = "printing-beta"
+version = "0.1.0"
+dependencies = [
+ "rudelblinken-sdk",
+ "spin",
+ "talc",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
