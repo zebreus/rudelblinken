@@ -1,3 +1,4 @@
+//! The cat management service is reponsible for managing the currently running program and its environment
 use crate::config::main_program::{get_main_program, set_main_program};
 use crate::config::{get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
 use crate::{
@@ -17,6 +18,9 @@ use std::{
     time::Duration,
 };
 use tracing::{error, info};
+
+/// The delay after booting, until the main program is launched
+const MAIN_PROGRAM_DELAY: Duration = Duration::from_secs(3);
 
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
@@ -237,55 +241,47 @@ impl CatManagementService {
             .on_write(move |args| {
                 set_config::<WasmGuestConfig>(args.recv_data().to_vec());
             });
-        cat_management_service.lock().on_boot();
 
-        let cat_management_service_clone = cat_management_service.clone();
-        spawn(|| {
-            std::thread::sleep(Duration::from_secs(5));
-            CatManagementService::launch_main_program(cat_management_service_clone);
-        });
+        Self::on_boot(&cat_management_service);
 
         cat_management_service
     }
 
+    /// Try to load and launch the main program
     fn launch_main_program(cat_management_service: Arc<Mutex<CatManagementService>>) {
         // Launch main program if it is set
         let main_program = get_main_program();
-        if let Some(main_program) = main_program {
-            let cat_management_service = cat_management_service.lock();
-            let file_upload_service = cat_management_service.file_upload_service.lock();
-            let Some(file) = file_upload_service.get_file(&main_program) else {
-                tracing::warn!("failed");
-                return;
-            };
-            let Ok(content) = file.upgrade() else {
-                tracing::warn!("failed to get initial wasm module");
-                return;
-            };
 
-            let Ok(_) = cat_management_service.wasm_runner.send(content) else {
-                tracing::warn!("failed to send initial wasm module to runner");
-                return;
-            };
-
-            tracing::debug!("Launched main program");
-        }
-    }
-
-    fn on_boot(&mut self) {
-        let Some(hash) = get_main_program() else {
+        let Some(main_program) = main_program else {
+            tracing::warn!("No main program set.");
             return;
         };
-        let file_upload_service = self.file_upload_service.lock();
-        let Some(file) = file_upload_service.get_file(&hash) else {
+        let cat_management_service = cat_management_service.lock();
+        let file_upload_service = cat_management_service.file_upload_service.lock();
+        let Some(file) = file_upload_service.get_file(&main_program) else {
+            tracing::warn!("Failed");
             return;
         };
         let Ok(content) = file.upgrade() else {
+            tracing::warn!("Failed to get initial wasm module");
             return;
         };
-        self.wasm_runner
-            .send(content)
-            .expect("failed to send initial wasm module to runner");
+
+        let Ok(_) = cat_management_service.wasm_runner.send(content) else {
+            tracing::warn!("Failed to send initial wasm module to runner");
+            return;
+        };
+
+        tracing::debug!("Launched main program");
+    }
+
+    // Do various tasks that need to be done on boot
+    fn on_boot(cat_management_service: &Arc<Mutex<CatManagementService>>) {
+        let cat_management_service_clone = cat_management_service.clone();
+        spawn(|| {
+            std::thread::sleep(MAIN_PROGRAM_DELAY);
+            CatManagementService::launch_main_program(cat_management_service_clone);
+        });
     }
 }
 
