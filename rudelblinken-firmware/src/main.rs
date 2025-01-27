@@ -5,17 +5,13 @@ use cat_management_service::CatManagementService;
 use esp32_nimble::{
     enums::{ConnMode, DiscMode, PowerLevel, PowerType},
     utilities::mutex::Mutex,
-    BLEAdvertisementData, BLEDevice, BLEScan, BLEServer,
+    BLEAdvertisementData, BLEDevice, BLEServer,
 };
-use esp_idf_hal::{
-    gpio::{self, PinDriver},
-    task,
-};
+use esp_idf_hal::gpio::{self, PinDriver};
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
 use nrf_logging_service::SerialLoggingService;
-use rudelblinken_runtime::host::{Advertisement, Event};
-use std::sync::LazyLock;
+use std::{sync::LazyLock, time::Duration};
 use storage::get_filesystem;
 
 mod cat_management_service;
@@ -47,7 +43,6 @@ fn fix_mac_address() {
 
 fn setup_ble_server() -> &'static mut BLEServer {
     let ble_device = BLEDevice::take();
-    BLEDevice::take();
     // Set PHY to 2M for all connections
     unsafe {
         esp_idf_sys::ble_gap_set_prefered_default_le_phy(
@@ -151,11 +146,9 @@ fn main() {
 
     fix_mac_address();
 
-    setup_ble_server();
+    let server = setup_ble_server();
 
-    let ble_device = &BLE_DEVICE;
-
-    let _serial_logging_service = SerialLoggingService::new(ble_device.get_server());
+    let _serial_logging_service = SerialLoggingService::new(server);
 
     get_filesystem().unwrap();
     print_memory_info();
@@ -163,33 +156,31 @@ fn main() {
     let _led_pin =
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
 
-    let file_upload_service = FileUploadService::new(ble_device.get_server());
+    let _file_upload_service = FileUploadService::new(server);
     LazyLock::force(&LED_PIN);
-    let (sender, _receiver, host) = wasm_service::wasm_host::WasmHost::new();
-    let _cat_management_service =
-        CatManagementService::new(&ble_device, file_upload_service.clone(), host);
 
+    let _cat_management_service = CatManagementService::new(server);
+
+    // Starting advertising also starts the ble server. We cant add or change the services/attributes after the ble server started.
     {
-        let ble_advertising = ble_device.get_advertising();
-        ble_advertising
-            .lock()
-            .set_data(
-                BLEAdvertisementData::new()
-                    .name("Rudelblinken")
-                    .add_service_uuid(FileUploadService::uuid())
-                    .manufacturer_data(&[0, 0]),
-            )
-            .unwrap();
-        // Configure Advertiser with Specified Data
+        let ble_advertising = BLE_DEVICE.get_advertising();
+        let mut data = BLEAdvertisementData::new();
+        data.name("Rudelblinken")
+            .add_service_uuid(FileUploadService::uuid())
+            .manufacturer_data(&[0, 0]);
+        ble_advertising.lock().set_data(&mut data).unwrap();
         ble_advertising
             .lock()
             .advertisement_type(ConnMode::Und)
             .disc_mode(DiscMode::Gen)
-            .scan_response(true)
+            .scan_response(false)
             .min_interval(100)
-            .max_interval(250)
-            .start()
-            .unwrap();
+            .max_interval(250);
+        ble_advertising.lock().start().unwrap();
+    }
+
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
     }
 
     // ble_device.get_server().on_connect(|_server, connection| {
@@ -205,37 +196,4 @@ fn main() {
     //     let ble_advertising = ble_device.get_advertising();
     //     ble_advertising.lock().start().unwrap();
     // });
-
-    let mut ble_scan = BLEScan::new();
-    ble_scan.active_scan(false).interval(100).window(99);
-
-    loop {
-        tracing::info!("Scanning for BLE devices");
-        task::block_on(async {
-            ble_scan
-                .start(&ble_device, 1000, |dev, data| {
-                    if let Some(md) = data.manufacture_data() {
-                        let now = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
-
-                        let mut padded_mac = [0u8; 8];
-                        padded_mac[0..6].copy_from_slice(&dev.addr().as_le_bytes());
-                        let mut data = [0u8; 32];
-                        let data_length = std::cmp::min(md.payload.len(), 32);
-                        data[..data_length].copy_from_slice(&md.payload[..data_length]);
-                        sender
-                            .send(Event::AdvertisementReceived(Advertisement {
-                                company: md.company_identifier,
-                                address: padded_mac,
-                                data,
-                                data_length: data_length as u8,
-                                received_at: now,
-                            }))
-                            .unwrap();
-                    }
-                    None::<()>
-                })
-                .await
-                .expect("scan failed");
-        });
-    }
 }

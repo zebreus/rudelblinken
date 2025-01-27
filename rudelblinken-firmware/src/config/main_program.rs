@@ -19,7 +19,7 @@ pub fn get_main_program() -> Option<[u8; 32]> {
     return MAIN_PROGRAM_HASH.read().unwrap().clone();
 }
 
-pub fn set_main_program(new_hash: &Option<[u8; 32]>) {
+pub fn set_main_program(new_hash: Option<&[u8; 32]>) {
     let mut nvs = CONFIG_NVS.write().unwrap();
 
     match new_hash {
@@ -29,5 +29,6 @@ pub fn set_main_program(new_hash: &Option<[u8; 32]>) {
         }
     }
     let mut hash = MAIN_PROGRAM_HASH.write().unwrap();
-    *hash = *new_hash;
+    *hash = new_hash.cloned();
+    // *hash = new_hash.as_ref();
 }

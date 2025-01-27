@@ -1,63 +1,18 @@
 //! The cat management service is reponsible for managing the currently running program and its environment
-//!
-//! ## Logic for managing the program
-//! ```
-//! // TODO: Actually implement this
-//! ```
-//!
-//! Main program: The program that was last set via the program hash characteristic
-//!
-//! Default program: A wasm binary which provides default blinking behaviour and thats included in the firmware
-//!
-//! Program failure counter: Counts the number of failures of the main program since the last success
-//!
-//! Failure flag: A flag that gets set when a program is launched and reset if the program didn't crash in [PROGRAM_SUCCESS_DURATION]
-//!
-//! ### MVP
-//!
-//! - If the program ran for for [PROGRAM_SUCCESS_DURATION] -> Unset the failure flag
-//! - If a program is already running -> Stop here
-//! - If the failure flag is set and there -> Incremet the program failure counter. Unset the failure flag.
-//! - If the program failure counter exceeds [MAX_CONSECUTIVE_FAILURES] -> Unset the main program file
-//! - If there is no main program file set -> Run the default program
-//! - If there is an error finding the main program file -> Unset the main program file
-//! - If the program file was found and opened -> Set the failure flag
-//! - If there is an error starting the main program file -> Nothing
-//! - If the program crashed or exited -> Nothing
-//! - If a new main program is received -> Stop the current program, reset the failure counter, reset failure flag
-//!
-//! ### Future
-//!
-//! - Temporary programs
-//! - A secure way to update the default program
-//!
-use crate::config::main_program::{get_main_program, set_main_program};
+use crate::config::main_program::get_main_program;
 use crate::config::{get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
-use crate::{
-    file_upload_service::FileUploadService, service_helpers::DocumentableCharacteristic,
-    storage::FlashStorage, wasm_service::wasm_host::WasmHost,
-};
+use crate::service_helpers::DocumentableCharacteristic;
+use esp32_nimble::BLEServer;
 use esp32_nimble::{
     utilities::{mutex::Mutex, BleUuid},
-    BLEDevice, NimbleProperties,
+    NimbleProperties,
 };
 use esp_idf_sys::{self as _, BLE_GATT_CHR_UNIT_UNITLESS};
-use rudelblinken_filesystem::file::{File, FileState};
+use main_program::WasmRunner;
 use rudelblinken_runtime::host::LedColor;
-use std::thread::spawn;
-use std::{
-    sync::{mpsc, Arc},
-    time::Duration,
-};
-use tracing::{error, info};
-
-/// The delay after booting, until the main program is launched
-const MAIN_PROGRAM_DELAY: Duration = Duration::from_secs(3);
-
-/// The duration a program needs to run for to be marked as not crashed
-const PROGRAM_SUCCESS_DURATION: Duration = Duration::from_secs(30);
-/// The max number of consecutive crashed a program is allowed to have before its deleted
-const MAX_CONSECUTIVE_FAILURES: usize = 5;
+use std::sync::Arc;
+use tracing::error;
+mod main_program;
 
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
@@ -75,93 +30,18 @@ const CAT_MANAGEMENT_SERVICE_WASM_GUEST_CONFIG_UUID: BleUuid =
     BleUuid::from_uuid16(CAT_MANAGEMENT_SERVICE_WASM_GUEST_CONFIG);
 
 pub struct CatManagementService {
-    pub wasm_runner: mpsc::Sender<File<FlashStorage, { FileState::Reader }>>,
-    file_upload_service: Arc<Mutex<FileUploadService>>,
-}
-
-fn log_heap_stats() {
-    info!(
-        free_heap = unsafe { esp_idf_sys::esp_get_free_heap_size() },
-        largest_block = unsafe {
-            esp_idf_sys::heap_caps_get_largest_free_block(
-                esp_idf_sys::MALLOC_CAP_DMA
-                    | esp_idf_sys::MALLOC_CAP_32BIT
-                    | esp_idf_sys::MALLOC_CAP_DEFAULT,
-            )
-        },
-        "heap stats",
-    )
-}
-
-fn wasm_runner(
-    host: WasmHost,
-    receiver: mpsc::Receiver<File<FlashStorage, { FileState::Reader }>>,
-) {
-    loop {
-        std::thread::sleep(Duration::from_millis(200));
-
-        // Drain the event queue
-        while host.host_events.lock().try_recv().is_ok() {}
-
-        let Ok(file) = receiver.try_recv() else {
-            continue;
-        };
-
-        info!("before creating and linking instance");
-        log_heap_stats();
-
-        let mut instance = match rudelblinken_runtime::linker::setup(&file, host.clone()) {
-            Ok(instance) => instance,
-            Err(error) => {
-                error!("Linker Error:\n {}", error);
-                continue;
-            }
-        };
-
-        info!("after creating and linking instance");
-        log_heap_stats();
-
-        let result = instance.run();
-        match result {
-            Ok(_) => info!("Wasm module finished execution"),
-            Err(err) => {
-                error!("Wasm module failed to execute:\n{}", err);
-            }
-        }
-    }
+    pub wasm_runner: WasmRunner,
 }
 
 impl CatManagementService {
-    pub fn new(
-        ble_device: &'static BLEDevice,
-        files: Arc<Mutex<FileUploadService>>,
-        host: WasmHost,
-    ) -> Arc<Mutex<CatManagementService>> {
-        let wasm_send = {
-            let (send, recv) = mpsc::channel::<File<FlashStorage, { FileState::Reader }>>();
-
-            // let files = files.clone();
-            // let name = name.clone();
-
-            std::thread::Builder::new()
-                .name("wasm-runner".to_owned())
-                .stack_size(0x2000)
-                .spawn(move || {
-                    wasm_runner(host, recv);
-                })
-                .expect("failed to spawn wasm runner thread");
-
-            send
-        };
+    pub fn new(server: &mut BLEServer) -> Arc<Mutex<CatManagementService>> {
+        let wasm_runner = WasmRunner::new();
 
         let cat_management_service = Arc::new(Mutex::new(CatManagementService {
-            wasm_runner: wasm_send,
-            file_upload_service: files,
+            wasm_runner: wasm_runner,
         }));
 
-        let service = ble_device
-            .get_server()
-            .create_service(CAT_MANAGEMENT_SERVICE_UUID);
+        let service = server.create_service(CAT_MANAGEMENT_SERVICE_UUID);
 
         let program_hash_characteristic = service.lock().create_characteristic(
             CAT_MANAGEMENT_SERVICE_PROGRAM_HASH_UUID,
@@ -211,23 +91,13 @@ impl CatManagementService {
         });
         let cat_management_service_clone = cat_management_service.clone();
         program_hash_characteristic.lock().on_write(move |args| {
-            let service = cat_management_service_clone.lock();
+            let mut service = cat_management_service_clone.lock();
             let Ok(hash): Result<[u8; 32], _> = args.recv_data().try_into() else {
                 error!("Wrong hash length");
                 return;
             };
 
-            set_main_program(&Some(hash));
-            let file_upload_service = service.file_upload_service.lock();
-            let file = file_upload_service
-                .get_file(&hash)
-                .expect("failed to get file");
-            let content = file.upgrade().unwrap();
-
-            service
-                .wasm_runner
-                .send(content)
-                .expect("failed to send new wasm module to runner");
+            service.wasm_runner.set_new_file(&hash);
         });
 
         name_characteristic.lock().on_read(move |value, _| {
@@ -279,188 +149,8 @@ impl CatManagementService {
                 set_config::<WasmGuestConfig>(args.recv_data().to_vec());
             });
 
-        Self::on_boot(&cat_management_service);
+        // TODO: Age files on file system
 
         cat_management_service
     }
-
-    /// Try to load and launch the main program
-    fn launch_main_program(cat_management_service: Arc<Mutex<CatManagementService>>) {
-        // Launch main program if it is set
-        let main_program = get_main_program();
-
-        let Some(main_program) = main_program else {
-            tracing::warn!("No main program set.");
-            return;
-        };
-        let cat_management_service = cat_management_service.lock();
-        let file_upload_service = cat_management_service.file_upload_service.lock();
-        let Some(file) = file_upload_service.get_file(&main_program) else {
-            tracing::warn!("Failed");
-            return;
-        };
-        let Ok(content) = file.upgrade() else {
-            tracing::warn!("Failed to get initial wasm module");
-            return;
-        };
-
-        let Ok(_) = cat_management_service.wasm_runner.send(content) else {
-            tracing::warn!("Failed to send initial wasm module to runner");
-            return;
-        };
-
-        tracing::debug!("Launched main program");
-    }
-
-    // Do various tasks that need to be done on boot
-    fn on_boot(cat_management_service: &Arc<Mutex<CatManagementService>>) {
-        let cat_management_service_clone = cat_management_service.clone();
-        spawn(|| {
-            std::thread::sleep(MAIN_PROGRAM_DELAY);
-            CatManagementService::launch_main_program(cat_management_service_clone);
-        });
-    }
 }
-
-// struct HostState {
-//     files: Arc<Mutex<FileUploadService>>,
-//     name: String,
-//     start: Instant,
-//     recv: mpsc::Receiver<WasmHostMessage>,
-//     next_wasm: Option<[u8; 32]>,
-//     ble_device: &'static BLEDevice,
-//     // led_driver: Mutex<LedcDriver<'static>>,
-//     led_pin: Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>>,
-//     callback_inhibited: bool,
-// }
-
-// impl HostState {
-//     fn handle_msg(host: &mut Host<Caller<'_, HostState>>, msg: WasmHostMessage) -> bool {
-//         match msg {
-//             WasmHostMessage::StartModule(hash) => {
-//                 host.state_mut().next_wasm = Some(hash);
-//                 return false;
-//             }
-//             WasmHostMessage::BLEAdvRecv(msg) => {
-//                 host.on_ble_adv_recv(&msg)
-//                     .expect("failed to trigger ble adv callback");
-//             }
-//         }
-
-//         true
-//     }
-// }
-
-// impl HostBase for HostState {
-//     #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_base::host_log")]
-//     fn host_log(&mut self, log: common::Log) {
-//         match log.level {
-//             common::LogLevel::Error => ::tracing::error!(msg = &log.message, "guest logged"),
-//             common::LogLevel::Warn => ::tracing::warn!(msg = &log.message, "guest logged"),
-//             common::LogLevel::Info => ::tracing::info!(msg = &log.message, "guest logged"),
-//             common::LogLevel::Debug => ::tracing::debug!(msg = &log.message, "guest logged"),
-//             common::LogLevel::Trace => ::tracing::trace!(msg = &log.message, "guest logged"),
-//         }
-//     }
-
-//     #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_base::get_name")]
-//     fn get_name(&mut self) -> String {
-//         self.name.clone()
-//     }
-
-//     #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_base::get_time_millis")]
-//     fn get_time_millis(&mut self) -> u32 {
-//         self.start.elapsed().as_millis() as u32
-//     }
-
-//     #[instrument(level = Level::TRACE, skip(host), target = "cms::wasm::host_base::on_yield")]
-//     fn on_yield(host: &mut Host<Caller<'_, Self>>, timeout: u32) -> bool {
-//         if host.state().callback_inhibited {
-//             // FIXME(lmv): don't block termination if yiedling during a callback
-//             debug!("on_yield inhibited");
-//             return true;
-//         }
-//         host.state_mut().callback_inhibited = true;
-//         if 0 < timeout {
-//             let mut now = Instant::now();
-//             let deadline = now + Duration::from_micros(timeout as u64);
-//             while now < deadline {
-//                 match host.state_mut().recv.recv_timeout(deadline - now) {
-//                     Ok(msg) => {
-//                         if !Self::handle_msg(host, msg) {
-//                             return false;
-//                         }
-//                     }
-//                     Err(mpsc::RecvTimeoutError::Timeout) => break,
-//                     Err(err) => {
-//                         error!(err = ?err, "recv on_yield failed");
-//                         break;
-//                     }
-//                 }
-//                 now = Instant::now();
-//             }
-//         }
-
-//         loop {
-//             match host.state_mut().recv.try_recv() {
-//                 Ok(msg) => {
-//                     if !Self::handle_msg(host, msg) {
-//                         return false;
-//                     }
-//                 }
-//                 Err(mpsc::TryRecvError::Empty) => break,
-//                 Err(err) => {
-//                     error!(err = ?err, "recv on_yield failed");
-//                     break;
-//                 }
-//             }
-//         }
-
-//         host.state_mut().callback_inhibited = false;
-
-//         true
-//     }
-// }
-
-// impl LEDBrightness for HostState {
-//     #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_led::set_led_brightness")]
-//     fn set_led_brightness(&mut self, settings: common::LEDBrightnessSettings) {
-//         let b = settings.rgb[0] as u16 + settings.rgb[1] as u16 + settings.rgb[2] as u16;
-//         /* let mut led_pin = self.led_driver.lock();
-//         let duty = (led_pin.get_max_duty() as u64) * (b as u64) / (3 * 255);
-//         if let Err(err) = led_pin.set_duty(duty as u32) {
-//             error!(duty = duty, err = ?err "set_duty failed")
-//         }; */
-//         if b < 2 * 256 {
-//             info!("guest set led bightness low");
-//             self.led_pin.lock().set_low().unwrap();
-//         } else {
-//             info!("guest set led bightness high");
-//             self.led_pin.lock().set_high().unwrap();
-//         }
-//     }
-// }
-
-// impl BLEAdv for HostState {
-//     #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_ble::configure_ble_adv")]
-//     fn configure_ble_adv(&mut self, settings: common::BLEAdvSettings) {
-//         let min_interval = settings.min_interval.clamp(400, 1000);
-//         let max_interval = settings.min_interval.clamp(min_interval, 1500);
-//         self.ble_device
-//             .get_advertising()
-//             .lock()
-//             .min_interval(min_interval)
-//             .max_interval(max_interval);
-//     }
-
-//     #[instrument(level = Level::DEBUG, skip(self), target = "cms::wasm::host_ble::configure_ble_data")]
-//     fn configure_ble_data(&mut self, data: common::BLEAdvData) {
-//         if let Err(err) = self.ble_device.get_advertising().lock().set_data(
-//             BLEAdvertisementData::new()
-//                 .name(&self.name)
-//                 .manufacturer_data(&data.data),
-//         ) {
-//             error!("set manufacturer data ({:?}) failed: {:?}", data.data, err)
-//         };
-//     }
-// }

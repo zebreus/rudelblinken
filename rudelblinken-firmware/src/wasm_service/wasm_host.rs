@@ -11,8 +11,8 @@ use esp_idf_hal::{
 use esp_idf_sys::adc_atten_t_ADC_ATTEN_DB_12;
 use rudelblinken_runtime::{
     host::{
-        self, AdvertisementSettings, AmbientLightType, Event, Host, LedColor, LedInfo, LogLevel,
-        VibrationSensorType,
+        self, Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo,
+        LogLevel, VibrationSensorType,
     },
     linker::linker::WrappedCaller,
 };
@@ -90,11 +90,20 @@ impl Default for WasmHostConfiguration {
     }
 }
 
+/// Events sent from the wasm host to the main system
 pub enum WasmEvent {}
+
+/// Events sent from the host to the wasm guest
+pub enum HostEvent {
+    /// Send whenever an advertisment was received
+    AdvertisementReceived(Advertisement),
+    /// The host requests the guest to shut down because the program changed
+    ProgramChanged(),
+}
 
 #[derive(Clone)]
 pub struct WasmHost {
-    pub host_events: Arc<Mutex<Receiver<Event>>>,
+    pub host_events: Arc<Mutex<Receiver<HostEvent>>>,
     // TODO: Actually use this. We build this to allow bidirectional communication between the host and the wasm guest in the emulator, but dont need that currently
     #[allow(dead_code)]
     pub wasm_events: Sender<WasmEvent>,
@@ -102,9 +111,9 @@ pub struct WasmHost {
 }
 
 impl WasmHost {
-    pub fn new() -> (Sender<Event>, Receiver<WasmEvent>, Self) {
+    pub fn new() -> (Sender<HostEvent>, Receiver<WasmEvent>, Self) {
         LazyLock::force(&LED_PIN);
-        let (host_sender, host_receiver) = channel::<Event>();
+        let (host_sender, host_receiver) = channel::<HostEvent>();
         let (wasm_sender, wasm_receiver) = channel::<WasmEvent>();
         return (
             host_sender,
@@ -136,8 +145,12 @@ impl Host for WasmHost {
                 };
                 drop(receiver);
                 match event {
-                    Event::AdvertisementReceived(advertisement) => {
+                    HostEvent::AdvertisementReceived(advertisement) => {
                         caller.on_advertisement(advertisement)?;
+                    }
+                    HostEvent::ProgramChanged() => {
+                        // TODO: Improve termination behaviour
+                        return Err(rudelblinken_runtime::Error::new("Terminated as requested"));
                     }
                 }
             }
