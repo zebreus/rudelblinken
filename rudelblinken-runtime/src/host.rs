@@ -147,11 +147,6 @@ impl ::core::fmt::Debug for AdvertisementSettings {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum Event {
-    AdvertisementReceived(Advertisement),
-}
-
 pub trait Host
 where
     Self: Sized,

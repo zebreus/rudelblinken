@@ -5,11 +5,16 @@ use std::{
 
 use crate::{
     host::{
-        AdvertisementSettings, AmbientLightType, Event, Host, LedColor, LedInfo, LogLevel,
+        Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo, LogLevel,
         VibrationSensorType,
     },
     linker::linker::WrappedCaller,
 };
+
+#[derive(Clone, Debug)]
+pub enum Event {
+    AdvertisementReceived(Advertisement),
+}
 
 pub struct EmulatedHost {
     pub start_time: Instant,

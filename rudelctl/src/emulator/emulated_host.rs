@@ -1,11 +1,14 @@
 use rudelblinken_runtime::{
     host::{
-        AdvertisementSettings, AmbientLightType, Event, Host, LedColor, LedInfo, LogLevel,
+        Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo, LogLevel,
         VibrationSensorType,
     },
     linker::linker::WrappedCaller,
 };
-use std::time::{Duration, Instant};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 pub enum WasmEvent {
@@ -13,9 +16,13 @@ pub enum WasmEvent {
     SetAdvertismentData(Vec<u8>),
 }
 
+pub enum HostEvent {
+    AdvertisementReceived(Advertisement),
+}
+
 pub struct EmulatedHost {
     pub start_time: Instant,
-    pub host_events: Receiver<Event>,
+    pub host_events: Receiver<HostEvent>,
     pub wasm_events: Sender<WasmEvent>,
     // TODO: Actually use this
     #[allow(dead_code)]
@@ -26,8 +33,8 @@ pub struct EmulatedHost {
 }
 
 impl EmulatedHost {
-    pub fn new(address: [u8; 6], name: String) -> (Sender<Event>, Receiver<WasmEvent>, Self) {
-        let (host_sender, host_receiver) = channel::<Event>(20);
+    pub fn new(address: [u8; 6], name: String) -> (Sender<HostEvent>, Receiver<WasmEvent>, Self) {
+        let (host_sender, host_receiver) = channel::<HostEvent>(20);
         let (wasm_sender, wasm_receiver) = channel::<WasmEvent>(20);
         return (
             host_sender,
@@ -48,10 +55,10 @@ impl Host for EmulatedHost {
         caller: &mut WrappedCaller<'_, Self>,
         _micros: u64,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        while let Ok(event) = caller.data_mut().host_events.try_recv() {
-            match event {
+            while let Ok(event) = caller.data_mut().host_events.try_recv() {
+                match event {
                 Event::AdvertisementReceived(advertisement) => {
-                    caller.on_advertisement(advertisement)?;
+                        caller.on_advertisement(advertisement)?;
                 }
             }
         }

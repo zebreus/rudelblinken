@@ -1,8 +1,7 @@
 //! Test wasm files on an emulated rudelblinken device.
 mod emulated_host;
 use clap::Args;
-use emulated_host::EmulatedHost;
-use rudelblinken_runtime::host::Event;
+use emulated_host::{EmulatedHost, HostEvent};
 use std::{
     ffi::OsStr,
     path::PathBuf,
@@ -213,7 +212,7 @@ impl Emulator {
                             };
 
                             sender
-                                .send(Event::AdvertisementReceived(advertisement))
+                                .send(HostEvent::AdvertisementReceived(advertisement))
                                 .await
                                 .unwrap();
                         }
