@@ -1,4 +1,36 @@
 //! The cat management service is reponsible for managing the currently running program and its environment
+//!
+//! ## Logic for managing the program
+//! ```
+//! // TODO: Actually implement this
+//! ```
+//!
+//! Main program: The program that was last set via the program hash characteristic
+//!
+//! Default program: A wasm binary which provides default blinking behaviour and thats included in the firmware
+//!
+//! Program failure counter: Counts the number of failures of the main program since the last success
+//!
+//! Failure flag: A flag that gets set when a program is launched and reset if the program didn't crash in [PROGRAM_SUCCESS_DURATION]
+//!
+//! ### MVP
+//!
+//! - If the program ran for for [PROGRAM_SUCCESS_DURATION] -> Unset the failure flag
+//! - If a program is already running -> Stop here
+//! - If the failure flag is set and there -> Incremet the program failure counter. Unset the failure flag.
+//! - If the program failure counter exceeds [MAX_CONSECUTIVE_FAILURES] -> Unset the main program file
+//! - If there is no main program file set -> Run the default program
+//! - If there is an error finding the main program file -> Unset the main program file
+//! - If the program file was found and opened -> Set the failure flag
+//! - If there is an error starting the main program file -> Nothing
+//! - If the program crashed or exited -> Nothing
+//! - If a new main program is received -> Stop the current program, reset the failure counter, reset failure flag
+//!
+//! ### Future
+//!
+//! - Temporary programs
+//! - A secure way to update the default program
+//!
 use crate::config::main_program::{get_main_program, set_main_program};
 use crate::config::{get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
 use crate::{
@@ -21,6 +53,11 @@ use tracing::{error, info};
 
 /// The delay after booting, until the main program is launched
 const MAIN_PROGRAM_DELAY: Duration = Duration::from_secs(3);
+
+/// The duration a program needs to run for to be marked as not crashed
+const PROGRAM_SUCCESS_DURATION: Duration = Duration::from_secs(30);
+/// The max number of consecutive crashed a program is allowed to have before its deleted
+const MAX_CONSECUTIVE_FAILURES: usize = 5;
 
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
