@@ -150,7 +150,7 @@ impl WasmRunner {
             match result {
                 Ok(_) => info!("Wasm module finished execution"),
                 Err(err) => {
-                    error!("Wasm module failed to execute:\n{}", err);
+                    error!("Wasm module failed to execute: {}", err);
                 }
             }
         }

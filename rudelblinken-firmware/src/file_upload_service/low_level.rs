@@ -149,7 +149,6 @@ fn setup_upload_status_characteristic(
     upload_status_characteristic
         .lock()
         .on_read(move |value, _| {
-            println!("Reading missing chunks");
             let service = file_upload_service_clone.lock();
             let (progress, missing_chunks) = service.get_status().unwrap_or((0, Vec::new()));
 
