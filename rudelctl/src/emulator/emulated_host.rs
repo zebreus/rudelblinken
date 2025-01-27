@@ -53,14 +53,23 @@ impl EmulatedHost {
 impl Host for EmulatedHost {
     fn yield_now(
         caller: &mut WrappedCaller<'_, Self>,
-        _micros: u64,
+        micros: u64,
     ) -> Result<u32, rudelblinken_runtime::Error> {
+        let end_time = Instant::now()
+            .checked_add(Duration::from_micros(micros))
+            .unwrap();
+        loop {
             while let Ok(event) = caller.data_mut().host_events.try_recv() {
                 match event {
-                Event::AdvertisementReceived(advertisement) => {
+                    HostEvent::AdvertisementReceived(advertisement) => {
                         caller.on_advertisement(advertisement)?;
+                    }
                 }
             }
+            if end_time <= Instant::now() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
         }
         caller.inner().set_fuel(999_999).unwrap();
         return Ok(999_999);
