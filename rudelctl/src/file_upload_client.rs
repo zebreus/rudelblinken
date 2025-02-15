@@ -3,19 +3,23 @@ use crate::GLOBAL_LOGGER;
 use async_recursion::async_recursion;
 use bluer::{
     gatt::remote::{Characteristic, CharacteristicWriteRequest},
-    Device,
+    Device, UuidExt,
 };
-use futures::lock::Mutex;
+use futures::{join, lock::Mutex, StreamExt};
 use helpers::{
     connect_to_device, find_characteristic, find_service, FindCharacteristicError, FindServiceError,
 };
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use rand::{distributions::Alphanumeric, Rng};
-use std::{fmt::Write, ops::Div, sync::Arc, time::Duration};
+use std::{fmt::Write, ops::Div, pin::pin, sync::Arc, time::Duration};
 use thiserror::Error;
-use tokio::{io::AsyncWriteExt, time::sleep};
+use tokio::{
+    io::{stdin, AsyncReadExt, AsyncWriteExt},
+    time::sleep,
+};
 use tokio_util::sync::CancellationToken;
 use upload_request::UploadRequest;
+use uuid::Uuid;
 use zerocopy::IntoBytes;
 mod helpers;
 mod upload_request;
@@ -35,6 +39,10 @@ const FILE_UPLOAD_SERVICE_CURRENT_HASH: u16 = 0x9166;
 const CAT_MANAGEMENT_SERVICE: u16 = 0x7992;
 const CAT_MANAGEMENT_SERVICE_PROGRAM_HASH: u16 = 0x7893;
 const CAT_MANAGEMENT_SERVICE_NAME: u16 = 0x7894;
+
+const SERIAL_LOGGING_TIO_SERVICE: Uuid = uuid::uuid!("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
+const SERIAL_LOGGING_TIO_CHAR_RX: Uuid = uuid::uuid!("6E400002-B5A3-F393-E0A9-E50E24DCCA9E"); // Write no response
+const SERIAL_LOGGING_TIO_CHAR_TX: Uuid = uuid::uuid!("6E400003-B5A3-F393-E0A9-E50E24DCCA9E"); // Notify
 
 #[derive(Error, Debug)]
 pub enum UpdateTargetError {
@@ -69,6 +77,9 @@ pub struct FileUploadClient {
     last_error_characteristic: Characteristic,
     current_hash_characteristic: Characteristic,
 
+    log_tx_characteristic: Characteristic,
+    log_rx_characteristic: Characteristic,
+
     program_hash_characteristic: Characteristic,
     name_characteristic: Characteristic,
     device: Device,
@@ -88,26 +99,54 @@ impl FileUploadClient {
 
         connect_to_device(&device).await?;
 
-        let update_service = find_service(&device, FILE_UPLOAD_SERVICE).await?;
+        let update_service =
+            find_service(&device, uuid::Uuid::from_u16(FILE_UPLOAD_SERVICE)).await?;
 
-        let data_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_DATA).await?;
-        let start_upload_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_START_UPLOAD).await?;
-        let missing_chunks_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_UPLOAD_PROGRESS).await?;
-        let last_error_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_LAST_ERROR).await?;
-        let current_hash_characteristic =
-            find_characteristic(&update_service, FILE_UPLOAD_SERVICE_CURRENT_HASH).await?;
+        let data_characteristic = find_characteristic(
+            &update_service,
+            uuid::Uuid::from_u16(FILE_UPLOAD_SERVICE_DATA),
+        )
+        .await?;
+        let start_upload_characteristic = find_characteristic(
+            &update_service,
+            uuid::Uuid::from_u16(FILE_UPLOAD_SERVICE_START_UPLOAD),
+        )
+        .await?;
+        let missing_chunks_characteristic = find_characteristic(
+            &update_service,
+            uuid::Uuid::from_u16(FILE_UPLOAD_SERVICE_UPLOAD_PROGRESS),
+        )
+        .await?;
+        let last_error_characteristic = find_characteristic(
+            &update_service,
+            uuid::Uuid::from_u16(FILE_UPLOAD_SERVICE_LAST_ERROR),
+        )
+        .await?;
+        let current_hash_characteristic = find_characteristic(
+            &update_service,
+            uuid::Uuid::from_u16(FILE_UPLOAD_SERVICE_CURRENT_HASH),
+        )
+        .await?;
 
-        let cat_management_service = find_service(&device, CAT_MANAGEMENT_SERVICE).await?;
+        let cat_management_service =
+            find_service(&device, uuid::Uuid::from_u16(CAT_MANAGEMENT_SERVICE)).await?;
 
-        let name_characteristic =
-            find_characteristic(&cat_management_service, CAT_MANAGEMENT_SERVICE_NAME).await?;
-        let program_hash_characteristic =
-            find_characteristic(&cat_management_service, CAT_MANAGEMENT_SERVICE_PROGRAM_HASH)
-                .await?;
+        let name_characteristic = find_characteristic(
+            &cat_management_service,
+            uuid::Uuid::from_u16(CAT_MANAGEMENT_SERVICE_NAME),
+        )
+        .await?;
+        let program_hash_characteristic = find_characteristic(
+            &cat_management_service,
+            uuid::Uuid::from_u16(CAT_MANAGEMENT_SERVICE_PROGRAM_HASH),
+        )
+        .await?;
+
+        let logging_service = find_service(&device, SERIAL_LOGGING_TIO_SERVICE).await?;
+        let log_tx_characteristic =
+            find_characteristic(&logging_service, SERIAL_LOGGING_TIO_CHAR_TX).await?;
+        let log_rx_characteristic =
+            find_characteristic(&logging_service, SERIAL_LOGGING_TIO_CHAR_RX).await?;
 
         return Ok(FileUploadClient {
             data_characteristic,
@@ -117,6 +156,8 @@ impl FileUploadClient {
             name_characteristic,
             program_hash_characteristic,
             current_hash_characteristic,
+            log_tx_characteristic,
+            log_rx_characteristic,
             device,
         });
     }
@@ -389,6 +430,42 @@ impl FileUploadClient {
         progress_bar.finish_with_message("uploaded");
         GLOBAL_LOGGER.remove(&progress_bar);
 
+        Ok(())
+    }
+
+    pub async fn attach_logger(&self) -> Result<(), UpdateTargetError> {
+        let log_receiver = self.log_tx_characteristic.notify();
+        let mut log_receiver = pin!(log_receiver.await?);
+
+        let printer = async {
+            while let Some(chunk) = log_receiver.next().await {
+                let Ok(chunk) = std::str::from_utf8(chunk.as_ref()) else {
+                    log::warn!("Received log message contains invalid UTF-8. Not printing it.");
+                    // TODO: Handle unicode characters split across multiple messages
+                    continue;
+                };
+                print!("{}", chunk);
+            }
+            return Result::<(), UpdateTargetError>::Ok(());
+        };
+
+        let reader = async {
+            let mut buffer = [0u8; 200];
+            while let Ok(length) = stdin().read(&mut buffer).await {
+                let result = self.log_rx_characteristic.write(&buffer[0..length]).await;
+                if result.is_err() {
+                    log::error!("Failed to send input to client");
+                    // TODO: Implement retry mechanism
+                    return result;
+                }
+            }
+            return Ok(());
+        };
+
+        // TODO: Use select instead of join
+        let (writer_result, reader_result) = join!(printer, reader);
+        reader_result?;
+        writer_result?;
         Ok(())
     }
 }

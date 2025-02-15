@@ -79,6 +79,16 @@ enum Commands {
         #[arg(short, long, default_value = "2")]
         timeout: f32,
     },
+    /// Attach to the logs of a device
+    Log {
+        /// Stop scanning after this many seconds
+        #[arg(short, long, default_value = "2")]
+        timeout: f32,
+
+        /// Maximum number of devices to program
+        #[arg(short, long, default_value = "1")]
+        devices: u32,
+    },
     /// Emulate a rudelblinken device
     Emulate(EmulateCommand),
 }
@@ -177,6 +187,33 @@ async fn main() -> bluer::Result<()> {
                     let data = &file_content;
 
                     update_target.run_program(&data).await?;
+                    return Ok(Outcome::Processed);
+                },
+            )
+            .await
+            .unwrap();
+        }
+        Commands::Log { timeout, devices } => {
+            scan_for(
+                Duration::from_millis((timeout * 1000.0) as u64),
+                devices,
+                &async |device: Device, abort| -> Result<Outcome, UpdateTargetError> {
+                    let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
+                    else {
+                        return Ok(Outcome::Ignored);
+                    };
+                    if devices == 1 {
+                        abort.abort();
+                    }
+                    let target_name = device
+                        .name()
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(device.address().to_string());
+                    log::info!("Connected to {}", target_name);
+
+                    update_target.attach_logger().await?;
                     return Ok(Outcome::Processed);
                 },
             )

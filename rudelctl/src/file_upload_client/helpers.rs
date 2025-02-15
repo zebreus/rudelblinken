@@ -1,11 +1,12 @@
 use crate::file_upload_client::UpdateTargetError;
 use bluer::{
     gatt::remote::{Characteristic, Service},
-    Device, UuidExt,
+    Device,
 };
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::sleep;
+use uuid::Uuid;
 
 #[derive(Error, Debug)]
 pub enum FindServiceError {
@@ -15,9 +16,9 @@ pub enum FindServiceError {
     NoUpdateService,
 }
 
-pub async fn find_service(device: &Device, uuid: u16) -> Result<Service, FindServiceError> {
+pub async fn find_service(device: &Device, uuid: uuid::Uuid) -> Result<Service, FindServiceError> {
     for service in device.services().await? {
-        if service.uuid().await? == uuid::Uuid::from_u16(uuid) {
+        if service.uuid().await? == uuid {
             return Ok(service);
         }
     }
@@ -35,10 +36,10 @@ pub enum FindCharacteristicError {
 
 pub async fn find_characteristic(
     service: &Service,
-    uuid: u16,
+    uuid: Uuid,
 ) -> Result<Characteristic, FindCharacteristicError> {
     for characteristic in service.characteristics().await? {
-        if characteristic.uuid().await? == uuid::Uuid::from_u16(uuid) {
+        if characteristic.uuid().await? == uuid {
             return Ok(characteristic);
         }
     }
