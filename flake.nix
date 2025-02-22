@@ -47,8 +47,6 @@
           fenixPkgs.complete.toolchain
           fenixPkgs.targets.riscv32imc-unknown-none-elf.stable.completeToolchain
           fenixPkgs.targets.wasm32-unknown-unknown.stable.completeToolchain
-          fenixPkgs.targets.wasm32-wasip1.stable.completeToolchain
-          fenixPkgs.targets.wasm32-wasip2.beta.completeToolchain
 
           (fenixPkgs.complete.withComponents [
             "cargo"
