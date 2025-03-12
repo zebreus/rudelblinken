@@ -36,13 +36,17 @@ use crate::storage::get_filesystem;
 use crate::wasm_service::wasm_host::HostEvent;
 use crate::{storage::FlashStorage, wasm_service::wasm_host::WasmHost};
 use crate::{wasm_service, BLE_DEVICE};
+use core::panic;
 use esp32_nimble::BLEScan;
 use esp_idf_hal::task;
+use load_main_program::load_main_program;
 use rudelblinken_filesystem::file::{File, FileState};
 use rudelblinken_runtime::host::Advertisement;
 use std::sync::mpsc::Sender;
 use std::{sync::mpsc, time::Duration};
 use tracing::{error, info};
+
+mod load_main_program;
 
 /// The delay after booting, until the main program is launched
 const MAIN_PROGRAM_DELAY: Duration = Duration::from_secs(3);
@@ -101,47 +105,21 @@ impl WasmRunner {
     /// The main loop of the wasm runner. Won't return
     fn runner_thread(mut host: WasmHost) -> ! {
         std::thread::sleep(MAIN_PROGRAM_DELAY);
-        fn wait_for_main_program(host: &mut WasmHost) -> File<FlashStorage, { FileState::Reader }> {
-            loop {
-                std::thread::sleep(Duration::from_millis(200));
-                // Drain the event queue
-                while host.host_events.lock().try_recv().is_ok() {}
-
-                let Some(current_main_program) = get_main_program() else {
-                    // No main program set
-                    continue;
-                };
-
-                let filesystem = get_filesystem().unwrap();
-                let Ok(filesystem_reader) = filesystem.read() else {
-                    tracing::warn!("Failed to acquire filesystem lock");
-                    continue;
-                };
-                let Some(file) = filesystem_reader.read_file_by_hash(&current_main_program) else {
-                    tracing::warn!("Failed to find main program file");
-                    continue;
-                };
-                let Ok(reader) = file.upgrade() else {
-                    tracing::warn!("Failed to open main program");
-                    continue;
-                };
-                return reader;
-            }
-        }
 
         loop {
-            let program = wait_for_main_program(&mut host);
+            let program = load_main_program(&mut host);
 
             info!("before creating and linking instance");
             log_heap_stats();
 
-            let mut instance = match rudelblinken_runtime::linker::setup(&program, host.clone()) {
-                Ok(instance) => instance,
-                Err(error) => {
-                    error!("Linker Error:\n {}", error);
-                    continue;
-                }
-            };
+            let mut instance =
+                match rudelblinken_runtime::linker::setup(program.as_ref(), host.clone()) {
+                    Ok(instance) => instance,
+                    Err(error) => {
+                        error!("Linker Error:\n {}", error);
+                        continue;
+                    }
+                };
 
             info!("after creating and linking instance");
             log_heap_stats();
