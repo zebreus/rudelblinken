@@ -205,6 +205,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "reference-sync-v1"
+version = "0.1.0"
+dependencies = [
+ "rudelblinken-sdk",
+ "spin",
+ "talc",
+]
+
+[[package]]
 name = "rudelblinken-sdk"
 version = "0.1.0"
 dependencies = [
