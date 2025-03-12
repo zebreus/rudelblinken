@@ -1,6 +1,5 @@
 //! The cat management service is reponsible for managing the currently running program and its environment
-use crate::config::main_program::get_main_program;
-use crate::config::{get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
+use crate::config::{self, get_config, set_config, DeviceName, LedStripColor, WasmGuestConfig};
 use crate::service_helpers::DocumentableCharacteristic;
 use esp32_nimble::BLEServer;
 use esp32_nimble::{
@@ -86,7 +85,7 @@ impl CatManagementService {
         );
 
         program_hash_characteristic.lock().on_read(move |value, _| {
-            let hash = get_main_program();
+            let hash = config::main_program::get();
             value.set_value(&hash.unwrap_or([0u8; 32]));
         });
         let cat_management_service_clone = cat_management_service.clone();

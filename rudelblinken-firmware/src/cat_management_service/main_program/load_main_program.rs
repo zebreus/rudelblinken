@@ -1,5 +1,5 @@
 //! Load the main program from the filesystem or return the default program
-use crate::config::main_program::{get_main_program, set_main_program};
+use crate::config::main_program;
 use crate::storage::get_filesystem;
 use crate::{storage::FlashStorage, wasm_service::wasm_host::WasmHost};
 use rudelblinken_filesystem::file::{File, FileState};
@@ -43,7 +43,7 @@ pub fn load_main_program(host: &mut WasmHost) -> WasmProgram {
         // Drain the event queue
         while host.host_events.lock().try_recv().is_ok() {}
 
-        let Some(current_main_program) = get_main_program() else {
+        let Some(current_main_program) = main_program::get() else {
             // No main program set
             // Return the default program
             return WasmProgram::Default;
@@ -63,7 +63,7 @@ pub fn load_main_program(host: &mut WasmHost) -> WasmProgram {
         };
         let Some(file) = filesystem_reader.read_file_by_hash(&current_main_program) else {
             // If the main program does not exist on the filesystem, we can remove the reference to it
-            set_main_program(None);
+            main_program::set(&None);
             return WasmProgram::Default;
         };
         let Ok(reader) = file.upgrade() else {
@@ -74,7 +74,7 @@ pub fn load_main_program(host: &mut WasmHost) -> WasmProgram {
                 tracing::warn!("Failed to open main program; Deleting it");
                 // TODO: Check that this does not allow for arbitrary file deletion
                 let _ = file.delete();
-                set_main_program(None);
+                main_program::set(&None);
                 return WasmProgram::Default;
             }
             continue;
