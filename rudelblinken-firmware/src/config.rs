@@ -2,8 +2,6 @@ use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, EspNvsPartition, NvsDefau
 use rudelblinken_runtime::host::LedColor;
 use std::sync::{LazyLock, RwLock};
 
-pub mod main_program;
-
 pub static NVS_PARTITION: LazyLock<EspNvsPartition<NvsDefault>> = LazyLock::new(|| {
     let nvs_default_partition: EspNvsPartition<NvsDefault> =
         EspDefaultNvsPartition::take().unwrap();
@@ -235,3 +233,93 @@ impl ConfigValue for WasmGuestConfig {
         self.config
     }
 }
+
+macro_rules! config_value {
+    ($name:ident, bool) => {
+        config_value!(
+            $name,
+            bool,
+            1,
+            |v: &bool| Some([if *v { 1 } else { 0 }]),
+            |v: Option<&[u8]>| v.map_or(false, |v| v[0] != 0)
+        );
+    };
+    ($name:ident, u32) => {
+        config_value!(
+            $name,
+            u32,
+            4,
+            |v: &u32| Some(v.to_le_bytes()),
+            |v: Option<&[u8]>| {
+                if let Some(Result::<&[u8; 4], _>::Ok(bytes)) = v.map(|v| v.try_into()) {
+                    u32::from_le_bytes(*bytes)
+                } else {
+                    0u32
+                }
+            }
+        );
+    };
+    ($name:ident, Option<[u8; $size:literal]>) => {
+        config_value!(
+            $name,
+            Option<[u8; $size]>,
+            $size,
+            |v: &Option<[u8; 32]>| *v,
+            |v: Option<&[u8]>| v.and_then(|v| {
+                if let Result::<&[u8; 32], _>::Ok(hash) = v.try_into() {
+                    return Some(*hash);
+                } else {
+                    return None;
+                }
+            })
+        );
+    };
+    ($name:ident, $type:ty, $size:literal, $to_bytes:expr, $from_bytes:expr) => {
+        pub mod $name {
+            use crate::config::CONFIG_NVS;
+            use std::sync::{LazyLock, RwLock};
+
+            const KEY: &str = stringify!($name);
+
+            pub fn get() -> $type {
+                return get_buffer().read().unwrap().clone();
+            }
+
+            pub fn set(new_value: &$type) {
+                let mut writable_buffer = get_buffer().write().unwrap();
+                {
+                    let mut nvs = CONFIG_NVS.write().unwrap();
+
+                    let new_bytes = ($to_bytes)(new_value);
+                    match new_bytes {
+                        Some(new_bytes) => nvs.set_blob(KEY, new_bytes.as_ref()).unwrap(),
+                        None => {
+                            nvs.remove(KEY).unwrap();
+                        }
+                    }
+                }
+                *writable_buffer = new_value.to_owned();
+            }
+
+            fn get_buffer() -> &'static LazyLock<RwLock<$type>> {
+                static VALUE: LazyLock<RwLock<$type>> = LazyLock::new(|| {
+                    let nvs = CONFIG_NVS.read().unwrap();
+
+                    let mut buffer = [0u8; $size];
+                    if let Ok(blob_option) = nvs.get_blob(KEY, &mut buffer) {
+                        return RwLock::new(($from_bytes)(blob_option));
+                    } else {
+                        // TODO: Print warning or something
+                        ::tracing::warn!("Failed to read config value {}", KEY);
+                        return RwLock::new(($from_bytes)(None));
+                    }
+                });
+                &VALUE
+            }
+        }
+    };
+}
+
+config_value!(failure_flag, bool);
+config_value!(failure_counter, u32);
+config_value!(main_program, Option<[u8; 32]>);
