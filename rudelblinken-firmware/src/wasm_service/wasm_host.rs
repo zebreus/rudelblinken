@@ -8,11 +8,11 @@ use esp_idf_hal::{
     ledc::{self, config::TimerConfig, LedcDriver, LedcTimerDriver},
     units::FromValueType,
 };
-use esp_idf_sys::adc_atten_t_ADC_ATTEN_DB_12;
+use esp_idf_sys::{adc_atten_t_ADC_ATTEN_DB_11, adc_atten_t_ADC_ATTEN_DB_12};
 use rudelblinken_runtime::{
     host::{
         self, Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo,
-        LogLevel, VibrationSensorType,
+        LogLevel, VibrationSensorType, VoltageSensorType,
     },
     linker::linker::WrappedCaller,
 };
@@ -52,7 +52,7 @@ pub static LIGHT_SENSOR_ADC: LazyLock<
         ADC_DRIVER.clone(),
         unsafe { gpio::Gpio3::new() },
         &AdcChannelConfig {
-            attenuation: adc_atten_t_ADC_ATTEN_DB_12,
+            attenuation: adc_atten_t_ADC_ATTEN_DB_11,
             resolution: adc::Resolution::Resolution12Bit,
             calibration: false,
         },
@@ -61,14 +61,30 @@ pub static LIGHT_SENSOR_ADC: LazyLock<
     Mutex::new(pin)
 });
 
-pub static VIBRATION_SENSOR_ADC: LazyLock<
-    Mutex<AdcChannelDriver<'static, gpio::Gpio4, Arc<AdcDriver<'static, adc::ADC1>>>>,
+// pub static VIBRATION_SENSOR_ADC: LazyLock<
+//     Mutex<AdcChannelDriver<'static, gpio::Gpio4, Arc<AdcDriver<'static, adc::ADC1>>>>,
+// > = LazyLock::new(|| {
+//     let pin = AdcChannelDriver::new(
+//         ADC_DRIVER.clone(),
+//         unsafe { gpio::Gpio4::new() },
+//         &AdcChannelConfig {
+//             attenuation: adc_atten_t_ADC_ATTEN_DB_12,
+//             resolution: adc::Resolution::Resolution12Bit,
+//             calibration: false,
+//         },
+//     )
+//     .unwrap();
+//     Mutex::new(pin)
+// });
+
+pub static VOLTAGE_SENSOR_ADC: LazyLock<
+    Mutex<AdcChannelDriver<'static, gpio::Gpio2, Arc<AdcDriver<'static, adc::ADC1>>>>,
 > = LazyLock::new(|| {
     let pin = AdcChannelDriver::new(
         ADC_DRIVER.clone(),
-        unsafe { gpio::Gpio4::new() },
+        unsafe { gpio::Gpio2::new() },
         &AdcChannelConfig {
-            attenuation: adc_atten_t_ADC_ATTEN_DB_12,
+            attenuation: adc_atten_t_ADC_ATTEN_DB_11,
             resolution: adc::Resolution::Resolution12Bit,
             calibration: false,
         },
@@ -271,16 +287,29 @@ impl Host for WasmHost {
     fn get_vibration_sensor_type(
         _caller: &mut WrappedCaller<'_, Self>,
     ) -> Result<VibrationSensorType, rudelblinken_runtime::Error> {
-        Ok(VibrationSensorType::Ball)
+        Ok(VibrationSensorType::None)
     }
 
     fn get_vibration(
         _caller: &mut WrappedCaller<'_, Self>,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        match VIBRATION_SENSOR_ADC.lock().read() {
-            Ok(v) => Ok(v as u32),
+        Ok(0)
+    }
+
+    fn get_voltage_sensor_type(
+        _caller: &mut WrappedCaller<'_, Self>,
+    ) -> Result<VoltageSensorType, rudelblinken_runtime::Error> {
+        Ok(VoltageSensorType::Basic)
+    }
+
+    fn get_voltage(
+        _caller: &mut WrappedCaller<'_, Self>,
+    ) -> Result<u32, rudelblinken_runtime::Error> {
+        match VOLTAGE_SENSOR_ADC.lock().read() {
+            // TODO: Calibrate ADC
+            Ok(v) => Ok(v as u32 * 2500 * 2 / 4096),
             Err(err) => {
-                tracing::warn!(?err, "reading vibrations failed");
+                tracing::warn!(?err, "reading ambient light failed");
                 Ok(u32::MAX)
             }
         }

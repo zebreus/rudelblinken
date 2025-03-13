@@ -2,7 +2,7 @@
 use super::{linker::WrappedCaller, MAJOR, MINOR, PATCH};
 use crate::host::{
     AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo, LogLevel, SemanticVersion,
-    VibrationSensorType,
+    VibrationSensorType, VoltageSensorType,
 };
 
 /// `get-base-version: func() -> semantic-version;`
@@ -119,6 +119,16 @@ pub(super) fn get_vibration<T: Host>(
     mut caller: WrappedCaller<'_, T>,
 ) -> Result<u32, wasmi::Error> {
     T::get_vibration(&mut caller)
+}
+/// `get-voltage-sensor-type: func() -> voltage-sensor-type;`
+pub(super) fn get_voltage_sensor_type<T: Host>(
+    mut caller: WrappedCaller<'_, T>,
+) -> Result<VoltageSensorType, wasmi::Error> {
+    T::get_voltage_sensor_type(&mut caller)
+}
+/// `get-voltage: func() -> u32;`
+pub(super) fn get_voltage<T: Host>(mut caller: WrappedCaller<'_, T>) -> Result<u32, wasmi::Error> {
+    T::get_voltage(&mut caller)
 }
 
 /// `get-ble-version: func() -> semantic-version;`

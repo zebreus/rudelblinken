@@ -6,7 +6,7 @@ use std::{
 use crate::{
     host::{
         Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo, LogLevel,
-        VibrationSensorType,
+        VibrationSensorType, VoltageSensorType,
     },
     linker::linker::WrappedCaller,
 };
@@ -121,6 +121,16 @@ impl Host for EmulatedHost {
     }
 
     fn get_vibration(_caller: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error> {
+        return Ok(0);
+    }
+
+    fn get_voltage_sensor_type(
+        _caller: &mut WrappedCaller<'_, Self>,
+    ) -> Result<VoltageSensorType, wasmi::Error> {
+        Ok(VoltageSensorType::None)
+    }
+
+    fn get_voltage(_caller: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error> {
         return Ok(0);
     }
 

@@ -119,6 +119,29 @@ impl VibrationSensorType {
     }
 }
 
+/// Information about the supply voltage sensor.
+///
+/// This could be extended in the future to indicate more types of sensors in future hardware revisions.
+#[repr(u8)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+pub enum VoltageSensorType {
+    None,
+    Basic,
+}
+impl VoltageSensorType {
+    #[doc(hidden)]
+    pub unsafe fn _lift(val: u8) -> VoltageSensorType {
+        if !cfg!(debug_assertions) {
+            return ::core::mem::transmute(val);
+        }
+        match val {
+            0 => VoltageSensorType::None,
+            1 => VoltageSensorType::Basic,
+            _ => panic!("invalid enum discriminant"),
+        }
+    }
+}
+
 #[repr(C, align(4))]
 #[derive(Clone, Copy, Debug)]
 pub struct Advertisement {
@@ -201,6 +224,11 @@ where
         context: &mut WrappedCaller<'_, Self>,
     ) -> Result<VibrationSensorType, wasmi::Error>;
     fn get_vibration(context: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error>;
+
+    fn get_voltage_sensor_type(
+        context: &mut WrappedCaller<'_, Self>,
+    ) -> Result<VoltageSensorType, wasmi::Error>;
+    fn get_voltage(context: &mut WrappedCaller<'_, Self>) -> Result<u32, wasmi::Error>;
 
     fn configure_advertisement(
         context: &mut WrappedCaller<'_, Self>,

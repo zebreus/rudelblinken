@@ -182,6 +182,27 @@ interface hardware {
     /// TODO: Figure out what this should return
     @since(version = 0.0.1)
     get-vibration: func() -> u32;
+
+    /// Information about the supply voltage sensor.
+    ///
+    /// This could be extended in the future to indicate more types of sensors in future hardware revisions.
+    @since(version = 0.0.1)
+    enum voltage-sensor-type {
+        none,
+        basic,
+    }
+
+    /// Voltage sensor type.
+    ///
+    ///
+    @since(version = 0.0.1)
+    get-voltage-sensor-type: func() -> vibration-sensor-type;
+
+    /// Get the current supply voltage
+    /// 
+    /// The value is in millivolts
+    @since(version = 0.0.1)
+    get-voltage: func() -> u32;
 }
 
 /// Control ble stuff
