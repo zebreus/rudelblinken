@@ -4,4 +4,4 @@ pub fn main() {
 }
 
 #[rudelblinken_sdk_macro::on_advertisement]
-fn on_advertisement(_: rudelblinken_sdk::Advertisement) {}
+fn on_advertisement(_: rudelblinken_sdk_macro::Advertisement) {}
