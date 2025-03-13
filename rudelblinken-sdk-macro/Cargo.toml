@@ -1,0 +1,30 @@
+[package]
+name = "rudelblinken-sdk-macro"
+version = "0.1.0"
+edition = "2021"
+autotests = false
+
+[[test]]
+name = "tests"
+path = "tests/tests.rs"
+
+[lib]
+proc-macro = true
+
+# [features]
+# default = ["allocator"]
+# allocator = ["spin", "talc"]
+
+[dependencies]
+darling = "0.20.1"
+proc-macro2 = { version = "1.0.56", features = ["span-locations"] }
+quote = { version = "1.0.26" }
+tempfile = "3.5.0"
+thiserror = "2.0.12"
+syn = { version = "2.0.100", features = ["full"] }
+spin = { version = "0.9.8", optional = false }
+talc = { version = "4.4.2", optional = false }
+rudelblinken-sdk = { path = "../rudelblinken-sdk", optional = false }
+
+[dev-dependencies]
+trybuild = { version = "1.0.80", features = ["diff"] }

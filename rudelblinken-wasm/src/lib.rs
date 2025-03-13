@@ -206,8 +206,4 @@ impl BleGuest for Test {
     }
 }
 
-/// Main is required for `cargo run`
-#[allow(dead_code)]
-fn main() {}
-
 export! {Test}
