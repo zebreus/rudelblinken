@@ -264,9 +264,9 @@ macro_rules! config_value {
             $name,
             Option<[u8; $size]>,
             $size,
-            |v: &Option<[u8; 32]>| *v,
+            |v: &Option<[u8; $size]>| *v,
             |v: Option<&[u8]>| v.and_then(|v| {
-                if let Result::<&[u8; 32], _>::Ok(hash) = v.try_into() {
+                if let Result::<&[u8; $size], _>::Ok(hash) = v.try_into() {
                     return Some(*hash);
                 } else {
                     return None;
@@ -274,7 +274,42 @@ macro_rules! config_value {
             })
         );
     };
-    ($name:ident, $type:ty, $size:literal, $to_bytes:expr, $from_bytes:expr) => {
+    ($name:ident, Option<String>, $max_size:expr) => {
+        config_value!(
+            $name,
+            Option<String>,
+            $max_size + 1,
+            |v: &Option<String>| {
+                let Some(v) = v else {
+                    return None;
+                };
+                let mut target = [0u8; $max_size + 1];
+                let bytes = v.as_bytes();
+                let mut length = std::cmp::min(bytes.len(), $max_size);
+                loop {
+                    if v.is_char_boundary(length) {
+                        break;
+                    }
+                    length -= 1;
+                }
+                target[..length].copy_from_slice(&bytes[..length]);
+                target[$max_size] = length as u8;
+
+                Some(target)
+            },
+            |v: Option<&[u8]>| match v.map(|v| v.try_into()) {
+                Some(Result::<&[u8; $max_size + 1], _>::Ok(buffer)) => {
+                    let length = buffer[$max_size] as usize;
+                    let string = String::from_utf8_lossy(&buffer[..length]).to_string();
+                    return Some(string);
+                }
+                _ => {
+                    return None;
+                }
+            }
+        );
+    };
+    ($name:ident, $type:ty, $size:expr, $to_bytes:expr, $from_bytes:expr) => {
         pub mod $name {
             use crate::config::CONFIG_NVS;
             use std::sync::{LazyLock, RwLock};
@@ -323,3 +358,5 @@ macro_rules! config_value {
 config_value!(failure_flag, bool);
 config_value!(failure_counter, u32);
 config_value!(main_program, Option<[u8; 32]>);
+config_value!(device_name, Option<String>, 8);
+config_value!(mac_address, Option<[u8; 6]>);

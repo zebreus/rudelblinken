@@ -10,6 +10,7 @@ use esp32_nimble::{
 use esp_idf_hal::gpio::{self, PinDriver};
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
+use name::initialize_name;
 use nrf_logging_service::SerialLoggingService;
 use std::{sync::LazyLock, time::Duration};
 use storage::get_filesystem;
@@ -17,26 +18,53 @@ use storage::get_filesystem;
 mod cat_management_service;
 mod config;
 mod file_upload_service;
+mod name;
 mod nrf_logging_service;
 pub mod service_helpers;
 pub mod storage;
 mod wasm_service;
 // mod telid_logging_service;
 
-/// Changes the OUI of the base mac address to 24:ec:4b which is not assigned
-///
-/// We can find our devices based on this OUI
-fn fix_mac_address() {
+fn get_bluetooth_mac_address() -> [u8; 6] {
+    let mac = config::mac_address::get();
+    if let Some(mac) = mac {
+        return mac;
+    }
+
+    let mut bluetooth_mac = [0u8; 6];
     unsafe {
-        let mut mac = [0u8; 6];
-        esp_idf_sys::esp_base_mac_addr_get(mac.as_mut_ptr());
-        if matches!(mac, [0x24, 0xec, 0x4b, ..]) {
-            return;
-        }
-        let new_mac = [0x24, 0xec, 0x4b, mac[3], mac[4], mac[5]];
+        esp_idf_sys::bootloader_random_enable();
+        esp_idf_sys::esp_fill_random(bluetooth_mac.as_mut_ptr() as *mut core::ffi::c_void, 6);
+        esp_idf_sys::bootloader_random_disable();
+
+        // Mark as a BLE static address
+        bluetooth_mac[0] = bluetooth_mac[0] | 0b11000000;
+        // Mark as unicast
+        bluetooth_mac[0] = bluetooth_mac[0] & 0b11111110;
+        // Mark as locally generated
+        bluetooth_mac[0] = bluetooth_mac[0] | 0b00000010;
+    }
+    config::mac_address::set(&Some(bluetooth_mac));
+    bluetooth_mac
+}
+
+/// Make sure that we are using a random mac address
+fn fix_mac_address() {
+    let bluetooth_mac = get_bluetooth_mac_address();
+
+    // The base mac is the bluetooth mac - 2
+    // (at least i think so) for this reason we also set the bluetooth mac explicitly. We are not going to use the wifi mac anyways
+    let mut base_mac = bluetooth_mac.clone();
+    base_mac[5] = base_mac[5].wrapping_sub(2);
+
+    unsafe {
         esp_idf_sys::esp_iface_mac_addr_set(
-            new_mac.as_ptr(),
+            base_mac.as_ptr(),
             esp_idf_sys::esp_mac_type_t_ESP_MAC_BASE,
+        );
+        esp_idf_sys::esp_iface_mac_addr_set(
+            bluetooth_mac.as_ptr(),
+            esp_idf_sys::esp_mac_type_t_ESP_MAC_BT,
         );
     };
 }
@@ -145,6 +173,7 @@ fn main() {
     esp_idf_svc::sys::link_patches();
 
     fix_mac_address();
+    let device_name = initialize_name();
 
     let server = setup_ble_server();
 
@@ -163,11 +192,10 @@ fn main() {
 
     // Starting advertising also starts the ble server. We cant add or change the services/attributes after the ble server started.
     {
+        let advertisment_name = "[rb]".to_string() + &device_name;
         let ble_advertising = BLE_DEVICE.get_advertising();
         let mut data = BLEAdvertisementData::new();
-        data.name("Rudelblinken")
-            .add_service_uuid(FileUploadService::uuid())
-            .manufacturer_data(&[0, 0]);
+        data.name(advertisment_name.as_ref());
         ble_advertising.lock().set_data(&mut data).unwrap();
         ble_advertising
             .lock()

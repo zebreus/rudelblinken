@@ -8,7 +8,7 @@ use esp_idf_hal::{
     ledc::{self, config::TimerConfig, LedcDriver, LedcTimerDriver},
     units::FromValueType,
 };
-use esp_idf_sys::{adc_atten_t_ADC_ATTEN_DB_11, adc_atten_t_ADC_ATTEN_DB_12};
+use esp_idf_sys::adc_atten_t_ADC_ATTEN_DB_12;
 use rudelblinken_runtime::{
     host::{
         self, Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo,
@@ -23,7 +23,7 @@ use std::{
 };
 
 use crate::{
-    config::{get_config, DeviceName, LedStripColor, WasmGuestConfig},
+    config::{self, get_config, LedStripColor, WasmGuestConfig},
     BLE_DEVICE,
 };
 
@@ -211,7 +211,7 @@ impl Host for WasmHost {
     fn get_name(
         _caller: &mut WrappedCaller<'_, Self>,
     ) -> Result<String, rudelblinken_runtime::Error> {
-        let mut name = get_config::<DeviceName>();
+        let mut name = config::device_name::get().unwrap_or_default();
         let closest = name.floor_char_boundary(16);
         let name = name.split_off(closest);
         Ok(name)
@@ -346,16 +346,19 @@ impl Host for WasmHost {
     }
 
     fn set_advertisement_data(
-        caller: &mut WrappedCaller<'_, Self>,
+        _caller: &mut WrappedCaller<'_, Self>,
         data: &[u8],
     ) -> Result<u32, rudelblinken_runtime::Error> {
         let mut ble_advertising = BLE_DEVICE.get_advertising().lock();
         ble_advertising
             .stop()
             .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
+
+        let name = config::device_name::get().unwrap_or_default();
+        let advertised_name = "[rb]".to_string() + &name;
         if let Err(_) = ble_advertising.set_data(
             BLEAdvertisementData::new()
-                .name(&Host::get_name(caller)?)
+                .name(&advertised_name)
                 .manufacturer_data(&data),
         ) {
             return Ok(1);
