@@ -1,7 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "hello-world", "reference-sync-v1", "blink", "printing-beta", "printing-alpha",
+    "hello-world",
+    "board-test",
+    "reference-sync-v1",
+    "blink",
+    "printing-beta",
+    "printing-alpha",
     "infinite-loop",
     "infinite-loop-yielding",
     "test-logging",
@@ -18,5 +23,6 @@ opt-level = "z"
 
 [workspace.dependencies]
 rudelblinken-sdk = { path = "../rudelblinken-sdk" }
+rudelblinken-sdk-macro = { path = "../rudelblinken-sdk-macro" }
 spin = "0.9.8"
 talc = "4.4.2"
