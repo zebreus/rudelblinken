@@ -1,4 +1,4 @@
-use esp32_nimble::{utilities::mutex::Mutex, BLEAdvertisementData};
+use esp32_nimble::utilities::mutex::Mutex;
 use esp_idf_hal::{
     adc::{
         self,
@@ -24,7 +24,7 @@ use std::{
 
 use crate::{
     config::{self, get_config, LedStripColor, WasmGuestConfig},
-    BLE_DEVICE,
+    create_ble_advertisment, BLE_DEVICE,
 };
 
 pub static LED_PIN: LazyLock<Mutex<LedcDriver<'static>>> = LazyLock::new(|| {
@@ -354,13 +354,8 @@ impl Host for WasmHost {
             .stop()
             .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
 
-        let name = config::device_name::get().unwrap_or_default();
-        let advertised_name = "[rb]".to_string() + &name;
-        if let Err(_) = ble_advertising.set_data(
-            BLEAdvertisementData::new()
-                .name(&advertised_name)
-                .manufacturer_data(&data),
-        ) {
+        let mut advertisment = create_ble_advertisment(Some(&data));
+        if let Err(_) = ble_advertising.set_data(&mut advertisment) {
             return Ok(1);
         }
         ble_advertising

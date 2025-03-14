@@ -29,10 +29,10 @@ const NAMES: [&str; 256] = [
     "Zev", "Ziggy", "Zimba", "Zinnia",
 ];
 
-pub fn initialize_name() -> String {
+pub fn initialize_name() -> () {
     let name = config::device_name::get();
-    if let Some(name) = name {
-        return name;
+    if name.is_some() {
+        return;
     };
     let id = unsafe {
         esp_idf_sys::bootloader_random_enable();
@@ -42,5 +42,4 @@ pub fn initialize_name() -> String {
     };
     let name = NAMES[id as usize % NAMES.len()].to_string();
     config::device_name::set(&Some(name.to_string()));
-    config::device_name::get().unwrap()
 }

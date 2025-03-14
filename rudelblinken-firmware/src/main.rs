@@ -162,6 +162,18 @@ pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>
         Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"))
     });
 
+/// Create an BLE advertisement data with the given manufacturer data and common rudelblinken data
+pub fn create_ble_advertisment(data: Option<&[u8]>) -> BLEAdvertisementData {
+    let name = config::device_name::get().unwrap_or_default();
+    let advertised_name = "[rb]".to_string() + &name;
+    let mut advertisement = BLEAdvertisementData::new();
+    advertisement.name(&advertised_name).appearance(0x07C0);
+    if let Some(data) = data {
+        advertisement.manufacturer_data(data);
+    }
+    advertisement
+}
+
 fn main() {
     // // Sleep a bit to allow the debugger to attach
     // unsafe {
@@ -173,7 +185,7 @@ fn main() {
     esp_idf_svc::sys::link_patches();
 
     fix_mac_address();
-    let device_name = initialize_name();
+    initialize_name();
 
     let server = setup_ble_server();
 
@@ -192,10 +204,8 @@ fn main() {
 
     // Starting advertising also starts the ble server. We cant add or change the services/attributes after the ble server started.
     {
-        let advertisment_name = "[rb]".to_string() + &device_name;
         let ble_advertising = BLE_DEVICE.get_advertising();
-        let mut data = BLEAdvertisementData::new();
-        data.name(advertisment_name.as_ref());
+        let mut data = create_ble_advertisment(None);
         ble_advertising.lock().set_data(&mut data).unwrap();
         ble_advertising
             .lock()

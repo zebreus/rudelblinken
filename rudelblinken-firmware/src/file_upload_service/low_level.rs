@@ -210,9 +210,4 @@ impl FileUploadService {
 
         file_upload_service
     }
-
-    /// Get the UUID of the file upload service
-    pub const fn uuid() -> BleUuid {
-        FILE_UPLOAD_SERVICE_UUID
-    }
 }
