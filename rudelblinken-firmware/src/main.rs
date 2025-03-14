@@ -163,9 +163,21 @@ pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>
     });
 
 /// Create an BLE advertisement data with the given manufacturer data and common rudelblinken data
+///
+/// This also updates the device name
 pub fn create_ble_advertisment(data: Option<&[u8]>) -> BLEAdvertisementData {
     let name = config::device_name::get().unwrap_or_default();
     let advertised_name = "[rb]".to_string() + &name;
+
+    // Set the values for the generic access service
+    //
+    // Technically we would only need to do this after a reboot or a change of the name
+    unsafe {
+        esp_idf_sys::ble_svc_gap_device_name_set(advertised_name.as_ptr().cast());
+        esp_idf_sys::ble_svc_gap_device_appearance_set(0x07C0);
+    }
+    let _ = BLEDevice::set_device_name(&advertised_name);
+
     let mut advertisement = BLEAdvertisementData::new();
     advertisement.name(&advertised_name).appearance(0x07C0);
     if let Some(data) = data {
