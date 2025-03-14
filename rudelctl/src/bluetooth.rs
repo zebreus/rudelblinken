@@ -1,3 +1,4 @@
+use bluer::DiscoveryFilter;
 use futures::{
     pin_mut,
     stream::{AbortHandle, Abortable},
@@ -5,7 +6,7 @@ use futures::{
 };
 use futures_time::stream::StreamExt;
 use futures_time::time::Duration;
-use std::future::Future;
+use std::{collections::HashSet, future::Future};
 
 // pub enum BluetoothError {
 //     BluerError(bluer::Error),
@@ -119,6 +120,8 @@ pub async fn scan_for<Fut, Err>(
     duration: Duration,
     // Just give a big number if you dont want a limit
     max_devices: u32,
+    // Filter devices by name
+    name_filter: impl Fn(&str) -> bool,
     f: &dyn Fn(bluer::Device, AbortHandle) -> Fut,
 ) -> bluer::Result<()>
 where
@@ -129,21 +132,19 @@ where
 
     let adapter = session.default_adapter().await?;
     adapter.set_powered(true).await?;
-    // TODO: Also set filters here, when I figured out how to do discovery
-    // adapter
-    //     .set_discovery_filter(&bluer::DiscoveryFilter {})
-    //     .await?;
 
-    // {
-    //     // Enable logging of adapter events
-    //     let adapter = adapter.clone();
-    //     tokio::spawn(async move {
-    //         let mut events = adapter.events().await.unwrap();
-    //         while let Some(ev) = events.next().await {
-    //             log::info!("On adapter {:?}, received event {:?}", adapter, ev);
-    //         }
-    //     });
-    // }
+    let filter = DiscoveryFilter {
+        uuids: HashSet::new(),
+        rssi: None,
+        pathloss: None,
+        transport: bluer::DiscoveryTransport::Le,
+        duplicate_data: false,
+        discoverable: false,
+        pattern: Some("[rb]".to_string()),
+        _non_exhaustive: (),
+    };
+    // This is allowed to fail, as filters are not reliable anyways
+    let _ = adapter.set_discovery_filter(filter).await;
 
     {
         // Starts a discovery session
@@ -159,11 +160,27 @@ where
                 break;
             };
             match evt {
+                bluer::AdapterEvent::PropertyChanged(a) => {
+                    log::debug!("Adapter property changed: {:?}", a);
+                }
+                bluer::AdapterEvent::DeviceRemoved(addr) => {
+                    log::debug!("Device removed: {:?}", addr);
+                }
                 bluer::AdapterEvent::DeviceAdded(addr) => {
                     let device = adapter.device(addr)?;
+                    let Some(name) = device.name().await? else {
+                        continue;
+                    };
+                    if !name_filter(&name) {
+                        continue;
+                    }
+
                     let result = f(device, abort_handle.clone()).await;
                     if let Err(error) = result {
-                        log::error!("Failed processing device with {:?}", error);
+                        let string_error = format!("{:?}", error);
+                        if !string_error.contains("TargetDoesNotLookLikeAnUploadServiceProvider") {
+                            log::error!("Failed processing device with {:?}", string_error);
+                        }
                         continue;
                     }
                     if let Ok(Outcome::Processed) = result {
@@ -175,7 +192,6 @@ where
                         }
                     }
                 }
-                _ => (),
             }
         }
     }

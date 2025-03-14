@@ -11,7 +11,13 @@ use helpers::{
 };
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use rand::{distributions::Alphanumeric, Rng};
-use std::{fmt::Write, ops::Div, pin::pin, sync::Arc, time::Duration};
+use std::{
+    fmt::Write,
+    ops::Div,
+    pin::pin,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use tokio::{
     io::{stdin, AsyncReadExt, AsyncWriteExt},
@@ -51,7 +57,7 @@ pub enum UpdateTargetError {
     #[error("io error")]
     IoError(#[from] std::io::Error),
     #[error("Not an update target")]
-    MacDoesNotLookLikeAnUploadServiceProvider,
+    TargetDoesNotLookLikeAnUploadServiceProvider,
     #[error("Failed to connect to device")]
     FailedToConnect(bluer::Error),
     #[error(transparent)]
@@ -81,23 +87,37 @@ pub struct FileUploadClient {
     log_rx_characteristic: Characteristic,
 
     program_hash_characteristic: Characteristic,
+    // TODO: Use this
+    #[allow(dead_code)]
     name_characteristic: Characteristic,
     device: Device,
 }
 
 impl FileUploadClient {
+    pub async fn assert_rudelblinken_device(
+        device: &Device,
+    ) -> Result<(String, Option<i16>), UpdateTargetError> {
+        let Some(name) = device.name().await.ok().flatten() else {
+            return Err(UpdateTargetError::TargetDoesNotLookLikeAnUploadServiceProvider);
+        };
+        if !name.starts_with("[rb]") {
+            return Err(UpdateTargetError::TargetDoesNotLookLikeAnUploadServiceProvider);
+        }
+
+        let rssi = device.rssi().await?;
+        return Ok((name, rssi));
+    }
     pub async fn new_from_peripheral(
         device: &Device,
     ) -> Result<FileUploadClient, UpdateTargetError> {
-        let device = device.clone();
-        let address = device.address();
-        log::debug!("Checking {}", address);
-        if !(address.0.starts_with(&[0x24, 0xec, 0x4b])) {
-            return Err(UpdateTargetError::MacDoesNotLookLikeAnUploadServiceProvider);
-        }
-        log::debug!("Found MAC {}", address);
+        let start = Instant::now();
+        let (name, _) = Self::assert_rudelblinken_device(device).await?;
 
+        log::debug!("Found device {}", name);
+
+        log::debug!("{:.04} Connecting", start.elapsed().as_secs_f64());
         connect_to_device(&device).await?;
+        log::debug!("{:.04} Connected", start.elapsed().as_secs_f64());
 
         let update_service =
             find_service(&device, uuid::Uuid::from_u16(FILE_UPLOAD_SERVICE)).await?;
@@ -148,6 +168,8 @@ impl FileUploadClient {
         let log_rx_characteristic =
             find_characteristic(&logging_service, SERIAL_LOGGING_TIO_CHAR_RX).await?;
 
+        log::debug!("{:.04} Serviced", start.elapsed().as_secs_f64());
+
         return Ok(FileUploadClient {
             data_characteristic,
             start_upload_characteristic,
@@ -158,17 +180,8 @@ impl FileUploadClient {
             current_hash_characteristic,
             log_tx_characteristic,
             log_rx_characteristic,
-            device,
+            device: device.clone(),
         });
-    }
-
-    pub async fn get_name(&self) -> Result<String, UpdateTargetError> {
-        let name_bytes = self.name_characteristic.read().await?;
-        if name_bytes.len() < 3 || name_bytes.len() > 32 {
-            todo!();
-        }
-        let name = String::from_utf8_lossy(&name_bytes);
-        return Ok(name.to_string());
     }
 
     pub async fn run_program(&self, data: &[u8]) -> Result<(), UpdateTargetError> {

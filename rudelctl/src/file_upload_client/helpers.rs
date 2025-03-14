@@ -48,16 +48,17 @@ pub async fn find_characteristic(
 }
 
 pub async fn connect_to_device(device: &Device) -> Result<(), UpdateTargetError> {
-    let max_attempts = 3;
+    let rssi = device.rssi().await?;
+    let max_attempts = if rssi.is_some() { 3 } else { 1 };
     if device.is_connected().await? {
         return Ok(());
     }
     log::debug!("Connecting...");
     for attempt in 0..=max_attempts {
-        match device.connect().await {
+        match device.pair().await {
             Ok(()) => break,
             Err(err) => {
-                log::debug!("Connect error {}/{}: {}", attempt, max_attempts, &err);
+                log::info!("Connect error {}/{}: {}", attempt, max_attempts, &err);
                 if attempt < max_attempts {
                     sleep(Duration::from_secs(1)).await;
                     continue;

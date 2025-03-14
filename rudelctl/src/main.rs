@@ -41,6 +41,9 @@ use std::{path::PathBuf, sync::LazyLock, time::Instant, u32};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Cli {
+    /// Only process cats that have this name
+    #[arg(short, long, global = true)]
+    name: Option<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -50,7 +53,7 @@ enum Commands {
     /// Upload a file
     Upload {
         /// Stop scanning after this many seconds
-        #[arg(short, long, default_value = "2")]
+        #[arg(short, long, default_value = "3")]
         timeout: f32,
 
         /// Maximum number of devices to program
@@ -63,7 +66,7 @@ enum Commands {
     /// Run a WASM binary
     Run {
         /// Stop scanning after this many seconds
-        #[arg(short, long, default_value = "2")]
+        #[arg(short, long, default_value = "3")]
         timeout: f32,
 
         /// Maximum number of devices to program
@@ -76,13 +79,13 @@ enum Commands {
     /// Scan for cats
     Scan {
         /// Stop scanning after this many seconds
-        #[arg(short, long, default_value = "2")]
+        #[arg(short, long, default_value = "10")]
         timeout: f32,
     },
     /// Attach to the logs of a device
     Log {
         /// Stop scanning after this many seconds
-        #[arg(short, long, default_value = "2")]
+        #[arg(short, long, default_value = "3")]
         timeout: f32,
 
         /// Maximum number of devices to program
@@ -110,6 +113,22 @@ async fn main() -> bluer::Result<()> {
     LazyLock::force(&GLOBAL_LOGGER);
     let cli = Cli::parse();
 
+    let required_name = &cli.name.clone();
+    let name_filter = |name: &str| {
+        if !name.starts_with("[rb]") {
+            return false;
+        }
+        if let Some(cli_name) = required_name {
+            if !name
+                .to_lowercase()
+                .contains(cli_name.to_lowercase().as_str())
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+
     match cli.command {
         Commands::Upload {
             timeout,
@@ -123,6 +142,7 @@ async fn main() -> bluer::Result<()> {
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
+                name_filter,
                 &async |device: Device, abort| -> Result<Outcome, UpdateTargetError> {
                     let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
                     else {
@@ -178,6 +198,7 @@ async fn main() -> bluer::Result<()> {
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
+                name_filter,
                 &async |device: Device, _| -> Result<Outcome, UpdateTargetError> {
                     let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
                     else {
@@ -197,6 +218,7 @@ async fn main() -> bluer::Result<()> {
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
+                name_filter,
                 &async |device: Device, abort| -> Result<Outcome, UpdateTargetError> {
                     let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
                     else {
@@ -225,14 +247,16 @@ async fn main() -> bluer::Result<()> {
             scan_for(
                 Duration::from_millis((timeout * 1000.0) as u64),
                 u32::MAX,
+                name_filter,
                 &async |device: Device, _| -> Result<Outcome, UpdateTargetError> {
                     let address = device.address();
-                    let update_target = FileUploadClient::new_from_peripheral(&device).await?;
-                    let rssi = device.rssi().await.ok().flatten();
-
-                    let name = update_target.get_name().await.unwrap();
-                    println!("{}, {}, {}", name, address, rssi.unwrap_or(-200));
-                    device.disconnect().await.unwrap();
+                    let (name, rssi) =
+                        FileUploadClient::assert_rudelblinken_device(&device).await?;
+                    let Some(rssi) = rssi else {
+                        return Ok(Outcome::Ignored);
+                    };
+                    println!("{}, {}, {}", name, address, rssi);
+                    //device.disconnect().await.unwrap();
                     return Ok(Outcome::Processed);
                 },
             )
