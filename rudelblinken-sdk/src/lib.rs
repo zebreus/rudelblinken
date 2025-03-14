@@ -15,8 +15,9 @@ pub use rudel::{
     },
     rudel::base::hardware::{
         get_ambient_light, get_ambient_light_type, get_hardware_version, get_led_info,
-        get_vibration, get_vibration_sensor_type, led_count, set_leds, set_rgb, AmbientLightType,
-        LedColor, LedInfo, VibrationSensorType,
+        get_vibration, get_vibration_sensor_type, get_voltage, get_voltage_sensor_type, led_count,
+        set_leds, set_rgb, AmbientLightType, LedColor, LedInfo, VibrationSensorType,
+        VoltageSensorType,
     },
 };
 

@@ -1,7 +1,7 @@
 use rudelblinken_runtime::{
     host::{
         Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo, LogLevel,
-        VibrationSensorType,
+        VibrationSensorType, VoltageSensorType,
     },
     linker::linker::WrappedCaller,
 };
@@ -195,6 +195,18 @@ impl Host for EmulatedHost {
             .wasm_events
             .blocking_send(WasmEvent::SetAdvertismentData(data.into()))
             .map_err(|error| rudelblinken_runtime::Error::new(error.to_string()))?;
+        Ok(0)
+    }
+
+    fn get_voltage_sensor_type(
+        _context: &mut WrappedCaller<'_, Self>,
+    ) -> Result<VoltageSensorType, rudelblinken_runtime::Error> {
+        Ok(VoltageSensorType::None)
+    }
+
+    fn get_voltage(
+        _context: &mut WrappedCaller<'_, Self>,
+    ) -> Result<u32, rudelblinken_runtime::Error> {
         Ok(0)
     }
 }

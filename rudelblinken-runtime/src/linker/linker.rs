@@ -543,6 +543,36 @@ pub fn link_hardware<T: Host>(
         ),
     )?;
 
+    // __attribute__((__import_module__("rudel:base/hardware@0.0.1"), __import_name__("get-voltage-sensor-type")))
+    // extern int32_t __wasm_import_rudel_base_hardware_voltage_type(void);
+    link_function(
+        linker,
+        "rudel:base/hardware",
+        "get-voltage-sensor-type",
+        Func::wrap(
+            &mut store,
+            |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
+                let caller = WrappedCaller(caller);
+                return glue::get_voltage_sensor_type(caller).map(|result| result.lower());
+            },
+        ),
+    )?;
+
+    // __attribute__((__import_module__("rudel:base/hardware@0.0.1"), __import_name__("get-voltage")))
+    // extern int32_t __wasm_import_rudel_base_hardware_get_voltage(void);
+    link_function(
+        linker,
+        "rudel:base/hardware",
+        "get-voltage",
+        Func::wrap(
+            &mut store,
+            |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
+                let caller = WrappedCaller(caller);
+                return glue::get_voltage(caller).map(|result| result as i32);
+            },
+        ),
+    )?;
+
     return Ok(());
 }
 

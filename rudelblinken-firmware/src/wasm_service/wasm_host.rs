@@ -52,9 +52,9 @@ pub static LIGHT_SENSOR_ADC: LazyLock<
         ADC_DRIVER.clone(),
         unsafe { gpio::Gpio3::new() },
         &AdcChannelConfig {
-            attenuation: adc_atten_t_ADC_ATTEN_DB_11,
+            attenuation: adc_atten_t_ADC_ATTEN_DB_12,
             resolution: adc::Resolution::Resolution12Bit,
-            calibration: false,
+            calibration: true,
         },
     )
     .unwrap();
@@ -70,7 +70,7 @@ pub static LIGHT_SENSOR_ADC: LazyLock<
 //         &AdcChannelConfig {
 //             attenuation: adc_atten_t_ADC_ATTEN_DB_12,
 //             resolution: adc::Resolution::Resolution12Bit,
-//             calibration: false,
+//             calibration: true,
 //         },
 //     )
 //     .unwrap();
@@ -84,9 +84,9 @@ pub static VOLTAGE_SENSOR_ADC: LazyLock<
         ADC_DRIVER.clone(),
         unsafe { gpio::Gpio2::new() },
         &AdcChannelConfig {
-            attenuation: adc_atten_t_ADC_ATTEN_DB_11,
+            attenuation: adc_atten_t_ADC_ATTEN_DB_12,
             resolution: adc::Resolution::Resolution12Bit,
-            calibration: false,
+            calibration: true,
         },
     )
     .unwrap();
@@ -305,14 +305,24 @@ impl Host for WasmHost {
     fn get_voltage(
         _caller: &mut WrappedCaller<'_, Self>,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        match VOLTAGE_SENSOR_ADC.lock().read() {
-            // TODO: Calibrate ADC
-            Ok(v) => Ok(v as u32 * 2500 * 2 / 4096),
-            Err(err) => {
-                tracing::warn!(?err, "reading ambient light failed");
-                Ok(u32::MAX)
-            }
+        const SAMPLES: u32 = 20;
+        let mut sum_of_measurements = 0u32;
+        let mut number_of_measurements = 0u32;
+        for _ in 0..SAMPLES {
+            match VOLTAGE_SENSOR_ADC.lock().read() {
+                Ok(v) => {
+                    number_of_measurements += 1;
+                    sum_of_measurements += v as u32;
+                }
+                Err(err) => {
+                    tracing::warn!(?err, "reading voltage failed");
+                }
+            };
         }
+        let average_measurement = sum_of_measurements / number_of_measurements;
+        let calibrated_voltage = average_measurement * 2;
+
+        return Ok(calibrated_voltage);
     }
 
     fn configure_advertisement(

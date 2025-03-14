@@ -122,23 +122,21 @@ impl VibrationSensorType {
 /// Information about the supply voltage sensor.
 ///
 /// This could be extended in the future to indicate more types of sensors in future hardware revisions.
-#[repr(u8)]
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[repr(i32)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd, Debug)]
 pub enum VoltageSensorType {
     None,
     Basic,
 }
 impl VoltageSensorType {
-    #[doc(hidden)]
-    pub unsafe fn _lift(val: u8) -> VoltageSensorType {
-        if !cfg!(debug_assertions) {
-            return ::core::mem::transmute(val);
-        }
+    pub fn lift(val: i32) -> VoltageSensorType {
         match val {
             0 => VoltageSensorType::None,
-            1 => VoltageSensorType::Basic,
-            _ => panic!("invalid enum discriminant"),
+            _ => VoltageSensorType::Basic,
         }
+    }
+    pub fn lower(&self) -> i32 {
+        unsafe { ::core::mem::transmute(*self) }
     }
 }
 
