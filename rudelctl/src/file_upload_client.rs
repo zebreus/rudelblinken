@@ -5,7 +5,7 @@ use bluer::{
     gatt::remote::{Characteristic, CharacteristicWriteRequest},
     Device, UuidExt,
 };
-use futures::{join, lock::Mutex, StreamExt};
+use futures::{lock::Mutex, StreamExt};
 use helpers::{
     connect_to_device, find_characteristic, find_service, FindCharacteristicError, FindServiceError,
 };
@@ -447,9 +447,11 @@ impl FileUploadClient {
     }
 
     pub async fn attach_logger(&self) -> Result<(), UpdateTargetError> {
+        let name = self.device.name().await.ok().flatten().unwrap();
+        log::info!(target: "rudelctl", "Connected to {}", name);
+
         let log_receiver = self.log_tx_characteristic.notify();
         let mut log_receiver = pin!(log_receiver.await?);
-
         let printer = async {
             while let Some(chunk) = log_receiver.next().await {
                 let Ok(chunk) = std::str::from_utf8(chunk.as_ref()) else {
@@ -475,10 +477,21 @@ impl FileUploadClient {
             return Ok(());
         };
 
-        // TODO: Use select instead of join
-        let (writer_result, reader_result) = join!(printer, reader);
-        reader_result?;
-        writer_result?;
+        let checker = async {
+            loop {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                if !self.device.is_connected().await? {
+                    log::info!(target: "rudelctl", "Disconnected from {}", name);
+                    return Result::<(), UpdateTargetError>::Ok(());
+                }
+            }
+        };
+
+        tokio::select! {
+            _ = printer => {}
+            _ = reader => {}
+            _ = checker => {}
+        }
         Ok(())
     }
 }

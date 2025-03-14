@@ -83,15 +83,7 @@ enum Commands {
         timeout: f32,
     },
     /// Attach to the logs of a device
-    Log {
-        /// Stop scanning after this many seconds
-        #[arg(short, long, default_value = "3")]
-        timeout: f32,
-
-        /// Maximum number of devices to program
-        #[arg(short, long, default_value = "1")]
-        devices: u32,
-    },
+    Log {},
     /// Emulate a rudelblinken device
     Emulate(EmulateCommand),
 }
@@ -214,26 +206,18 @@ async fn main() -> bluer::Result<()> {
             .await
             .unwrap();
         }
-        Commands::Log { timeout, devices } => {
+        Commands::Log {} => loop {
             scan_for(
-                Duration::from_millis((timeout * 1000.0) as u64),
-                devices,
+                Duration::from_secs(9999999999 as u64),
+                1,
                 name_filter,
                 &async |device: Device, abort| -> Result<Outcome, UpdateTargetError> {
                     let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
                     else {
                         return Ok(Outcome::Ignored);
                     };
-                    if devices == 1 {
-                        abort.abort();
-                    }
-                    let target_name = device
-                        .name()
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or(device.address().to_string());
-                    log::info!("Connected to {}", target_name);
+                    // Stop scanning once we found a valid target
+                    abort.abort();
 
                     update_target.attach_logger().await?;
                     return Ok(Outcome::Processed);
@@ -241,7 +225,7 @@ async fn main() -> bluer::Result<()> {
             )
             .await
             .unwrap();
-        }
+        },
         Commands::Scan { timeout } => {
             println!("name, mac, rssi");
             scan_for(

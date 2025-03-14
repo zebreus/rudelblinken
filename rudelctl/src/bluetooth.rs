@@ -186,7 +186,7 @@ where
                     if let Ok(Outcome::Processed) = result {
                         programmed_devices += 1;
                         if programmed_devices >= max_devices {
-                            log::info!("Done after programming {} devices", max_devices);
+                            // log::info!("Done after programming {} devices", max_devices);
                             abort_handle.abort();
                             continue;
                         }
