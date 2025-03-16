@@ -13,7 +13,7 @@ const MAX_MAIN_PROGRAM_FS_LOCK_ATTEMPTS: usize = 50;
 const MAX_MAIN_PROGRAM_UPGRADE_ATTEMPTS: usize = 5;
 
 const DEFAULT_MAIN_PROGRAM: &[u8] =
-    include_bytes!("../../../../wasm-binaries/binaries/reference_sync_v1.wasm");
+    include_bytes!("../../../../wasm-binaries/binaries/board_test.wasm");
 
 /// A wasm program as a byte slice
 ///
