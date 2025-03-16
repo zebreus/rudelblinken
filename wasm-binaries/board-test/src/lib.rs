@@ -1,4 +1,4 @@
-use rudelblinken_sdk::{get_voltage, log, yield_now, Advertisement, LogLevel};
+use rudelblinken_sdk::{get_voltage, log, set_leds, yield_now, Advertisement, LogLevel};
 use std::sync::{LazyLock, Mutex};
 
 static ADVERTISMENT_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
@@ -27,6 +27,11 @@ fn main() {
                 &format!("Advertisements received: {}", *counter),
             );
         }
+
+        set_leds(0, &[255]);
+        yield_now(1000 * 200);
+        set_leds(0, &[0]);
+        yield_now(1000 * 300);
     }
 }
 
