@@ -173,7 +173,7 @@ impl WasmRunner {
             // TODO: Figure out how to properly wait until the server started
             std::thread::sleep(MAIN_PROGRAM_DELAY);
             loop {
-                tracing::info!("Scanning for BLE devices");
+                // tracing::info!("Scanning for BLE devices");
                 ble_scan
                     .start(&BLE_DEVICE, 1000, |dev, data| {
                         if let Some(md) = data.manufacture_data() {
