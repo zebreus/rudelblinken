@@ -28,7 +28,8 @@ embassy = [
 
 [profile.release]
 opt-level = "s"
-lto = "fat"
+# lto = "fat"
+lto = false
 panic = "abort"
 
 [profile.dev]

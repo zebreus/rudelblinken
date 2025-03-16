@@ -27,11 +27,13 @@
 mod bluetooth;
 mod emulator;
 mod file_upload_client;
+mod flash;
 use bluer::Device;
 use bluetooth::{scan_for, Outcome};
 use clap::{Parser, Subcommand};
 use emulator::{EmulateCommand, Emulator};
 use file_upload_client::{FileUploadClient, UpdateTargetError};
+use flash::Flasher;
 use futures_time::time::Duration;
 use indicatif::MultiProgress;
 use indicatif_log_bridge::LogWrapper;
@@ -86,6 +88,8 @@ enum Commands {
     Log {},
     /// Emulate a rudelblinken device
     Emulate(EmulateCommand),
+    /// Flash a rudelblinken device
+    Flash(flash::FlashCommand),
 }
 
 pub static GLOBAL_LOGGER: LazyLock<MultiProgress> = LazyLock::new(|| {
@@ -250,6 +254,10 @@ async fn main() -> bluer::Result<()> {
         Commands::Emulate(emulate_command) => {
             let emulator = Emulator::new(emulate_command).await.unwrap();
             emulator.emulate().await.unwrap();
+        }
+        Commands::Flash(flash_command) => {
+            let flasher = Flasher::new(flash_command).await.unwrap();
+            flasher.flash().await;
         }
     };
 

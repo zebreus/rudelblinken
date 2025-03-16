@@ -16,21 +16,23 @@ path = "src/main.rs"
 
 [dependencies]
 async-recursion = "1.1.1"
-blake3 = "1.5.4"
+blake3 = "1.6.1"
 bluer = { version = "0.17.3", features = ["full"] }
 clap = { version = "4.5.20", features = ["derive"] }
 crc = "3.2.1"
-env_logger = "0.11.5"
+env_logger = "0.11.7"
 futures = "0.3.31"
 futures-time = "3.0.0"
-thiserror = "1.0.64"
-tokio = { version = "1", features = ["full"] }
-uuid = "1.10.0"
+thiserror = "2.0.12"
+tokio = { version = "1.44.1", features = ["full"] }
+uuid = "1.16.0"
 rudelblinken-runtime = { path = "../rudelblinken-runtime", version = "0.1.0" }
-tempfile = "3.14.0"
+tempfile = "3.19.0"
 rand = "0.8.5"
-zerocopy = { version = "0.8.13", features = ["derive"] }
-indicatif = "0.17.9"
-log = "0.4.25"
+zerocopy = { version = "0.8.23", features = ["derive"] }
+indicatif = "0.17.11"
+log = "0.4.26"
 indicatif-log-bridge = "0.2.3"
-tokio-util = "0.7.13"
+tokio-util = "0.7.14"
+espflash = { version = "3.3" }
+esp-idf-part = "0.5.0"

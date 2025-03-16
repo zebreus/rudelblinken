@@ -100,7 +100,11 @@
           ESP_IDF_TOOLS_INSTALL_DIR = "fromenv";
           ESP_IDF_VERSION = "v5.2.2";
           MCU = "esp32c3";
-          LD_LIBRARY_PATH = "${pkgs.dbus.lib}/lib";
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            pkgs.dbus.lib
+            # For rudelctl espflash
+            pkgs.libudev-zero
+          ];
 
           buildInputs = [
             fakeGit
@@ -117,6 +121,8 @@
             pkgs.jq
             # For the cli:
             pkgs.dbus
+            pkgs.pkg-config
+            pkgs.libudev-zero
           ];
         };
 
