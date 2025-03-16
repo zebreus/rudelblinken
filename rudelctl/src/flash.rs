@@ -85,9 +85,7 @@ impl Flasher {
         let target_xtal_freq = target.crystal_freq(flasher.connection()).unwrap();
 
         // Read the ELF data from the build path and load it to the target.
-        let elf_data_bytes: &[u8] = include_bytes!(
-            "../../rudelblinken-firmware/target/riscv32imc-esp-espidf/release/rudelblinken-firmware"
-        );
+        let elf_data_bytes: &[u8] = include_bytes!("../firmware/rudelblinken-firmware");
         let elf_data = Vec::from(elf_data_bytes);
 
         print_board_info(&mut flasher).unwrap();
@@ -106,11 +104,8 @@ impl Flasher {
         } else {
             let mut flash_data =
                 make_flash_data(args.flash_args.image, &flash_config, &config, None, None).unwrap();
-            let partition_table_bytes =
-                include_bytes!("../../rudelblinken-firmware/partition_table.csv");
-            let bootloader_bytes = include_bytes!(
-                "../../rudelblinken-firmware/target/riscv32imc-esp-espidf/release/bootloader.bin"
-            );
+            let partition_table_bytes = include_bytes!("../firmware/partition_table.csv");
+            let bootloader_bytes = include_bytes!("../firmware/bootloader.bin");
             flash_data.partition_table =
                 esp_idf_part::PartitionTable::try_from(Vec::from(partition_table_bytes)).ok();
             flash_data.bootloader = Some(Vec::from(bootloader_bytes));
