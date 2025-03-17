@@ -3,17 +3,17 @@
 //! # Example
 //!
 //! ```rust
-//! use rudelblinken_sdk_macro::{main, on_advertisement};
+//! use rudelblinken_sdk_macro::{main, on_event};
 //!
 //! #[main]
 //! pub fn main() {
 //!     println!("Hello, world!");
 //! }
 //!
-//! #[on_advertisement]
-//! fn on_advertisement(_: rudelblinken_sdk::Advertisement) {
-//!     // Do something with the advertisement
-//!     println!("Got an advertisement!");
+//! #[on_event]
+//! fn on_event(_: rudelblinken_sdk::BleEvent) {
+//!     // Do something with the BLE event
+//!     println!("Got an BLE event!");
 //! }
 //! ```
 //!
@@ -54,9 +54,9 @@
 //!
 //! // Implement the `BleGuest` trait for the `RudelblinkenMain` struct
 //! impl rudelblinken_sdk::BleGuest for RudelblinkenMain {
-//!     fn on_advertisement(_: rudelblinken_sdk::Advertisement) {
-//!         // Do something with the advertisement
-//!         println!("Got an advertisement!");
+//!     fn on_event(_: rudelblinken_sdk::BleEvent) {
+//!         // Do something with the BLE event
+//!         println!("Got an BLE event!");
 //!     }
 //! }
 //! ```
@@ -68,58 +68,56 @@
 use quote::quote;
 use syn::{spanned::Spanned, FnArg, ItemFn};
 
-fn process_on_advertisement(
-    input: proc_macro::TokenStream,
-) -> Result<proc_macro::TokenStream, syn::Error> {
+fn process_on_event(input: proc_macro::TokenStream) -> Result<proc_macro::TokenStream, syn::Error> {
     let synput: ItemFn = syn::parse(input)?;
 
     if let Some(constness) = synput.sig.constness {
         return Err(syn::Error::new(
             constness.span(),
-            "on_advertisement function cannot be const",
+            "on_event function cannot be const",
         ));
     }
     if let Some(asyncness) = synput.sig.asyncness {
         return Err(syn::Error::new(
             asyncness.span(),
-            "on_advertisement function cannot be async (for now)",
+            "on_event function cannot be async (for now)",
         ));
     }
     if let Some(unsafety) = synput.sig.unsafety {
         return Err(syn::Error::new(
             unsafety.span(),
-            "on_advertisement function cannot be unsafe",
+            "on_event function cannot be unsafe",
         ));
     }
     if let Some(abi) = synput.sig.abi {
         return Err(syn::Error::new(
             abi.span(),
-            "on_advertisement function cannot have an ABI (for now)",
+            "on_event function cannot have an ABI (for now)",
         ));
     }
 
-    if synput.sig.ident.to_string() != "on_advertisement" {
+    if synput.sig.ident.to_string() != "on_event" {
         return Err(syn::Error::new(
             synput.sig.ident.span(),
-            "on_advertisement function must be named `on_advertisement`",
+            "on_event function must be named `on_event`",
         ));
     }
     if synput.sig.generics.params.len() > 0 {
         return Err(syn::Error::new(
             synput.sig.generics.span(),
-            "on_advertisement function cannot have generics",
+            "on_event function cannot have generics",
         ));
     }
     if let Some(variadic) = synput.sig.variadic {
         return Err(syn::Error::new(
             variadic.span(),
-            "on_advertisement cannot have variadic arguments",
+            "on_event cannot have variadic arguments",
         ));
     }
     if let syn::ReturnType::Type(_, _) = synput.sig.output {
         return Err(syn::Error::new(
             synput.sig.output.span(),
-            "on_advertisement cannot return a value",
+            "on_event cannot return a value",
         ));
     }
 
@@ -128,20 +126,20 @@ fn process_on_advertisement(
         None => {
             return Err(syn::Error::new(
                 synput.sig.span(),
-                "on_advertisement function must have at least one argument",
+                "on_event function must have at least one argument",
             ))
         }
         Some(FnArg::Receiver(input)) => {
             return Err(syn::Error::new(
                 input.span(),
-                "on_advertisement function needs to take a advertisement as its parameter",
+                "The first parameter of on_event needs to be an BleEvent",
             ))
         }
     };
     if synput.sig.inputs.len() != 1 {
         return Err(syn::Error::new(
             synput.sig.inputs.first().span(),
-            "on_advertisement takes exactly one argument",
+            "on_event takes exactly one argument",
         ));
     }
 
@@ -151,11 +149,11 @@ fn process_on_advertisement(
     //     pat: first_input.pat,
     //     colon_token: first_input.colon_token,
     //     ty: Box::new(syn::Type::Verbatim(
-    //         quote! { ::rudelblinken_sdk::Advertisement },
+    //         quote! { ::rudelblinken_sdk::BleEvent },
     //     )),
     // }));
 
-    let on_advertisement_impl = syn::ImplItemFn {
+    let on_event_impl = syn::ImplItemFn {
         attrs: synput.attrs,
         vis: syn::Visibility::Inherited,
         defaultness: None,
@@ -165,7 +163,7 @@ fn process_on_advertisement(
 
     let stream = quote!(
         impl ::rudelblinken_sdk::BleGuest for RudelblinkenMain {
-            #on_advertisement_impl
+            #on_event_impl
         }
     );
     // println!("args2: {:?}", args2);
@@ -285,14 +283,14 @@ fn process_main(input: proc_macro::TokenStream) -> Result<proc_macro::TokenStrea
         }
 
         // Attempt to print a somewhat helpful error message if the user
-        // forgot to use `on_advertisement`.
+        // forgot to use `on_event`.
         mod _rudelblinken_internal {
             use super::RudelblinkenMain;
             #[allow(dead_code)]
-            trait OnAdvertismentNotImplemented {
-                const NO_BLE_GUEST: () = panic!("You also need to mark a function with `#[rudelblinken_sdk::on_advertisement]`");
+            trait OnEventNotImplemented {
+                const NO_BLE_GUEST: () = panic!("You also need to mark a function with `#[rudelblinken_sdk::on_event]`");
             }
-            impl<T: ?Sized> OnAdvertismentNotImplemented for T {}
+            impl<T: ?Sized> OnEventNotImplemented for T {}
             struct Wrapper<T: ?Sized>(core::marker::PhantomData<T>);
             #[allow(dead_code)]
             impl<T: ?Sized + ::rudelblinken_sdk::BleGuest> Wrapper<T> {
@@ -319,11 +317,11 @@ pub fn main(
 }
 
 #[proc_macro_attribute]
-pub fn on_advertisement(
+pub fn on_event(
     _args: proc_macro::TokenStream,
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let result = match process_on_advertisement(input) {
+    let result = match process_on_event(input) {
         Ok(stream) => stream,
         Err(err) => err.to_compile_error().into(),
     };

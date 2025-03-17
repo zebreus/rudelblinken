@@ -38,7 +38,7 @@ use crate::{wasm_service, BLE_DEVICE};
 use esp32_nimble::BLEScan;
 use esp_idf_hal::task;
 use load_main_program::load_main_program;
-use rudelblinken_runtime::host::Advertisement;
+use rudelblinken_runtime::host::{Advertisement, BleEvent, ManufacturerData};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -181,18 +181,19 @@ impl WasmRunner {
 
                             let mut padded_mac = [0u8; 8];
                             padded_mac[0..6].copy_from_slice(&dev.addr().as_le_bytes());
-                            let mut data = [0u8; 32];
-                            let data_length = std::cmp::min(md.payload.len(), 32);
-                            data[..data_length].copy_from_slice(&md.payload[..data_length]);
-                            sender
-                                .send(HostEvent::AdvertisementReceived(Advertisement {
-                                    company: md.company_identifier,
-                                    address: padded_mac,
-                                    data,
-                                    data_length: data_length as u8,
-                                    received_at: now,
-                                }))
-                                .unwrap();
+                            let manufacturer_data = ManufacturerData {
+                                manufacturer_id: md.company_identifier,
+                                data: md.payload.to_vec(),
+                            };
+                            // let data_length = std::cmp::min(md.payload.len(), 32);
+                            // data[..data_length].copy_from_slice(&md.payload[..data_length]);
+                            let event = BleEvent::Advertisement(Advertisement {
+                                address: u64::from_le_bytes(padded_mac),
+                                received_at: now,
+                                manufacturer_data: Some(manufacturer_data),
+                                service_data: Vec::new(),
+                            });
+                            sender.send(HostEvent::BleEvent(event)).unwrap();
                         }
                         None::<()>
                     })

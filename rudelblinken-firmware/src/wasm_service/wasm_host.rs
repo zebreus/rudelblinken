@@ -11,8 +11,8 @@ use esp_idf_hal::{
 use esp_idf_sys::adc_atten_t_ADC_ATTEN_DB_12;
 use rudelblinken_runtime::{
     host::{
-        self, Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo,
-        LogLevel, VibrationSensorType, VoltageSensorType,
+        self, AdvertisementSettings, AmbientLightType, BleEvent, Host, LedColor, LedInfo, LogLevel,
+        VibrationSensorType, VoltageSensorType,
     },
     linker::linker::WrappedCaller,
 };
@@ -112,7 +112,7 @@ pub enum WasmEvent {}
 /// Events sent from the host to the wasm guest
 pub enum HostEvent {
     /// Send whenever an advertisment was received
-    AdvertisementReceived(Advertisement),
+    BleEvent(BleEvent),
     /// The host requests the guest to shut down because the program changed
     ProgramChanged(),
 }
@@ -161,8 +161,16 @@ impl Host for WasmHost {
                 };
                 drop(receiver);
                 match event {
-                    HostEvent::AdvertisementReceived(advertisement) => {
-                        caller.on_advertisement(advertisement)?;
+                    HostEvent::BleEvent(advertisement) => {
+                        // Make sure we have enough fuel to process the event
+                        let fuel_before = caller.inner().get_fuel()?;
+                        let reset_fuel = caller.data().config.reset_fuel;
+                        caller.inner().set_fuel(reset_fuel as u64)?;
+
+                        caller.on_event(advertisement)?;
+
+                        // Restore the fuel
+                        caller.inner().set_fuel(fuel_before)?;
                     }
                     HostEvent::ProgramChanged() => {
                         // TODO: Improve termination behaviour
@@ -176,7 +184,7 @@ impl Host for WasmHost {
         }
 
         let reset_fuel = caller.data().config.reset_fuel;
-        caller.inner().set_fuel(reset_fuel as u64).unwrap();
+        caller.inner().set_fuel(reset_fuel as u64)?;
         Ok(reset_fuel)
     }
 

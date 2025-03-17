@@ -25,4 +25,4 @@ opt-level = "z"
 rudelblinken-sdk = { path = "../rudelblinken-sdk" }
 rudelblinken-sdk-macro = { path = "../rudelblinken-sdk-macro" }
 spin = "0.9.8"
-talc = "4.4.2"
+talc = { version = "4.4.2", features = ["counters"] }

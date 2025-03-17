@@ -19,6 +19,9 @@
 //! instance.run().unwrap();
 //! ```
 
+#![allow(internal_features)]
+#![feature(panic_internals)]
+
 pub mod emulated_host;
 pub mod host;
 pub mod linker;

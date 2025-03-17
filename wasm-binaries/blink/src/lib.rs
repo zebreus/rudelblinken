@@ -1,5 +1,5 @@
 use rudelblinken_sdk::{
-    export, exports, log, set_rgb, yield_now, Advertisement, BleGuest, Guest, LedColor, LogLevel,
+    export, exports, log, set_rgb, yield_now, BleEvent, BleGuest, Guest, LedColor, LogLevel,
 };
 use talc::{ClaimOnOom, Span, Talc, Talck};
 
@@ -33,7 +33,7 @@ impl Guest for TestGuest {
     }
 }
 impl BleGuest for TestGuest {
-    fn on_advertisement(_advertisement: Advertisement) {}
+    fn on_event(_event: BleEvent) {}
 }
 
 export! {TestGuest}

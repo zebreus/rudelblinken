@@ -1,4 +1,6 @@
-use rudelblinken_sdk::{get_voltage, log, set_leds, time, yield_now, Advertisement, LogLevel};
+use rudelblinken_sdk::{
+    get_voltage, log, set_leds, time, yield_now, Advertisement, BleEvent, LogLevel,
+};
 use spin::Once;
 use std::sync::{LazyLock, Mutex};
 
@@ -122,8 +124,8 @@ fn main() {
     }
 }
 
-#[rudelblinken_sdk_macro::on_advertisement]
-fn on_advertisement(_: Advertisement) {
+#[rudelblinken_sdk_macro::on_event]
+fn on_event(_: BleEvent) {
     let Ok(mut counter) = ADVERTISMENT_COUNTER.try_lock() else {
         return;
     };

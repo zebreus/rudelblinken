@@ -26,7 +26,9 @@ futures-time = "3.0.0"
 thiserror = "2.0.12"
 tokio = { version = "1.44.1", features = ["full"] }
 uuid = "1.16.0"
-rudelblinken-runtime = { path = "../rudelblinken-runtime", version = "0.1.0" }
+rudelblinken-runtime = { path = "../rudelblinken-runtime", version = "0.1.0", features = [
+    "serde",
+] }
 tempfile = "3.19.0"
 rand = "0.8.5"
 zerocopy = { version = "0.8.23", features = ["derive"] }
@@ -36,3 +38,5 @@ indicatif-log-bridge = "0.2.3"
 tokio-util = "0.7.14"
 espflash = { version = "3.3" }
 esp-idf-part = "0.5.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"

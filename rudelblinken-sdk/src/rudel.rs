@@ -824,18 +824,49 @@ pub mod exports {
             #[allow(dead_code, clippy::all)]
             pub mod ble_guest {
                 use super::super::super::super::_rt;
-                #[repr(C)]
-                #[derive(Clone, Copy)]
+                #[derive(Clone)]
+                pub struct ServiceData {
+                    pub uuid: u16,
+                    pub data: _rt::Vec<u8>,
+                }
+                impl ::core::fmt::Debug for ServiceData {
+                    fn fmt(
+                        &self,
+                        f: &mut ::core::fmt::Formatter<'_>,
+                    ) -> ::core::fmt::Result {
+                        f.debug_struct("ServiceData")
+                            .field("uuid", &self.uuid)
+                            .field("data", &self.data)
+                            .finish()
+                    }
+                }
+                #[derive(Clone)]
+                pub struct ManufacturerData {
+                    pub manufacturer_id: u16,
+                    pub data: _rt::Vec<u8>,
+                }
+                impl ::core::fmt::Debug for ManufacturerData {
+                    fn fmt(
+                        &self,
+                        f: &mut ::core::fmt::Formatter<'_>,
+                    ) -> ::core::fmt::Result {
+                        f.debug_struct("ManufacturerData")
+                            .field("manufacturer-id", &self.manufacturer_id)
+                            .field("data", &self.data)
+                            .finish()
+                    }
+                }
+                #[derive(Clone)]
                 pub struct Advertisement {
+                    /// The address of the sender 48bit integer
                     pub address: u64,
-                    /// Company identifier
-                    pub company: u16,
-                    /// 32 byte of data
-                    /// TODO: Figure out the limit
-                    pub data: (u32, u32, u32, u32, u32, u32, u32, u32),
-                    /// how many of the data bytes are actually used
-                    pub data_length: u8,
+                    /// When the advertisement was received
+                    /// There may be some delay between when the advertisement was received and when the WASM guest is notified
                     pub received_at: u64,
+                    /// Company identifier
+                    pub manufacturer_data: Option<ManufacturerData>,
+                    /// Service data
+                    pub service_data: _rt::Vec<ServiceData>,
                 }
                 impl ::core::fmt::Debug for Advertisement {
                     fn fmt(
@@ -844,66 +875,106 @@ pub mod exports {
                     ) -> ::core::fmt::Result {
                         f.debug_struct("Advertisement")
                             .field("address", &self.address)
-                            .field("company", &self.company)
-                            .field("data", &self.data)
-                            .field("data-length", &self.data_length)
                             .field("received-at", &self.received_at)
+                            .field("manufacturer-data", &self.manufacturer_data)
+                            .field("service-data", &self.service_data)
                             .finish()
+                    }
+                }
+                #[derive(Clone)]
+                pub enum BleEvent {
+                    Advertisement(Advertisement),
+                }
+                impl ::core::fmt::Debug for BleEvent {
+                    fn fmt(
+                        &self,
+                        f: &mut ::core::fmt::Formatter<'_>,
+                    ) -> ::core::fmt::Result {
+                        match self {
+                            BleEvent::Advertisement(e) => {
+                                f.debug_tuple("BleEvent::Advertisement").field(e).finish()
+                            }
+                        }
                     }
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_on_advertisement_cabi<T: Guest>(
-                    arg0: i64,
-                    arg1: i32,
-                    arg2: i32,
+                pub unsafe fn _export_on_event_cabi<T: Guest>(
+                    arg0: i32,
+                    arg1: i64,
+                    arg2: i64,
                     arg3: i32,
                     arg4: i32,
-                    arg5: i32,
-                    arg6: i32,
-                    arg7: i32,
-                    arg8: i32,
-                    arg9: i32,
-                    arg10: i32,
-                    arg11: i64,
+                    arg5: *mut u8,
+                    arg6: usize,
+                    arg7: *mut u8,
+                    arg8: usize,
                 ) {
                     #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
-                    T::on_advertisement(Advertisement {
-                        address: arg0 as u64,
-                        company: arg1 as u16,
-                        data: (
-                            arg2 as u32,
-                            arg3 as u32,
-                            arg4 as u32,
-                            arg5 as u32,
-                            arg6 as u32,
-                            arg7 as u32,
-                            arg8 as u32,
-                            arg9 as u32,
-                        ),
-                        data_length: arg10 as u8,
-                        received_at: arg11 as u64,
-                    });
+                    let v6 = match arg0 {
+                        n => {
+                            debug_assert_eq!(n, 0, "invalid enum discriminant");
+                            let e6 = {
+                                let base5 = arg7;
+                                let len5 = arg8;
+                                let mut result5 = _rt::Vec::with_capacity(len5);
+                                for i in 0..len5 {
+                                    let base = base5.add(i * 12);
+                                    let e5 = {
+                                        let l1 = i32::from(*base.add(0).cast::<u16>());
+                                        let l2 = *base.add(4).cast::<*mut u8>();
+                                        let l3 = *base.add(8).cast::<usize>();
+                                        let len4 = l3;
+                                        ServiceData {
+                                            uuid: l1 as u16,
+                                            data: _rt::Vec::from_raw_parts(l2.cast(), len4, len4),
+                                        }
+                                    };
+                                    result5.push(e5);
+                                }
+                                _rt::cabi_dealloc(base5, len5 * 12, 4);
+                                Advertisement {
+                                    address: arg1 as u64,
+                                    received_at: arg2 as u64,
+                                    manufacturer_data: match arg3 {
+                                        0 => None,
+                                        1 => {
+                                            let e = {
+                                                let len0 = arg6;
+                                                ManufacturerData {
+                                                    manufacturer_id: arg4 as u16,
+                                                    data: _rt::Vec::from_raw_parts(arg5.cast(), len0, len0),
+                                                }
+                                            };
+                                            Some(e)
+                                        }
+                                        _ => _rt::invalid_enum_discriminant(),
+                                    },
+                                    service_data: result5,
+                                }
+                            };
+                            BleEvent::Advertisement(e6)
+                        }
+                    };
+                    T::on_event(v6);
                 }
                 pub trait Guest {
                     /// Check if the ble module is implemented
                     ///
                     /// The rudelblinken runtime will mock out all functions the it can not link.
                     /// If this function returns false you should not use any of the other functions
-                    fn on_advertisement(advertisement: Advertisement);
+                    fn on_event(event: BleEvent);
                 }
                 #[doc(hidden)]
                 #[macro_export]
                 macro_rules! __export_rudel_base_ble_guest_0_0_1_cabi {
                     ($ty:ident with_types_in $($path_to_types:tt)*) => {
                         const _ : () = { #[export_name =
-                        "rudel:base/ble-guest@0.0.1#on-advertisement"] unsafe extern "C"
-                        fn export_on_advertisement(arg0 : i64, arg1 : i32, arg2 : i32,
-                        arg3 : i32, arg4 : i32, arg5 : i32, arg6 : i32, arg7 : i32, arg8
-                        : i32, arg9 : i32, arg10 : i32, arg11 : i64,) {
-                        $($path_to_types)*:: _export_on_advertisement_cabi::<$ty > (arg0,
-                        arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10,
-                        arg11) } };
+                        "rudel:base/ble-guest@0.0.1#on-event"] unsafe extern "C" fn
+                        export_on_event(arg0 : i32, arg1 : i64, arg2 : i64, arg3 : i32,
+                        arg4 : i32, arg5 : * mut u8, arg6 : usize, arg7 : * mut u8, arg8
+                        : usize,) { $($path_to_types)*:: _export_on_event_cabi::<$ty >
+                        (arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) } };
                     };
                 }
                 #[doc(hidden)]
@@ -911,6 +982,7 @@ pub mod exports {
             }
             #[allow(dead_code, clippy::all)]
             pub mod run {
+                #[allow(unused_imports)]
                 use super::super::super::super::_rt;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -1026,7 +1098,22 @@ mod _rt {
     pub fn run_ctors_once() {
         wit_bindgen::rt::run_ctors_once();
     }
+    pub unsafe fn invalid_enum_discriminant<T>() -> T {
+        if cfg!(debug_assertions) {
+            panic!("invalid enum discriminant")
+        } else {
+            core::hint::unreachable_unchecked()
+        }
+    }
+    pub unsafe fn cabi_dealloc(ptr: *mut u8, size: usize, align: usize) {
+        if size == 0 {
+            return;
+        }
+        let layout = alloc::Layout::from_size_align_unchecked(size, align);
+        alloc::dealloc(ptr, layout);
+    }
     extern crate alloc as alloc_crate;
+    pub use alloc_crate::alloc;
 }
 /// Generates `#[no_mangle]` functions to export the specified type as the
 /// root implementation of all generated traits.
@@ -1060,9 +1147,9 @@ macro_rules! __export_rudel_impl {
         $($path_to_types_root)*:: exports::rudel::base::run); const _ : () = {
         #[cfg(target_arch = "wasm32")] #[link_section =
         "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel:imports and exports"]
-        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 1492] = *
+        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 1596] = *
         b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd8\x0a\x01A\x02\x01\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc0\x0b\x01A\x02\x01\
 A\x0b\x01B\x16\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
 \0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\x01\x06microsw\0y\x04\
@@ -1087,13 +1174,16 @@ rudel:base/hardware@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10semantic
 nt-settings\x03\0\x02\x01p}\x04\0\x12advertisement-data\x03\0\x04\x01@\0\0\x01\x04\
 \0\x0fget-ble-version\x01\x06\x01@\x01\x08settings\x03\0y\x04\0\x17configure-adv\
 ertisement\x01\x07\x01@\x01\x04data\x05\0y\x04\0\x16set-advertisement-data\x01\x08\
-\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x01B\x05\x01o\x08yyyyyyyy\x01r\x05\x07add\
-ressw\x07company{\x04data\0\x0bdata-length}\x0breceived-atw\x04\0\x0dadvertiseme\
-nt\x03\0\x01\x01@\x01\x0dadvertisement\x02\x01\0\x04\0\x10on-advertisement\x01\x03\
-\x04\0\x1arudel:base/ble-guest@0.0.1\x05\x04\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\
-\0\x04\0\x14rudel:base/run@0.0.1\x05\x05\x04\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\
-\x0b\x01\0\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-compo\
-nent\x070.220.0\x10wit-bindgen-rust\x060.36.0";
+\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x01B\x0d\x01p}\x01r\x02\x04uuid{\x04data\0\
+\x04\0\x0cservice-data\x03\0\x01\x01r\x02\x0fmanufacturer-id{\x04data\0\x04\0\x11\
+manufacturer-data\x03\0\x03\x01k\x04\x01p\x02\x01r\x04\x07addressw\x0breceived-a\
+tw\x11manufacturer-data\x05\x0cservice-data\x06\x04\0\x0dadvertisement\x03\0\x07\
+\x01q\x01\x0dadvertisement\x01\x08\0\x04\0\x09ble-event\x03\0\x09\x01@\x01\x05ev\
+ent\x0a\x01\0\x04\0\x08on-event\x01\x0b\x04\0\x1arudel:base/ble-guest@0.0.1\x05\x04\
+\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\0\x04\0\x14rudel:base/run@0.0.1\x05\x05\x04\
+\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\x0b\x01\0\x05rudel\x03\0\0\0G\x09producer\
+s\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bindgen-rust\x060.3\
+6.0";
         };
     };
 }

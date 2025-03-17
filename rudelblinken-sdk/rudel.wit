@@ -238,17 +238,31 @@ interface ble {
 
 @since(version = 0.0.1)
 interface ble-guest {
+    variant ble-event {
+        advertisement(advertisement),
+
+    }
+
+    record service-data {
+        uuid: u16,
+        data: list<u8>,
+    }
+    record manufacturer-data {
+        manufacturer-id: u16,
+        data: list<u8>,
+    }
+
     @since(version = 0.0.1)
     record advertisement {
+        // The address of the sender 48bit integer
         address: u64,
-        // Company identifier
-        company: u16,
-        // 32 byte of data
-        // TODO: Figure out the limit
-        data: tuple<u32, u32, u32, u32, u32, u32, u32, u32>,
-        // how many of the data bytes are actually used
-        data-length: u8,
+        // When the advertisement was received
+        // There may be some delay between when the advertisement was received and when the WASM guest is notified
         received-at: u64,
+        // Company identifier
+        manufacturer-data: option<manufacturer-data>,
+        // Service data
+        service-data: list<service-data>,
     }
 
     /// Check if the ble module is implemented
@@ -256,5 +270,5 @@ interface ble-guest {
     /// The rudelblinken runtime will mock out all functions the it can not link.
     /// If this function returns false you should not use any of the other functions
     @since(version = 0.0.1)
-    on-advertisement: func(advertisement: advertisement) -> ();
+    on-event: func(event: ble-event);
 }

@@ -9,5 +9,10 @@ readme = "README.md"
 categories = ["wasm", "embedded"]
 keywords = ["rudelblinken", "wasm"]
 
+[features]
+default = []
+serde = ["dep:serde"]
+
 [dependencies]
 wasmi = "0.40.0"
+serde = { version = "1.0.219", features = ["derive"], optional = true }

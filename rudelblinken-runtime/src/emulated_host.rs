@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     host::{
-        Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo, LogLevel,
+        AdvertisementSettings, AmbientLightType, BleEvent, Host, LedColor, LedInfo, LogLevel,
         VibrationSensorType, VoltageSensorType,
     },
     linker::linker::WrappedCaller,
@@ -13,7 +13,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    AdvertisementReceived(Advertisement),
+    EventReceived(BleEvent),
 }
 
 pub struct EmulatedHost {
@@ -39,8 +39,8 @@ impl Host for EmulatedHost {
         std::thread::sleep(Duration::from_micros(micros));
         while let Ok(event) = caller.data_mut().events.try_recv() {
             match event {
-                Event::AdvertisementReceived(advertisement) => {
-                    caller.on_advertisement(advertisement)?;
+                Event::EventReceived(ble_event) => {
+                    caller.on_event(ble_event)?;
                 }
             }
         }

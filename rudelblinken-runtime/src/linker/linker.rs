@@ -1,9 +1,9 @@
-use crate::host::{
-    Advertisement, AdvertisementSettings, Host, LedColor, LedInfo, LogLevel, SemanticVersion,
-};
+use super::glue;
+use crate::host::{Host, LedColor, LedInfo, LogLevel, SemanticVersion};
+pub use link_ble::link_ble;
 use wasmi::{Caller, Extern, Func, Linker, Memory, Store};
 
-use super::glue;
+mod link_ble;
 
 #[repr(transparent)]
 pub struct WrappedCaller<'a, T: Host + Sized>(Caller<'a, T>);
@@ -41,7 +41,16 @@ impl<'a, T: Host> WrappedCaller<'a, T> {
             ));
         };
 
-        run.call(&mut self.0, (ptr, old_size, align, new_size))
+        let pointer = run.call(&mut self.0, (ptr, old_size, align, new_size));
+        // eprintln!(
+        //     "Reallocating {} bytes from {} to {}",
+        //     old_size, ptr, new_size
+        // );
+        // println!(
+        //     "Reallocating {} bytes from {} to {}",
+        //     old_size, ptr, new_size
+        // );
+        return pointer;
     }
 
     pub fn run(&mut self) -> Result<(), wasmi::Error> {
@@ -60,45 +69,65 @@ impl<'a, T: Host> WrappedCaller<'a, T> {
         return Ok(());
     }
 
-    pub fn on_advertisement(&mut self, advertisement: Advertisement) -> Result<(), wasmi::Error> {
-        let Some(run) = self
-            .0
-            .get_export("rudel:base/ble-guest@0.0.1#on-advertisement")
-        else {
-            return Err(wasmi::Error::new("on-advertisement not found"));
-        };
-        let Extern::Func(run) = run else {
-            return Err(wasmi::Error::new("on-advertisement is not a function"));
-        };
-        let Ok(run) =
-            run.typed::<(u64, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u64), ()>(&self.0)
-        else {
-            return Err(wasmi::Error::new(
-                "on-advertisement does not have a matching function signature",
-            ));
-        };
+    fn get_memory(&self) -> Result<Memory, wasmi::Error> {
+        match self.0.get_export("memory") {
+            Some(wasmi::Extern::Memory(mem)) => Ok(mem),
+            _ => Err(wasmi::Error::new(
+                "memory not found. Does the guest export 'memory'?",
+            )),
+        }
+    }
 
-        let address = u64::from_le_bytes(advertisement.address);
-        let company = advertisement.company as u32;
-        let data = unsafe { std::mem::transmute::<[u8; 32], [u32; 8]>(advertisement.data) };
-        run.call(
-            &mut self.0,
-            (
-                address,
-                company,
-                data[0],
-                data[1],
-                data[2],
-                data[3],
-                data[4],
-                data[5],
-                data[6],
-                data[7],
-                advertisement.data_length as u32,
-                advertisement.received_at,
-            ),
-        )?;
-        return Ok(());
+    fn get_mut_slice(
+        &mut self,
+        offset: u32,
+        length: u32,
+    ) -> Result<&'static mut [u8], wasmi::Error> {
+        let memory = self.get_memory()?;
+        let slice = memory
+            .data_mut(&mut self.0)
+            .get_mut(offset as usize..)
+            .ok_or(wasmi::Error::new("pointer out of bounds"))?
+            .get_mut(..length as usize)
+            .ok_or(wasmi::Error::new("length out of bounds"))?;
+
+        let static_slice = unsafe { std::mem::transmute::<&mut [u8], &'static mut [u8]>(slice) };
+
+        return Ok(static_slice);
+    }
+
+    fn get_slice(&self, offset: u32, length: u32) -> Result<&'static [u8], wasmi::Error> {
+        let memory = self.get_memory()?;
+        let slice = memory
+            .data(&self.0)
+            .get(offset as u32 as usize..)
+            .ok_or(wasmi::Error::new("pointer out of bounds"))?
+            .get(..length as u32 as usize)
+            .ok_or(wasmi::Error::new("length out of bounds"))?;
+
+        let static_slice = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(slice) };
+
+        return Ok(static_slice);
+    }
+
+    fn get_mut_array<const L: usize>(
+        &mut self,
+        offset: u32,
+    ) -> Result<&'static mut [u8; L], wasmi::Error> {
+        let memory = self.get_memory()?;
+
+        let data = memory
+            .data_mut(&mut self.0)
+            .get_mut(offset as u32 as usize..)
+            .ok_or(wasmi::Error::new("pointer out of bounds"))?
+            .get_mut(..L)
+            .ok_or(wasmi::Error::new("length out of bounds"))?;
+
+        let data_array: &mut [u8; L] = unsafe { data.try_into().unwrap_unchecked() };
+
+        let static_result =
+            unsafe { std::mem::transmute::<&mut [u8; L], &'static mut [u8; L]>(data_array) };
+        return Ok(static_result);
     }
 }
 
@@ -569,85 +598,6 @@ pub fn link_hardware<T: Host>(
             |caller: Caller<'_, T>| -> Result<i32, wasmi::Error> {
                 let caller = WrappedCaller(caller);
                 return glue::get_voltage(caller).map(|result| result as i32);
-            },
-        ),
-    )?;
-
-    return Ok(());
-}
-
-/// Link the led functions provided by T.
-///
-/// This functions will provide the rudel-host functions to the linker by generating glue code for the functionality provided by the host implementation T
-pub fn link_ble<T: Host>(
-    linker: &mut Linker<T>,
-    mut store: &mut Store<T>,
-) -> Result<(), wasmi::Error> {
-    // __attribute__((__import_module__("rudel:base/ble@0.0.1"), __import_name__("get-ble-version")))
-    // extern void __wasm_import_rudel_base_ble_get_ble_version(uint8_t *);
-    link_function(
-        linker,
-        "rudel:base/ble",
-        "get-ble-version",
-        Func::wrap(
-            &mut store,
-            |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
-                let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
-                let slice = get_mut_slice(&memory, caller.as_mut(), offset as u32, 4)?;
-                // SAFETY: Should be safe because the layout should match
-                let version = unsafe {
-                    std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())
-                };
-                let version_ref = unsafe { &mut *version };
-                glue::get_ble_version(caller, version_ref)?;
-
-                return Ok(());
-            },
-        ),
-    )?;
-
-    // __attribute__((__import_module__("rudel:base/ble@0.0.1"), __import_name__("configure-advertisement")))
-    // extern void __wasm_import_rudel_base_ble_configure_advertisement(int32_t, int32_t);
-    link_function(
-        linker,
-        "rudel:base/ble",
-        "configure-advertisement",
-        Func::wrap(
-            &mut store,
-            |caller: Caller<'_, T>,
-             min_interval: i32,
-             max_interval: i32|
-             -> Result<u32, wasmi::Error> {
-                let caller = WrappedCaller(caller);
-
-                glue::configure_advertisement(
-                    caller,
-                    AdvertisementSettings {
-                        max_interval: max_interval as u16,
-                        min_interval: min_interval as u16,
-                    },
-                )
-            },
-        ),
-    )?;
-
-    // __attribute__((__import_module__("rudel:base/ble@0.0.1"), __import_name__("set-advertisement-data")))
-    // extern void __wasm_import_rudel_base_ble_set_advertisement_data(uint8_t *, size_t);
-    link_function(
-        linker,
-        "rudel:base/ble",
-        "set-advertisement-data",
-        Func::wrap(
-            &mut store,
-            |caller: Caller<'_, T>, offset: i32, length: i32| -> Result<u32, wasmi::Error> {
-                let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
-                let slice = get_slice(&memory, caller.as_mut(), offset, length)?;
-                // // Remove lifetime
-                // let data = unsafe { std::slice::from_raw_parts(slice.as_ptr(), length as usize) };
-
-                glue::set_advertisement_data(caller, slice)
             },
         ),
     )?;

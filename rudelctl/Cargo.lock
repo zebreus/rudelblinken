@@ -540,7 +540,7 @@ dependencies = [
  "bitflags 2.6.0",
  "crossterm_winapi",
  "parking_lot",
- "rustix 0.38.42",
+ "rustix 0.38.44",
  "winapi",
 ]
 
@@ -2341,6 +2341,7 @@ dependencies = [
 name = "rudelblinken-runtime"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "wasmi",
 ]
 
@@ -2363,6 +2364,8 @@ dependencies = [
  "log",
  "rand",
  "rudelblinken-runtime",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
@@ -2399,9 +2402,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.42"
+version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f93dc38ecbab2eb790ff964bb77fa94faf256fd3e73285fd7ba0903b76bedb85"
+checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
 dependencies = [
  "bitflags 2.6.0",
  "errno",
@@ -2524,9 +2527,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.129"
+version = "1.0.140"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6dbcf9b78a125ee667ae19388837dd12294b858d101fdd393cb9d5501ef09eb2"
+checksum = "20068b6e96dc6c9bd23e01df8827e6c7e1f2fddd43c21810382803c136b99373"
 dependencies = [
  "itoa",
  "memchr",

@@ -1,7 +1,6 @@
 use rudelblinken_sdk::{
-    export,
-    exports::{self},
-    set_advertisement_data, set_leds, time, yield_now, Advertisement, BleGuest, Guest,
+    export, exports, log, set_advertisement_data, set_leds, time, yield_now, BleEvent, BleGuest,
+    Guest, LogLevel,
 };
 use std::sync::{LazyLock, Mutex};
 use talc::{ClaimOnOom, Span, Talc, Talck};
@@ -115,14 +114,19 @@ impl Guest for Test {
 }
 
 impl BleGuest for Test {
-    fn on_advertisement(advertisement: Advertisement) {
-        let data = unsafe {
-            std::mem::transmute::<[u32; 8], [u8; 32]>(
-                advertisement.data.try_into().unwrap_unchecked(),
-            )
+    fn on_event(event: BleEvent) {
+        let BleEvent::Advertisement(advertisement) = event;
+        let Some(data) = advertisement.manufacturer_data else {
+            return;
         };
-        let slice = &data[0..(advertisement.data_length as usize)];
-        let [0xca, 0x7e, 0xa2, other_progress] = slice else {
+
+        if data.manufacturer_id != 0 {
+            return;
+        }
+
+        log(LogLevel::Info, "Received advertisement");
+
+        let [0xca, 0x7e, 0xa2, other_progress] = data.data.as_slice() else {
             return;
         };
 

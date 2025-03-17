@@ -1,11 +1,9 @@
 use std::sync::{LazyLock, Mutex};
 
 use rudelblinken_sdk::{
-    export,
-    exports::{self},
-    get_ambient_light, get_config, get_led_info, get_name, get_vibration, led_count, log,
-    set_advertisement_data, set_rgb, sleep, time, yield_now, Advertisement, BleGuest, Guest,
-    LedColor, LogLevel,
+    export, exports, get_ambient_light, get_config, get_led_info, get_name, get_vibration,
+    led_count, log, set_advertisement_data, set_rgb, sleep, time, yield_now, BleEvent, BleGuest,
+    Guest, LedColor, LogLevel,
 };
 use talc::{ClaimOnOom, Span, Talc, Talck};
 
@@ -189,13 +187,12 @@ impl Guest for Test {
 }
 
 impl BleGuest for Test {
-    fn on_advertisement(advertisement: Advertisement) {
-        let data = unsafe {
-            std::mem::transmute::<[u32; 8], [u8; 32]>(
-                advertisement.data.try_into().unwrap_unchecked(),
-            )
+    fn on_event(event: BleEvent) {
+        let BleEvent::Advertisement(advertisement) = event;
+        let Some(data) = advertisement.manufacturer_data else {
+            return;
         };
-        let slice = &data[0..(advertisement.data_length as usize)];
+        let slice = data.data.as_slice();
         if slice.len() == 4 && slice[0] == 0x0ca && slice[1] == 0x7e && slice[2] == 0xa2 {
             if let Ok(mut state) = CYCLE_STATE.try_lock() {
                 state.off_cnt += 1;
@@ -205,5 +202,9 @@ impl BleGuest for Test {
         }
     }
 }
+
+// We need a main function to be able to `cargo run` this project
+#[allow(dead_code)]
+fn main() {}
 
 export! {Test}

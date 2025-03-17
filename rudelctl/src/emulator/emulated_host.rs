@@ -1,6 +1,6 @@
 use rudelblinken_runtime::{
     host::{
-        Advertisement, AdvertisementSettings, AmbientLightType, Host, LedColor, LedInfo, LogLevel,
+        AdvertisementSettings, AmbientLightType, BleEvent, Host, LedColor, LedInfo, LogLevel,
         VibrationSensorType, VoltageSensorType,
     },
     linker::linker::WrappedCaller,
@@ -17,7 +17,7 @@ pub enum WasmEvent {
 }
 
 pub enum HostEvent {
-    AdvertisementReceived(Advertisement),
+    BleEvent(BleEvent),
 }
 
 pub struct EmulatedHost {
@@ -61,8 +61,8 @@ impl Host for EmulatedHost {
         loop {
             while let Ok(event) = caller.data_mut().host_events.try_recv() {
                 match event {
-                    HostEvent::AdvertisementReceived(advertisement) => {
-                        caller.on_advertisement(advertisement)?;
+                    HostEvent::BleEvent(ble_event) => {
+                        caller.on_event(ble_event)?;
                     }
                 }
             }

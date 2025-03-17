@@ -2,6 +2,7 @@
 mod emulated_host;
 use clap::Args;
 use emulated_host::{EmulatedHost, HostEvent};
+use rudelblinken_runtime::host::{Advertisement, BleEvent, ManufacturerData};
 use std::{
     ffi::OsStr,
     path::PathBuf,
@@ -13,7 +14,7 @@ use tokio::{
     net::UnixDatagram,
     time::interval,
 };
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes};
+use zerocopy::{Immutable, IntoBytes, KnownLayout, TryFromBytes};
 
 #[derive(Error, Debug)]
 pub enum EmulatorError {
@@ -61,17 +62,6 @@ fn mac_to_name(mac: &[u8; 6]) -> String {
         "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
     )
-}
-
-#[repr(packed)]
-#[derive(IntoBytes, FromBytes, Clone, Copy, KnownLayout, Immutable)]
-pub struct Advertisement {
-    pub company: u16,
-    pub address: [u8; 6],
-    /// 32 byte of data
-    pub data: [u8; 32],
-    /// how many of the data bytes are actually used
-    pub data_length: u8,
 }
 
 #[repr(C)]
@@ -190,29 +180,18 @@ impl Emulator {
 
                     match data_type {
                         DataType::Advertisement => {
-                            let Ok(received_advertisement) = Advertisement::try_ref_from_bytes(content)
-                            else {
-                                break;
+                            let Ok(ble_event) = serde_json::from_slice::<BleEvent>(content) else {
+                                // Failed to parse the advertisement
+                                  break;
                             };
-                            let advertisement = rudelblinken_runtime::host::Advertisement {
-                                address: [
-                                    received_advertisement.address[0],
-                                    received_advertisement.address[1],
-                                    received_advertisement.address[2],
-                                    received_advertisement.address[3],
-                                    received_advertisement.address[4],
-                                    received_advertisement.address[5],
-                                    0,
-                                    0,
-                                ],
-                                company: received_advertisement.company,
-                                data: received_advertisement.data,
-                                data_length: received_advertisement.data_length,
-                                received_at: start_time.elapsed().as_micros() as u64,
+                            let ble_event = match ble_event {
+                                BleEvent::Advertisement(mut adv) => {
+                                    adv.received_at = start_time.elapsed().as_micros() as u64;
+                                    BleEvent::Advertisement(adv)}
                             };
 
                             sender
-                                .send(HostEvent::AdvertisementReceived(advertisement))
+                                .send(HostEvent::BleEvent(ble_event))
                                 .await
                                 .unwrap();
                         }
@@ -234,18 +213,30 @@ impl Emulator {
                     data_packet.extend_from_slice(&DataType::Advertisement.as_bytes()[..1]);
 
 
-                    let mut advertisment_data_array = [0u8; 32];
-                    let advertisment_data_length = std::cmp::min(32, advertisment_data.len());
-                    advertisment_data_array[0..advertisment_data_length]
-                        .copy_from_slice(&advertisment_data[0..advertisment_data_length]);
-                    let advertisement = Advertisement {
-                        company: 0u16,
-                        address: self.address,
-                        data: advertisment_data_array,
-                        data_length: advertisment_data_length as u8,
-                    };
-                    let advertisement_data = advertisement.as_bytes();
-                    data_packet.extend_from_slice(advertisement_data);
+                    // let mut advertisment_data_array = [0u8; 32];
+                    // let advertisment_data_length = std::cmp::min(32, advertisment_data.len());
+                    // advertisment_data_array[0..advertisment_data_length]
+                    //     .copy_from_slice(&advertisment_data[0..advertisment_data_length]);
+                    let ble_event = BleEvent::Advertisement(Advertisement {
+                        address:u64::from_le_bytes([
+                            self.address[0],
+                            self.address[1],
+                            self.address[2],
+                            self.address[3],
+                            self.address[4],
+                            self.address[5],
+                            0,
+                            0
+                        ]),
+                        received_at: 0,
+                        manufacturer_data: Some(ManufacturerData{
+                            manufacturer_id: 0,
+                            data: advertisment_data.clone()
+                        }),
+                        service_data: Vec::new()
+                    });
+                    let event_slice = serde_json::to_vec(&ble_event).unwrap();
+                    data_packet.extend_from_slice(&event_slice);
 
                     self.broadcast(&data_packet).await.unwrap();
                 }

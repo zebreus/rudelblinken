@@ -10,3 +10,10 @@ crate-type = ["cdylib"]
 rudelblinken-sdk.workspace = true
 spin.workspace = true
 talc.workspace = true
+
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+panic = "abort"
+codegen-units = 1

@@ -1,3 +1,5 @@
+//! Contains the structs that are used to interact with the host system.
+
 use crate::linker::linker::WrappedCaller;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -140,18 +142,6 @@ impl VoltageSensorType {
     }
 }
 
-#[repr(C, align(4))]
-#[derive(Clone, Copy, Debug)]
-pub struct Advertisement {
-    pub company: u16,
-    pub address: [u8; 8],
-    /// 32 byte of data
-    pub data: [u8; 32],
-    /// how many of the data bytes are actually used
-    pub data_length: u8,
-    pub received_at: u64,
-}
-
 /// Configure the BLE advertisements
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -165,6 +155,76 @@ impl ::core::fmt::Debug for AdvertisementSettings {
             .field("min-interval", &self.min_interval)
             .field("max-interval", &self.max_interval)
             .finish()
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
+pub struct ServiceData {
+    pub uuid: u16,
+    pub data: Vec<u8>,
+}
+impl ::core::fmt::Debug for ServiceData {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("ServiceData")
+            .field("uuid", &self.uuid)
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
+pub struct ManufacturerData {
+    pub manufacturer_id: u16,
+    pub data: Vec<u8>,
+}
+impl ::core::fmt::Debug for ManufacturerData {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("ManufacturerData")
+            .field("manufacturer-id", &self.manufacturer_id)
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
+pub struct Advertisement {
+    /// The address of the sender 48bit integer
+    pub address: u64,
+    /// When the advertisement was received
+    /// There may be some delay between when the advertisement was received and when the WASM guest is notified
+    pub received_at: u64,
+    /// Company identifier
+    pub manufacturer_data: Option<ManufacturerData>,
+    /// Service data
+    pub service_data: Vec<ServiceData>,
+}
+
+impl ::core::fmt::Debug for Advertisement {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("Advertisement")
+            .field("address", &self.address)
+            .field("received-at", &self.received_at)
+            .field("manufacturer-data", &self.manufacturer_data)
+            .field("service-data", &self.service_data)
+            .finish()
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone)]
+pub enum BleEvent {
+    Advertisement(Advertisement),
+}
+impl ::core::fmt::Debug for BleEvent {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        match self {
+            BleEvent::Advertisement(e) => {
+                f.debug_tuple("BleEvent::Advertisement").field(e).finish()
+            }
+        }
     }
 }
 

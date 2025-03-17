@@ -3,5 +3,5 @@ pub fn main() {
     println!("Hello, world!");
 }
 
-#[rudelblinken_sdk_macro::on_advertisement]
-fn on_advertisement(_: rudelblinken_sdk::Advertisement) {}
+#[rudelblinken_sdk_macro::on_event]
+fn on_event(_: rudelblinken_sdk::BleEvent) {}
