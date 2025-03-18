@@ -239,7 +239,7 @@ interface ble {
 @since(version = 0.0.1)
 interface ble-guest {
     // A ble event
-    // For now only advertisments
+    // For now only advertisements
     variant ble-event {
         advertisement(advertisement),
     }
@@ -264,7 +264,7 @@ interface ble-guest {
     }
 
     // TODO: Check order
-    flags advertisment-flags {
+    flags advertisement-flags {
         // LE Limited Discoverable Mode
         limited-discoverable,
         // LE General Discoverable Mode
@@ -279,7 +279,7 @@ interface ble-guest {
         // le-only-general-discoverable,
     }
 
-    enum advertisment-type {
+    enum advertisement-type {
         // indirect advertising
         indirect,
         // direct advertising
@@ -292,13 +292,13 @@ interface ble-guest {
         scan-response
     }
 
-    // Decoded BLE advertisment
+    // Decoded BLE advertisement
     @since(version = 0.0.1)
     record decoded-data {
         // name of the remote device
         name: option<string>,
         // flags
-        advertisment-flags: advertisment-flags,
+        advertisement-flags: advertisement-flags,
         // tx power
         tx-power: option<u8>,
         // service UUIDs
@@ -313,13 +313,13 @@ interface ble-guest {
 
     @since(version = 0.0.1)
     variant advertisement-data {
-        // Decoded advertisment data
+        // Decoded advertisement data
         decoded(decoded-data),
-        // Raw advertisment data. Returned if there were some fields that failed decoding
+        // Raw advertisement data. Returned if there were some fields that failed decoding
         raw(list<u8>)
     }
 
-    // Decoded BLE advertisment
+    // Decoded BLE advertisement
     @since(version = 0.0.1)
     record advertisement {
         // When the advertisement was received
@@ -329,8 +329,8 @@ interface ble-guest {
         address: u64,
         // Received signal strength
         rssi: s8,
-        // Received advertisment type
-        advertisment-type: advertisment-type,
+        // Received advertisement type
+        advertisement-type: advertisement-type,
 
         // Received data
         // Will be decoded if it can be decoded
