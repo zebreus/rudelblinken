@@ -53,7 +53,7 @@ interface base {
 
     /// Log a message
     @since(version = 0.0.1)
-    log: func(level: log-level, message: string)  -> ();
+    log: func(level: log-level, message: string);
 
     /// The name of this host. It is guaranteed to be unique, and will not change during the lifetime of the host.
     ///
@@ -238,31 +238,103 @@ interface ble {
 
 @since(version = 0.0.1)
 interface ble-guest {
+    // A ble event
+    // For now only advertisments
     variant ble-event {
         advertisement(advertisement),
-
     }
 
+    // A service UUID, can be a shortened one
+    variant service-uuid {
+        uuid16(u16),
+        uuid32(u32),
+        uuid128(tuple<u64,u64>),
+    }
+
+    // Service specific data
     record service-data {
-        uuid: u16,
+        uuid: service-uuid,
         data: list<u8>,
     }
+
+    // Manufacturer specific data
     record manufacturer-data {
-        manufacturer-id: u16,
+        company-id: u16,
         data: list<u8>,
+    }
+
+    // TODO: Check order
+    flags advertisment-flags {
+        // LE Limited Discoverable Mode
+        limited-discoverable,
+        // LE General Discoverable Mode
+        general-discoverable,
+        // BR/EDR Not Supported
+        br-edr-not-supported,
+        // Simultaneous LE and BR/EDR to Same Device Capable (Controller)
+        simultaneous-controller,
+        // Simultaneous LE and BR/EDR to Same Device Capable (Host)
+        simultaneous-host,
+        // le-only-limited-discoverable,
+        // le-only-general-discoverable,
+    }
+
+    enum advertisment-type {
+        // indirect advertising
+        indirect,
+        // direct advertising
+        direct-ind,
+        // indirect scan response
+        indirect-scan,
+        // indirect advertising - not connectable
+        indirect-not-connectable,
+        // scan responst
+        scan-response
+    }
+
+    // Decoded BLE advertisment
+    @since(version = 0.0.1)
+    record decoded-data {
+        // name of the remote device
+        name: option<string>,
+        // flags
+        advertisment-flags: advertisment-flags,
+        // tx power
+        tx-power: option<u8>,
+        // service UUIDs
+        uuids: list<service-uuid>,
+        // service data
+        service-data: list<service-data>,
+        // appearance
+        appearance: option<u16>,
+        // manufacturer specific data
+        manufacturer-data: option<manufacturer-data>,
     }
 
     @since(version = 0.0.1)
+    variant advertisement-data {
+        // Decoded advertisment data
+        decoded(decoded-data),
+        // Raw advertisment data. Returned if there were some fields that failed decoding
+        raw(list<u8>)
+    }
+
+    // Decoded BLE advertisment
+    @since(version = 0.0.1)
     record advertisement {
-        // The address of the sender 48bit integer
-        address: u64,
         // When the advertisement was received
         // There may be some delay between when the advertisement was received and when the WASM guest is notified
         received-at: u64,
-        // Company identifier
-        manufacturer-data: option<manufacturer-data>,
-        // Service data
-        service-data: list<service-data>,
+        // The address of the sender 48bit integer
+        address: u64,
+        // Received signal strength
+        rssi: s8,
+        // Received advertisment type
+        advertisment-type: advertisment-type,
+
+        // Received data
+        // Will be decoded if it can be decoded
+        data: advertisement-data,
     }
 
     /// Check if the ble module is implemented
