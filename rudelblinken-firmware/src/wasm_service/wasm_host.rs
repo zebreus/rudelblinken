@@ -24,7 +24,7 @@ use std::{
 
 use crate::{
     config::{self, get_config, LedStripColor, WasmGuestConfig},
-    create_ble_advertisment, BLE_DEVICE,
+    create_ble_advertisement, BLE_DEVICE,
 };
 
 pub static LED_PIN: LazyLock<Mutex<LedcDriver<'static>>> = LazyLock::new(|| {
@@ -362,8 +362,8 @@ impl Host for WasmHost {
             .stop()
             .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
 
-        let mut advertisment = create_ble_advertisment(Some(&data));
-        if let Err(_) = ble_advertising.set_data(&mut advertisment) {
+        let mut advertisement = create_ble_advertisement(Some(&data));
+        if let Err(_) = ble_advertising.set_data(&mut advertisement) {
             return Ok(1);
         }
         ble_advertising

@@ -165,7 +165,7 @@ pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>
 /// Create an BLE advertisement data with the given manufacturer data and common rudelblinken data
 ///
 /// This also updates the device name
-pub fn create_ble_advertisment(data: Option<&[u8]>) -> BLEAdvertisementData {
+pub fn create_ble_advertisement(data: Option<&[u8]>) -> BLEAdvertisementData {
     let name = config::device_name::get().unwrap_or_default();
     let advertised_name = "[rb]".to_string() + &name;
 
@@ -217,7 +217,7 @@ fn main() {
     // Starting advertising also starts the ble server. We cant add or change the services/attributes after the ble server started.
     {
         let ble_advertising = BLE_DEVICE.get_advertising();
-        let mut data = create_ble_advertisment(None);
+        let mut data = create_ble_advertisement(None);
         ble_advertising.lock().set_data(&mut data).unwrap();
         ble_advertising
             .lock()
