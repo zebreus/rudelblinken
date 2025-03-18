@@ -174,12 +174,12 @@ pub fn create_ble_advertisement(data: Option<&[u8]>) -> BLEAdvertisementData {
     // Technically we would only need to do this after a reboot or a change of the name
     unsafe {
         esp_idf_sys::ble_svc_gap_device_name_set(advertised_name.as_ptr().cast());
-        esp_idf_sys::ble_svc_gap_device_appearance_set(0x07C0);
+        // esp_idf_sys::ble_svc_gap_device_appearance_set(0x07C0);
     }
     let _ = BLEDevice::set_device_name(&advertised_name);
 
     let mut advertisement = BLEAdvertisementData::new();
-    advertisement.name(&advertised_name).appearance(0x07C0);
+    advertisement.name(&advertised_name);
     if let Some(data) = data {
         advertisement.manufacturer_data(data);
     }
