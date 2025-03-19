@@ -142,69 +142,69 @@ impl<'a, T: Host> AsMut<Caller<'a, T>> for WrappedCaller<'a, T> {
     }
 }
 
-fn get_memory<'a, T: Host>(caller: &Caller<'a, T>) -> Result<Memory, wasmi::Error> {
-    match caller.get_export("memory") {
-        Some(wasmi::Extern::Memory(mem)) => Ok(mem),
-        _ => Err(wasmi::Error::new(
-            "memory not found. Does the guest export 'memory'?",
-        )),
-    }
-}
+// fn get_memory<'a, T: Host>(caller: &Caller<'a, T>) -> Result<Memory, wasmi::Error> {
+//     match caller.get_export("memory") {
+//         Some(wasmi::Extern::Memory(mem)) => Ok(mem),
+//         _ => Err(wasmi::Error::new(
+//             "memory not found. Does the guest export 'memory'?",
+//         )),
+//     }
+// }
 
-fn get_slice<T: Host>(
-    memory: &Memory,
-    caller: &Caller<'_, T>,
-    offset: i32,
-    length: i32,
-) -> Result<&'static [u8], wasmi::Error> {
-    let slice = memory
-        .data(caller)
-        .get(offset as u32 as usize..)
-        .ok_or(wasmi::Error::new("pointer out of bounds"))?
-        .get(..length as u32 as usize)
-        .ok_or(wasmi::Error::new("length out of bounds"))?;
+// fn get_slice<T: Host>(
+//     memory: &Memory,
+//     caller: &Caller<'_, T>,
+//     offset: i32,
+//     length: i32,
+// ) -> Result<&'static [u8], wasmi::Error> {
+//     let slice = memory
+//         .data(caller)
+//         .get(offset as u32 as usize..)
+//         .ok_or(wasmi::Error::new("pointer out of bounds"))?
+//         .get(..length as u32 as usize)
+//         .ok_or(wasmi::Error::new("length out of bounds"))?;
 
-    let static_slice = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(slice) };
+//     let static_slice = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(slice) };
 
-    return Ok(static_slice);
-}
+//     return Ok(static_slice);
+// }
 
-fn get_mut_slice<T: Host>(
-    memory: &Memory,
-    caller: &mut Caller<'_, T>,
-    offset: u32,
-    length: u32,
-) -> Result<&'static mut [u8], wasmi::Error> {
-    let slice = memory
-        .data_mut(caller)
-        .get_mut(offset as usize..)
-        .ok_or(wasmi::Error::new("pointer out of bounds"))?
-        .get_mut(..length as usize)
-        .ok_or(wasmi::Error::new("length out of bounds"))?;
+// fn get_mut_slice<T: Host>(
+//     memory: &Memory,
+//     caller: &mut Caller<'_, T>,
+//     offset: u32,
+//     length: u32,
+// ) -> Result<&'static mut [u8], wasmi::Error> {
+//     let slice = memory
+//         .data_mut(caller)
+//         .get_mut(offset as usize..)
+//         .ok_or(wasmi::Error::new("pointer out of bounds"))?
+//         .get_mut(..length as usize)
+//         .ok_or(wasmi::Error::new("length out of bounds"))?;
 
-    let static_slice = unsafe { std::mem::transmute::<&mut [u8], &'static mut [u8]>(slice) };
+//     let static_slice = unsafe { std::mem::transmute::<&mut [u8], &'static mut [u8]>(slice) };
 
-    return Ok(static_slice);
-}
+//     return Ok(static_slice);
+// }
 
-fn get_mut_array<T: Host, const L: usize>(
-    memory: &Memory,
-    caller: &mut Caller<'_, T>,
-    offset: i32,
-) -> Result<&'static mut [u8; L], wasmi::Error> {
-    let data = memory
-        .data_mut(caller)
-        .get_mut(offset as u32 as usize..)
-        .ok_or(wasmi::Error::new("pointer out of bounds"))?
-        .get_mut(..L)
-        .ok_or(wasmi::Error::new("length out of bounds"))?;
+// fn get_mut_array<T: Host, const L: usize>(
+//     memory: &Memory,
+//     caller: &mut Caller<'_, T>,
+//     offset: i32,
+// ) -> Result<&'static mut [u8; L], wasmi::Error> {
+//     let data = memory
+//         .data_mut(caller)
+//         .get_mut(offset as u32 as usize..)
+//         .ok_or(wasmi::Error::new("pointer out of bounds"))?
+//         .get_mut(..L)
+//         .ok_or(wasmi::Error::new("length out of bounds"))?;
 
-    let data_array: &mut [u8; L] = unsafe { data.try_into().unwrap_unchecked() };
+//     let data_array: &mut [u8; L] = unsafe { data.try_into().unwrap_unchecked() };
 
-    let static_result =
-        unsafe { std::mem::transmute::<&mut [u8; L], &'static mut [u8; L]>(data_array) };
-    return Ok(static_result);
-}
+//     let static_result =
+//         unsafe { std::mem::transmute::<&mut [u8; L], &'static mut [u8; L]>(data_array) };
+//     return Ok(static_result);
+// }
 
 /// Link the host functions provided by T.
 ///
@@ -236,8 +236,7 @@ pub fn link_base<T: Host>(
             &mut store,
             |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
-                let slice = get_mut_slice(&memory, caller.as_mut(), offset as u32, 4)?;
+                let slice = caller.get_mut_slice(offset as u32, 4)?;
                 // SAFETY: Should be safe because the layout should match
                 let version = unsafe {
                     std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())
@@ -312,8 +311,7 @@ pub fn link_base<T: Host>(
 
                 let log_level = LogLevel::lift(level);
 
-                let memory = get_memory(caller.as_ref())?;
-                let data = get_slice(&memory, caller.as_ref(), message_offset, message_length)?;
+                let data = caller.get_slice(message_offset as u32, message_length as u32)?;
                 let message = match std::str::from_utf8(data) {
                     Ok(s) => s,
                     Err(_) => return Err(wasmi::Error::new("invalid utf-8")),
@@ -333,8 +331,7 @@ pub fn link_base<T: Host>(
             &mut store,
             |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
-                let data = get_mut_array::<T, 16>(&memory, caller.as_mut(), offset)?;
+                let data = caller.get_mut_array::<16>(offset as u32)?;
                 return glue::get_name(caller, data);
             },
         ),
@@ -350,13 +347,12 @@ pub fn link_base<T: Host>(
             &mut store,
             |caller: Caller<'_, T>, ret: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
 
                 // typedef struct {
                 //   uint8_t *ptr;
                 //   size_t len;
                 // } rudel_list_u8_t;
-                let list_header = get_mut_array::<T, 8>(&memory, caller.as_mut(), ret)?;
+                let list_header = caller.get_mut_array::<8>(ret as u32)?;
 
                 let data = glue::get_config(&mut caller)?;
 
@@ -375,7 +371,7 @@ pub fn link_base<T: Host>(
                         (new_ptr, dlen)
                     }
                 };
-                let dst = get_mut_slice(&memory, caller.as_mut(), ptr, len)?;
+                let dst = caller.get_mut_slice(ptr, len)?;
                 dst.copy_from_slice(&data);
                 Ok(())
             },
@@ -402,8 +398,7 @@ pub fn link_hardware<T: Host>(
             &mut store,
             |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
-                let slice = get_mut_slice(&memory, caller.as_mut(), offset as u32, 4)?;
+                let slice = caller.get_mut_slice(offset as u32, 4)?;
                 // SAFETY: Should be safe because the layout should match
                 let version = unsafe {
                     std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())
@@ -429,9 +424,8 @@ pub fn link_hardware<T: Host>(
              offset: i32,
              length: i32|
              -> Result<u32, wasmi::Error> {
-                let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
-                let slice = get_slice(&memory, caller.as_mut(), offset, length * 2)?;
+                let caller = WrappedCaller(caller);
+                let slice = caller.get_slice(offset as u32, length as u32 * 2)?;
                 // SAFETY: Should be safe because the layout should match
                 let led_values =
                     unsafe { std::mem::transmute::<*const u8, *const u16>(slice.as_ptr()) };
@@ -494,8 +488,7 @@ pub fn link_hardware<T: Host>(
             &mut store,
             |caller: Caller<'_, T>, id: i32, offset: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
-                let slice = get_mut_slice(&memory, caller.as_mut(), offset as u32, 6)?;
+                let slice = caller.get_mut_slice(offset as u32, 6)?;
                 // Layout in memory is
                 // 0: red
                 // 1: green

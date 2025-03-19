@@ -1,8 +1,10 @@
-use super::{super::glue, get_mut_slice};
-use super::{get_memory, get_slice, link_function, WrappedCaller};
-use crate::host::{
-    Advertisement, AdvertisementSettings, BleEvent, Host, ManufacturerData, SemanticVersion,
-    ServiceData,
+use super::{link_function, WrappedCaller};
+use crate::{
+    host::{
+        Advertisement, AdvertisementSettings, BleEvent, Host, ManufacturerData, SemanticVersion,
+        ServiceData,
+    },
+    linker::glue,
 };
 use wasmi::{Caller, Extern, Func, Linker, Store};
 
@@ -325,8 +327,7 @@ pub fn link_ble<T: Host>(
             &mut store,
             |caller: Caller<'_, T>, offset: i32| -> Result<(), wasmi::Error> {
                 let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
-                let slice = get_mut_slice(&memory, caller.as_mut(), offset as u32, 4)?;
+                let slice = caller.get_mut_slice(offset as u32, 4)?;
                 // SAFETY: Should be safe because the layout should match
                 let version = unsafe {
                     std::mem::transmute::<*mut u8, *mut SemanticVersion>(slice.as_mut_ptr())
@@ -373,9 +374,8 @@ pub fn link_ble<T: Host>(
         Func::wrap(
             &mut store,
             |caller: Caller<'_, T>, offset: i32, length: i32| -> Result<u32, wasmi::Error> {
-                let mut caller = WrappedCaller(caller);
-                let memory = get_memory(caller.as_ref())?;
-                let slice = get_slice(&memory, caller.as_mut(), offset, length)?;
+                let caller = WrappedCaller(caller);
+                let slice = caller.get_slice(offset as u32, length as u32)?;
                 // // Remove lifetime
                 // let data = unsafe { std::slice::from_raw_parts(slice.as_ptr(), length as usize) };
 
