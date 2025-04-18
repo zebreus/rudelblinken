@@ -211,20 +211,20 @@ interface ble {
     @since(version = 0.0.1)
     use base.{semantic-version};
 
-    // A service UUID, can be a shortened one
+    /// A service UUID, can be a shortened one
     variant service-uuid {
         uuid16(u16),
         uuid32(u32),
         uuid128(tuple<u64,u64>),
     }
 
-    // Service specific data
+    /// Service specific data
     record service-data {
         uuid: service-uuid,
         data: list<u8>,
     }
 
-    // Manufacturer specific data
+    /// Manufacturer specific data
     record manufacturer-data {
         company-id: u16,
         data: list<u8>,
@@ -243,70 +243,70 @@ interface ble {
         max-interval: u16,
     }
 
-    // Sendable BLE advertisement data
+    /// Sendable BLE advertisement data
     //
-    // Can be at most 31 bytes - (size of the name + 6 bytes)
+    /// Can be at most 31 bytes - (size of the name + 6 bytes)
     @since(version = 0.0.1)
     record encoded-data {
-        // Include the transmission power. (3 bytes)
+        /// Include the transmission power. (3 bytes)
         include-tx-power: bool,
-        // service UUIDs (2 bytes per used class (16, 32, 128 bit UUID) + size of the UUIDs)
+        /// service UUIDs (2 bytes per used class (16, 32, 128 bit UUID) + size of the UUIDs)
         uuids: list<service-uuid>,
-        // service data (2 byte + size of the UUID + size of data) for each service data)
+        /// service data (2 byte + size of the UUID + size of data) for each service data)
         service-data: list<service-data>,
-        // appearance (4 byte)
+        /// appearance (4 byte)
         appearance: option<u16>,
-        // manufacturer specific data (2 byte + 2 byte company ID + size of data)
+        /// manufacturer specific data (2 byte + 2 byte company ID + size of data)
         manufacturer-data: option<manufacturer-data>,
     }
 
-    // Configure the interval in which BLE advertisements are sent
+    /// Configure the interval in which BLE advertisements are sent
     //
-    // Returns an error if the interval is not valid
+    /// Returns an error if the interval is not valid
     @since(version = 0.0.1)
     configure-advertisement-interval: func(interval: advertisement-interval) -> result;
 
-    // Set the advertisement data. The device name will also be added to the advertisement.
+    /// Set the advertisement data. The device name will also be added to the advertisement.
     //
-    // If you need more control use set-advertisement-data-raw
+    /// If you need more control use set-advertisement-data-raw
     //
-    // Will fail if your data is too long
+    /// Will fail if your data is too long
     @since(version = 0.0.1)
     set-advertisement-data: func(data: encoded-data) -> result;
-    // Set the raw advertisement data. There will be no additional properties added. 
+    /// Set the raw advertisement data. There will be no additional properties added. 
     //
-    // Can be at most 31 bytes
+    /// Can be at most 31 bytes
     //
-    // Will fail if your data is too long
+    /// Will fail if your data is too long
     @since(version = 0.0.1)
     set-advertisement-data-raw: func(data: list<u8>) -> result;
 
-    // Disable decoded advertisements
+    /// Disable decoded advertisements
     //
-    // true => `on-event` will only receive raw advertisements
-    // false => `on-event` will decode advertisements, if possible
+    /// true => `on-event` will only receive raw advertisements
+    /// false => `on-event` will decode advertisements, if possible
     @since(version = 0.0.1)
     disable-decoded-advertisements: func(disable: bool);
     
-    // // Filter for the received advertisements
-    // // 
-    // // Only advertisements that match all specified filters will be received in `on-event`
-    // @since(version = 0.0.1)
-    // record advertisement-filter {
-    //     // The name needs to start with the following string
-    //     name-prefix: option<string>,
-    //     // The advertisement advertises the following service
-    //     uuid: option<service-uuid>,
-    //     // The advertisement has service data for the following service
-    //     service-data: option<service-uuid>,
-    //     // The address starts with the following prefix
-    //     address-prefix: option<list<u8>>,
-    //     // The advertisement contains manufacturer data with the following company id
-    //     company-id: option<u16>
-    // }
+    /// // Filter for the received advertisements
+    /// // 
+    /// // Only advertisements that match all specified filters will be received in `on-event`
+    /// @since(version = 0.0.1)
+    /// record advertisement-filter {
+    ///     /// The name needs to start with the following string
+    ///     name-prefix: option<string>,
+    ///     /// The advertisement advertises the following service
+    ///     uuid: option<service-uuid>,
+    ///     /// The advertisement has service data for the following service
+    ///     service-data: option<service-uuid>,
+    ///     /// The address starts with the following prefix
+    ///     address-prefix: option<list<u8>>,
+    ///     /// The advertisement contains manufacturer data with the following company id
+    ///     company-id: option<u16>
+    /// }
 
-    // @since(version = 0.0.1)
-    // filter-received-advertisements: func(filter: advertisement-filter);
+    /// @since(version = 0.0.1)
+    /// filter-received-advertisements: func(filter: advertisement-filter);
 }
 
 
@@ -315,83 +315,83 @@ interface ble-guest {
     @since(version = 0.0.1)
     use ble.{service-uuid, service-data, manufacturer-data};
 
-    // A ble event
-    // For now only advertisements
+    /// A ble event
+    /// For now only advertisements
     variant ble-event {
         advertisement(advertisement),
     }
 
-    // TODO: Check order
+    /// TODO: Check order
     flags advertisement-flags {
-        // LE Limited Discoverable Mode
+        /// LE Limited Discoverable Mode
         limited-discoverable,
-        // LE General Discoverable Mode
+        /// LE General Discoverable Mode
         general-discoverable,
-        // BR/EDR Not Supported
+        /// BR/EDR Not Supported
         br-edr-not-supported,
-        // Simultaneous LE and BR/EDR to Same Device Capable (Controller)
+        /// Simultaneous LE and BR/EDR to Same Device Capable (Controller)
         simultaneous-controller,
-        // Simultaneous LE and BR/EDR to Same Device Capable (Host)
+        /// Simultaneous LE and BR/EDR to Same Device Capable (Host)
         simultaneous-host,
-        // le-only-limited-discoverable,
-        // le-only-general-discoverable,
+        /// le-only-limited-discoverable,
+        /// le-only-general-discoverable,
     }
 
     enum advertisement-type {
-        // indirect advertising
+        /// indirect advertising
         indirect,
-        // direct advertising
+        /// direct advertising
         direct-ind,
-        // indirect scan response
+        /// indirect scan response
         indirect-scan,
-        // indirect advertising - not connectable
+        /// indirect advertising - not connectable
         indirect-not-connectable,
-        // scan responst
+        /// scan responst
         scan-response
     }
 
-    // Decoded BLE advertisement
+    /// Decoded BLE advertisement
     @since(version = 0.0.1)
     record decoded-data {
-        // name of the remote device
+        /// name of the remote device
         name: option<string>,
-        // flags
+        /// flags
         advertisement-flags: advertisement-flags,
-        // tx power
+        /// tx power
         tx-power: option<u8>,
-        // service UUIDs
+        /// service UUIDs
         uuids: list<service-uuid>,
-        // service data
+        /// service data
         service-data: list<service-data>,
-        // appearance
+        /// appearance
         appearance: option<u16>,
-        // manufacturer specific data
+        /// manufacturer specific data
         manufacturer-data: option<manufacturer-data>,
     }
 
     @since(version = 0.0.1)
     variant advertisement-data {
-        // Decoded advertisement data
+        /// Decoded advertisement data
         decoded(decoded-data),
-        // Raw advertisement data. Returned if there were some fields that failed decoding
+        /// Raw advertisement data. Returned if there were some fields that failed decoding
         raw(list<u8>)
     }
 
-    // Decoded BLE advertisement
+    /// Decoded BLE advertisement
     @since(version = 0.0.1)
     record advertisement {
-        // When the advertisement was received
-        // There may be some delay between when the advertisement was received and when the WASM guest is notified
+        /// When the advertisement was received
+        /// There may be some delay between when the advertisement was received and when the WASM guest is notified
         received-at: u64,
-        // The address of the sender 48bit integer
+        /// The address of the sender 48bit integer
         address: u64,
-        // Received signal strength
+        /// Received signal strength
         rssi: s8,
-        // Received advertisement type
+        /// Received advertisement type
         advertisement-type: advertisement-type,
 
-        // Received data
-        // Will be decoded if it can be decoded
+        /// Received data
+        /// Will be decoded if it can be decoded
         data: advertisement-data,
     }
 
@@ -401,4 +401,10 @@ interface ble-guest {
     /// If this function returns false you should not use any of the other functions
     @since(version = 0.0.1)
     on-event: func(event: ble-event);
+        /// Check if the ble module is implemented
+    ///
+    /// The rudelblinken runtime will mock out all functions the it can not link.
+    /// If this function returns false you should not use any of the other functions
+    @since(version = 0.0.1)
+    on-id: func(event: service-uuid);
 }

@@ -16,3 +16,4 @@ serde = ["dep:serde"]
 [dependencies]
 wasmi = "0.40.0"
 serde = { version = "1.0.219", features = ["derive"], optional = true }
+bitflags = "2.9.0"

@@ -716,28 +716,113 @@ pub mod rudel {
         pub mod ble {
             use super::super::super::_rt;
             pub type SemanticVersion = super::super::super::rudel::base::base::SemanticVersion;
-            /// Configure the BLE advertisements
-            #[repr(C)]
+            /// A service UUID, can be a shortened one
             #[derive(Clone, Copy)]
-            pub struct AdvertisementSettings {
-                pub min_interval: u16,
-                pub max_interval: u16,
+            pub enum ServiceUuid {
+                Uuid16(u16),
+                Uuid32(u32),
+                Uuid128((u64, u64)),
             }
-            impl ::core::fmt::Debug for AdvertisementSettings {
+            impl ::core::fmt::Debug for ServiceUuid {
                 fn fmt(
                     &self,
                     f: &mut ::core::fmt::Formatter<'_>,
                 ) -> ::core::fmt::Result {
-                    f.debug_struct("AdvertisementSettings")
+                    match self {
+                        ServiceUuid::Uuid16(e) => {
+                            f.debug_tuple("ServiceUuid::Uuid16").field(e).finish()
+                        }
+                        ServiceUuid::Uuid32(e) => {
+                            f.debug_tuple("ServiceUuid::Uuid32").field(e).finish()
+                        }
+                        ServiceUuid::Uuid128(e) => {
+                            f.debug_tuple("ServiceUuid::Uuid128").field(e).finish()
+                        }
+                    }
+                }
+            }
+            /// Service specific data
+            #[derive(Clone)]
+            pub struct ServiceData {
+                pub uuid: ServiceUuid,
+                pub data: _rt::Vec<u8>,
+            }
+            impl ::core::fmt::Debug for ServiceData {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("ServiceData")
+                        .field("uuid", &self.uuid)
+                        .field("data", &self.data)
+                        .finish()
+                }
+            }
+            /// Manufacturer specific data
+            #[derive(Clone)]
+            pub struct ManufacturerData {
+                pub company_id: u16,
+                pub data: _rt::Vec<u8>,
+            }
+            impl ::core::fmt::Debug for ManufacturerData {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("ManufacturerData")
+                        .field("company-id", &self.company_id)
+                        .field("data", &self.data)
+                        .finish()
+                }
+            }
+            /// Configure the BLE advertisements
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct AdvertisementInterval {
+                pub min_interval: u16,
+                pub max_interval: u16,
+            }
+            impl ::core::fmt::Debug for AdvertisementInterval {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("AdvertisementInterval")
                         .field("min-interval", &self.min_interval)
                         .field("max-interval", &self.max_interval)
                         .finish()
                 }
             }
-            /// The data to be sent in the advertisement
+            /// Sendable BLE advertisement data
             ///
-            /// Up to 32 bytes of data
-            pub type AdvertisementData = _rt::Vec<u8>;
+            /// Can be at most 31 bytes - (size of the name + 6 bytes)
+            #[derive(Clone)]
+            pub struct EncodedData {
+                /// Include the transmission power. (3 bytes)
+                pub include_tx_power: bool,
+                /// service UUIDs (2 bytes per used class (16, 32, 128 bit UUID) + size of the UUIDs)
+                pub uuids: _rt::Vec<ServiceUuid>,
+                /// service data (2 byte + size of the UUID + size of data) for each service data)
+                pub service_data: _rt::Vec<ServiceData>,
+                /// appearance (4 byte)
+                pub appearance: Option<u16>,
+                /// manufacturer specific data (2 byte + 2 byte company ID + size of data)
+                pub manufacturer_data: Option<ManufacturerData>,
+            }
+            impl ::core::fmt::Debug for EncodedData {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("EncodedData")
+                        .field("include-tx-power", &self.include_tx_power)
+                        .field("uuids", &self.uuids)
+                        .field("service-data", &self.service_data)
+                        .field("appearance", &self.appearance)
+                        .field("manufacturer-data", &self.manufacturer_data)
+                        .finish()
+                }
+            }
             #[allow(unused_unsafe, clippy::all)]
             /// Get the version of the hardware interface provided by the runtime.
             ///
@@ -770,16 +855,21 @@ pub mod rudel {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            pub fn configure_advertisement(settings: AdvertisementSettings) -> u32 {
+            /// Configure the interval in which BLE advertisements are sent
+            ///
+            /// Returns an error if the interval is not valid
+            pub fn configure_advertisement_interval(
+                interval: AdvertisementInterval,
+            ) -> Result<(), ()> {
                 unsafe {
-                    let AdvertisementSettings {
+                    let AdvertisementInterval {
                         min_interval: min_interval0,
                         max_interval: max_interval0,
-                    } = settings;
+                    } = interval;
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "rudel:base/ble@0.0.1")]
                     extern "C" {
-                        #[link_name = "configure-advertisement"]
+                        #[link_name = "configure-advertisement-interval"]
                         fn wit_import(_: i32, _: i32) -> i32;
                     }
                     #[cfg(not(target_arch = "wasm32"))]
@@ -790,11 +880,205 @@ pub mod rudel {
                         _rt::as_i32(min_interval0),
                         _rt::as_i32(max_interval0),
                     );
-                    ret as u32
+                    match ret {
+                        0 => {
+                            let e = ();
+                            Ok(e)
+                        }
+                        1 => {
+                            let e = ();
+                            Err(e)
+                        }
+                        _ => _rt::invalid_enum_discriminant(),
+                    }
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            pub fn set_advertisement_data(data: &AdvertisementData) -> u32 {
+            /// Set the advertisement data. The device name will also be added to the advertisement.
+            ///
+            /// If you need more control use set-advertisement-data-raw
+            ///
+            /// Will fail if your data is too long
+            pub fn set_advertisement_data(data: &EncodedData) -> Result<(), ()> {
+                unsafe {
+                    let EncodedData {
+                        include_tx_power: include_tx_power0,
+                        uuids: uuids0,
+                        service_data: service_data0,
+                        appearance: appearance0,
+                        manufacturer_data: manufacturer_data0,
+                    } = data;
+                    let vec2 = uuids0;
+                    let len2 = vec2.len();
+                    let layout2 = _rt::alloc::Layout::from_size_align_unchecked(
+                        vec2.len() * 24,
+                        8,
+                    );
+                    let result2 = if layout2.size() != 0 {
+                        let ptr = _rt::alloc::alloc(layout2).cast::<u8>();
+                        if ptr.is_null() {
+                            _rt::alloc::handle_alloc_error(layout2);
+                        }
+                        ptr
+                    } else {
+                        ::core::ptr::null_mut()
+                    };
+                    for (i, e) in vec2.into_iter().enumerate() {
+                        let base = result2.add(i * 24);
+                        {
+                            match e {
+                                ServiceUuid::Uuid16(e) => {
+                                    *base.add(0).cast::<u8>() = (0i32) as u8;
+                                    *base.add(8).cast::<u16>() = (_rt::as_i32(e)) as u16;
+                                }
+                                ServiceUuid::Uuid32(e) => {
+                                    *base.add(0).cast::<u8>() = (1i32) as u8;
+                                    *base.add(8).cast::<i32>() = _rt::as_i32(e);
+                                }
+                                ServiceUuid::Uuid128(e) => {
+                                    *base.add(0).cast::<u8>() = (2i32) as u8;
+                                    let (t1_0, t1_1) = e;
+                                    *base.add(8).cast::<i64>() = _rt::as_i64(t1_0);
+                                    *base.add(16).cast::<i64>() = _rt::as_i64(t1_1);
+                                }
+                            }
+                        }
+                    }
+                    let vec6 = service_data0;
+                    let len6 = vec6.len();
+                    let layout6 = _rt::alloc::Layout::from_size_align_unchecked(
+                        vec6.len() * 32,
+                        8,
+                    );
+                    let result6 = if layout6.size() != 0 {
+                        let ptr = _rt::alloc::alloc(layout6).cast::<u8>();
+                        if ptr.is_null() {
+                            _rt::alloc::handle_alloc_error(layout6);
+                        }
+                        ptr
+                    } else {
+                        ::core::ptr::null_mut()
+                    };
+                    for (i, e) in vec6.into_iter().enumerate() {
+                        let base = result6.add(i * 32);
+                        {
+                            let ServiceData { uuid: uuid3, data: data3 } = e;
+                            match uuid3 {
+                                ServiceUuid::Uuid16(e) => {
+                                    *base.add(0).cast::<u8>() = (0i32) as u8;
+                                    *base.add(8).cast::<u16>() = (_rt::as_i32(e)) as u16;
+                                }
+                                ServiceUuid::Uuid32(e) => {
+                                    *base.add(0).cast::<u8>() = (1i32) as u8;
+                                    *base.add(8).cast::<i32>() = _rt::as_i32(e);
+                                }
+                                ServiceUuid::Uuid128(e) => {
+                                    *base.add(0).cast::<u8>() = (2i32) as u8;
+                                    let (t4_0, t4_1) = e;
+                                    *base.add(8).cast::<i64>() = _rt::as_i64(t4_0);
+                                    *base.add(16).cast::<i64>() = _rt::as_i64(t4_1);
+                                }
+                            }
+                            let vec5 = data3;
+                            let ptr5 = vec5.as_ptr().cast::<u8>();
+                            let len5 = vec5.len();
+                            *base.add(28).cast::<usize>() = len5;
+                            *base.add(24).cast::<*mut u8>() = ptr5.cast_mut();
+                        }
+                    }
+                    let (result7_0, result7_1) = match appearance0 {
+                        Some(e) => (1i32, _rt::as_i32(e)),
+                        None => (0i32, 0i32),
+                    };
+                    let (result10_0, result10_1, result10_2, result10_3) = match manufacturer_data0 {
+                        Some(e) => {
+                            let ManufacturerData {
+                                company_id: company_id8,
+                                data: data8,
+                            } = e;
+                            let vec9 = data8;
+                            let ptr9 = vec9.as_ptr().cast::<u8>();
+                            let len9 = vec9.len();
+                            (1i32, _rt::as_i32(company_id8), ptr9.cast_mut(), len9)
+                        }
+                        None => (0i32, 0i32, ::core::ptr::null_mut(), 0usize),
+                    };
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/ble@0.0.1")]
+                    extern "C" {
+                        #[link_name = "set-advertisement-data"]
+                        fn wit_import(
+                            _: i32,
+                            _: *mut u8,
+                            _: usize,
+                            _: *mut u8,
+                            _: usize,
+                            _: i32,
+                            _: i32,
+                            _: i32,
+                            _: i32,
+                            _: *mut u8,
+                            _: usize,
+                        ) -> i32;
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(
+                        _: i32,
+                        _: *mut u8,
+                        _: usize,
+                        _: *mut u8,
+                        _: usize,
+                        _: i32,
+                        _: i32,
+                        _: i32,
+                        _: i32,
+                        _: *mut u8,
+                        _: usize,
+                    ) -> i32 {
+                        unreachable!()
+                    }
+                    let ret = wit_import(
+                        match include_tx_power0 {
+                            true => 1,
+                            false => 0,
+                        },
+                        result2,
+                        len2,
+                        result6,
+                        len6,
+                        result7_0,
+                        result7_1,
+                        result10_0,
+                        result10_1,
+                        result10_2,
+                        result10_3,
+                    );
+                    if layout2.size() != 0 {
+                        _rt::alloc::dealloc(result2.cast(), layout2);
+                    }
+                    if layout6.size() != 0 {
+                        _rt::alloc::dealloc(result6.cast(), layout6);
+                    }
+                    match ret {
+                        0 => {
+                            let e = ();
+                            Ok(e)
+                        }
+                        1 => {
+                            let e = ();
+                            Err(e)
+                        }
+                        _ => _rt::invalid_enum_discriminant(),
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Set the raw advertisement data. There will be no additional properties added.
+            ///
+            /// Can be at most 31 bytes
+            ///
+            /// Will fail if your data is too long
+            pub fn set_advertisement_data_raw(data: &[u8]) -> Result<(), ()> {
                 unsafe {
                     let vec0 = data;
                     let ptr0 = vec0.as_ptr().cast::<u8>();
@@ -802,7 +1086,7 @@ pub mod rudel {
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "rudel:base/ble@0.0.1")]
                     extern "C" {
-                        #[link_name = "set-advertisement-data"]
+                        #[link_name = "set-advertisement-data-raw"]
                         fn wit_import(_: *mut u8, _: usize) -> i32;
                     }
                     #[cfg(not(target_arch = "wasm32"))]
@@ -810,7 +1094,42 @@ pub mod rudel {
                         unreachable!()
                     }
                     let ret = wit_import(ptr0.cast_mut(), len0);
-                    ret as u32
+                    match ret {
+                        0 => {
+                            let e = ();
+                            Ok(e)
+                        }
+                        1 => {
+                            let e = ();
+                            Err(e)
+                        }
+                        _ => _rt::invalid_enum_discriminant(),
+                    }
+                }
+            }
+            #[allow(unused_unsafe, clippy::all)]
+            /// Disable decoded advertisements
+            ///
+            /// true => `on-event` will only receive raw advertisements
+            /// false => `on-event` will decode advertisements, if possible
+            pub fn disable_decoded_advertisements(disable: bool) {
+                unsafe {
+                    #[cfg(target_arch = "wasm32")]
+                    #[link(wasm_import_module = "rudel:base/ble@0.0.1")]
+                    extern "C" {
+                        #[link_name = "disable-decoded-advertisements"]
+                        fn wit_import(_: i32);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    fn wit_import(_: i32) {
+                        unreachable!()
+                    }
+                    wit_import(
+                        match &disable {
+                            true => 1,
+                            false => 0,
+                        },
+                    );
                 }
             }
         }
@@ -824,49 +1143,149 @@ pub mod exports {
             #[allow(dead_code, clippy::all)]
             pub mod ble_guest {
                 use super::super::super::super::_rt;
-                #[derive(Clone)]
-                pub struct ServiceData {
-                    pub uuid: u16,
-                    pub data: _rt::Vec<u8>,
+                pub type ServiceUuid = super::super::super::super::rudel::base::ble::ServiceUuid;
+                pub type ServiceData = super::super::super::super::rudel::base::ble::ServiceData;
+                pub type ManufacturerData = super::super::super::super::rudel::base::ble::ManufacturerData;
+                wit_bindgen::rt::bitflags::bitflags! {
+                    #[doc = " TODO: Check order"] #[derive(PartialEq, Eq, PartialOrd,
+                    Ord, Hash, Debug, Clone, Copy)] pub struct AdvertisementFlags : u8 {
+                    #[doc = " LE Limited Discoverable Mode"] const LIMITED_DISCOVERABLE =
+                    1 << 0; #[doc = " LE General Discoverable Mode"] const
+                    GENERAL_DISCOVERABLE = 1 << 1; #[doc = " BR/EDR Not Supported"] const
+                    BR_EDR_NOT_SUPPORTED = 1 << 2; #[doc =
+                    " Simultaneous LE and BR/EDR to Same Device Capable (Controller)"]
+                    const SIMULTANEOUS_CONTROLLER = 1 << 3; #[doc =
+                    " Simultaneous LE and BR/EDR to Same Device Capable (Host)"] const
+                    SIMULTANEOUS_HOST = 1 << 4; }
                 }
-                impl ::core::fmt::Debug for ServiceData {
+                #[repr(u8)]
+                #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+                pub enum AdvertisementType {
+                    /// indirect advertising
+                    Indirect,
+                    /// direct advertising
+                    DirectInd,
+                    /// indirect scan response
+                    IndirectScan,
+                    /// indirect advertising - not connectable
+                    IndirectNotConnectable,
+                    /// scan responst
+                    ScanResponse,
+                }
+                impl ::core::fmt::Debug for AdvertisementType {
                     fn fmt(
                         &self,
                         f: &mut ::core::fmt::Formatter<'_>,
                     ) -> ::core::fmt::Result {
-                        f.debug_struct("ServiceData")
-                            .field("uuid", &self.uuid)
-                            .field("data", &self.data)
-                            .finish()
+                        match self {
+                            AdvertisementType::Indirect => {
+                                f.debug_tuple("AdvertisementType::Indirect").finish()
+                            }
+                            AdvertisementType::DirectInd => {
+                                f.debug_tuple("AdvertisementType::DirectInd").finish()
+                            }
+                            AdvertisementType::IndirectScan => {
+                                f.debug_tuple("AdvertisementType::IndirectScan").finish()
+                            }
+                            AdvertisementType::IndirectNotConnectable => {
+                                f.debug_tuple("AdvertisementType::IndirectNotConnectable")
+                                    .finish()
+                            }
+                            AdvertisementType::ScanResponse => {
+                                f.debug_tuple("AdvertisementType::ScanResponse").finish()
+                            }
+                        }
                     }
                 }
-                #[derive(Clone)]
-                pub struct ManufacturerData {
-                    pub manufacturer_id: u16,
-                    pub data: _rt::Vec<u8>,
+                impl AdvertisementType {
+                    #[doc(hidden)]
+                    pub unsafe fn _lift(val: u8) -> AdvertisementType {
+                        if !cfg!(debug_assertions) {
+                            return ::core::mem::transmute(val);
+                        }
+                        match val {
+                            0 => AdvertisementType::Indirect,
+                            1 => AdvertisementType::DirectInd,
+                            2 => AdvertisementType::IndirectScan,
+                            3 => AdvertisementType::IndirectNotConnectable,
+                            4 => AdvertisementType::ScanResponse,
+                            _ => panic!("invalid enum discriminant"),
+                        }
+                    }
                 }
-                impl ::core::fmt::Debug for ManufacturerData {
+                /// Decoded BLE advertisement
+                #[derive(Clone)]
+                pub struct DecodedData {
+                    /// name of the remote device
+                    pub name: Option<_rt::String>,
+                    /// flags
+                    pub advertisement_flags: AdvertisementFlags,
+                    /// tx power
+                    pub tx_power: Option<u8>,
+                    /// service UUIDs
+                    pub uuids: _rt::Vec<ServiceUuid>,
+                    /// service data
+                    pub service_data: _rt::Vec<ServiceData>,
+                    /// appearance
+                    pub appearance: Option<u16>,
+                    /// manufacturer specific data
+                    pub manufacturer_data: Option<ManufacturerData>,
+                }
+                impl ::core::fmt::Debug for DecodedData {
                     fn fmt(
                         &self,
                         f: &mut ::core::fmt::Formatter<'_>,
                     ) -> ::core::fmt::Result {
-                        f.debug_struct("ManufacturerData")
-                            .field("manufacturer-id", &self.manufacturer_id)
-                            .field("data", &self.data)
+                        f.debug_struct("DecodedData")
+                            .field("name", &self.name)
+                            .field("advertisement-flags", &self.advertisement_flags)
+                            .field("tx-power", &self.tx_power)
+                            .field("uuids", &self.uuids)
+                            .field("service-data", &self.service_data)
+                            .field("appearance", &self.appearance)
+                            .field("manufacturer-data", &self.manufacturer_data)
                             .finish()
                     }
                 }
+                #[derive(Clone)]
+                pub enum AdvertisementData {
+                    /// Decoded advertisement data
+                    Decoded(DecodedData),
+                    /// Raw advertisement data. Returned if there were some fields that failed decoding
+                    Raw(_rt::Vec<u8>),
+                }
+                impl ::core::fmt::Debug for AdvertisementData {
+                    fn fmt(
+                        &self,
+                        f: &mut ::core::fmt::Formatter<'_>,
+                    ) -> ::core::fmt::Result {
+                        match self {
+                            AdvertisementData::Decoded(e) => {
+                                f.debug_tuple("AdvertisementData::Decoded")
+                                    .field(e)
+                                    .finish()
+                            }
+                            AdvertisementData::Raw(e) => {
+                                f.debug_tuple("AdvertisementData::Raw").field(e).finish()
+                            }
+                        }
+                    }
+                }
+                /// Decoded BLE advertisement
                 #[derive(Clone)]
                 pub struct Advertisement {
-                    /// The address of the sender 48bit integer
-                    pub address: u64,
                     /// When the advertisement was received
                     /// There may be some delay between when the advertisement was received and when the WASM guest is notified
                     pub received_at: u64,
-                    /// Company identifier
-                    pub manufacturer_data: Option<ManufacturerData>,
-                    /// Service data
-                    pub service_data: _rt::Vec<ServiceData>,
+                    /// The address of the sender 48bit integer
+                    pub address: u64,
+                    /// Received signal strength
+                    pub rssi: i8,
+                    /// Received advertisement type
+                    pub advertisement_type: AdvertisementType,
+                    /// Received data
+                    /// Will be decoded if it can be decoded
+                    pub data: AdvertisementData,
                 }
                 impl ::core::fmt::Debug for Advertisement {
                     fn fmt(
@@ -874,13 +1293,16 @@ pub mod exports {
                         f: &mut ::core::fmt::Formatter<'_>,
                     ) -> ::core::fmt::Result {
                         f.debug_struct("Advertisement")
-                            .field("address", &self.address)
                             .field("received-at", &self.received_at)
-                            .field("manufacturer-data", &self.manufacturer_data)
-                            .field("service-data", &self.service_data)
+                            .field("address", &self.address)
+                            .field("rssi", &self.rssi)
+                            .field("advertisement-type", &self.advertisement_type)
+                            .field("data", &self.data)
                             .finish()
                     }
                 }
+                /// A ble event
+                /// For now only advertisements
                 #[derive(Clone)]
                 pub enum BleEvent {
                     Advertisement(Advertisement),
@@ -899,64 +1321,204 @@ pub mod exports {
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
-                pub unsafe fn _export_on_event_cabi<T: Guest>(
-                    arg0: i32,
-                    arg1: i64,
-                    arg2: i64,
-                    arg3: i32,
-                    arg4: i32,
-                    arg5: *mut u8,
-                    arg6: usize,
-                    arg7: *mut u8,
-                    arg8: usize,
-                ) {
+                pub unsafe fn _export_on_event_cabi<T: Guest>(arg0: *mut u8) {
                     #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
-                    let v6 = match arg0 {
+                    let l0 = i32::from(*arg0.add(0).cast::<u8>());
+                    let v45 = match l0 {
                         n => {
                             debug_assert_eq!(n, 0, "invalid enum discriminant");
-                            let e6 = {
-                                let base5 = arg7;
-                                let len5 = arg8;
-                                let mut result5 = _rt::Vec::with_capacity(len5);
-                                for i in 0..len5 {
-                                    let base = base5.add(i * 12);
-                                    let e5 = {
-                                        let l1 = i32::from(*base.add(0).cast::<u16>());
-                                        let l2 = *base.add(4).cast::<*mut u8>();
-                                        let l3 = *base.add(8).cast::<usize>();
-                                        let len4 = l3;
-                                        ServiceData {
-                                            uuid: l1 as u16,
-                                            data: _rt::Vec::from_raw_parts(l2.cast(), len4, len4),
-                                        }
-                                    };
-                                    result5.push(e5);
-                                }
-                                _rt::cabi_dealloc(base5, len5 * 12, 4);
+                            let e45 = {
+                                let l1 = *arg0.add(8).cast::<i64>();
+                                let l2 = *arg0.add(16).cast::<i64>();
+                                let l3 = i32::from(*arg0.add(24).cast::<i8>());
+                                let l4 = i32::from(*arg0.add(25).cast::<u8>());
+                                let l5 = i32::from(*arg0.add(28).cast::<u8>());
+                                let v44 = match l5 {
+                                    0 => {
+                                        let e44 = {
+                                            let l6 = i32::from(*arg0.add(32).cast::<u8>());
+                                            let l10 = i32::from(*arg0.add(44).cast::<u8>());
+                                            let l11 = i32::from(*arg0.add(45).cast::<u8>());
+                                            let l13 = *arg0.add(48).cast::<*mut u8>();
+                                            let l14 = *arg0.add(52).cast::<usize>();
+                                            let base21 = l13;
+                                            let len21 = l14;
+                                            let mut result21 = _rt::Vec::with_capacity(len21);
+                                            for i in 0..len21 {
+                                                let base = base21.add(i * 24);
+                                                let e21 = {
+                                                    let l15 = i32::from(*base.add(0).cast::<u8>());
+                                                    use super::super::super::super::rudel::base::ble::ServiceUuid as V20;
+                                                    let v20 = match l15 {
+                                                        0 => {
+                                                            let e20 = {
+                                                                let l16 = i32::from(*base.add(8).cast::<u16>());
+                                                                l16 as u16
+                                                            };
+                                                            V20::Uuid16(e20)
+                                                        }
+                                                        1 => {
+                                                            let e20 = {
+                                                                let l17 = *base.add(8).cast::<i32>();
+                                                                l17 as u32
+                                                            };
+                                                            V20::Uuid32(e20)
+                                                        }
+                                                        n => {
+                                                            debug_assert_eq!(n, 2, "invalid enum discriminant");
+                                                            let e20 = {
+                                                                let l18 = *base.add(8).cast::<i64>();
+                                                                let l19 = *base.add(16).cast::<i64>();
+                                                                (l18 as u64, l19 as u64)
+                                                            };
+                                                            V20::Uuid128(e20)
+                                                        }
+                                                    };
+                                                    v20
+                                                };
+                                                result21.push(e21);
+                                            }
+                                            _rt::cabi_dealloc(base21, len21 * 24, 8);
+                                            let l22 = *arg0.add(56).cast::<*mut u8>();
+                                            let l23 = *arg0.add(60).cast::<usize>();
+                                            let base33 = l22;
+                                            let len33 = l23;
+                                            let mut result33 = _rt::Vec::with_capacity(len33);
+                                            for i in 0..len33 {
+                                                let base = base33.add(i * 32);
+                                                let e33 = {
+                                                    let l24 = i32::from(*base.add(0).cast::<u8>());
+                                                    use super::super::super::super::rudel::base::ble::ServiceUuid as V29;
+                                                    let v29 = match l24 {
+                                                        0 => {
+                                                            let e29 = {
+                                                                let l25 = i32::from(*base.add(8).cast::<u16>());
+                                                                l25 as u16
+                                                            };
+                                                            V29::Uuid16(e29)
+                                                        }
+                                                        1 => {
+                                                            let e29 = {
+                                                                let l26 = *base.add(8).cast::<i32>();
+                                                                l26 as u32
+                                                            };
+                                                            V29::Uuid32(e29)
+                                                        }
+                                                        n => {
+                                                            debug_assert_eq!(n, 2, "invalid enum discriminant");
+                                                            let e29 = {
+                                                                let l27 = *base.add(8).cast::<i64>();
+                                                                let l28 = *base.add(16).cast::<i64>();
+                                                                (l27 as u64, l28 as u64)
+                                                            };
+                                                            V29::Uuid128(e29)
+                                                        }
+                                                    };
+                                                    let l30 = *base.add(24).cast::<*mut u8>();
+                                                    let l31 = *base.add(28).cast::<usize>();
+                                                    let len32 = l31;
+                                                    super::super::super::super::rudel::base::ble::ServiceData {
+                                                        uuid: v29,
+                                                        data: _rt::Vec::from_raw_parts(l30.cast(), len32, len32),
+                                                    }
+                                                };
+                                                result33.push(e33);
+                                            }
+                                            _rt::cabi_dealloc(base33, len33 * 32, 8);
+                                            let l34 = i32::from(*arg0.add(64).cast::<u8>());
+                                            let l36 = i32::from(*arg0.add(68).cast::<u8>());
+                                            DecodedData {
+                                                name: match l6 {
+                                                    0 => None,
+                                                    1 => {
+                                                        let e = {
+                                                            let l7 = *arg0.add(36).cast::<*mut u8>();
+                                                            let l8 = *arg0.add(40).cast::<usize>();
+                                                            let len9 = l8;
+                                                            let bytes9 = _rt::Vec::from_raw_parts(
+                                                                l7.cast(),
+                                                                len9,
+                                                                len9,
+                                                            );
+                                                            _rt::string_lift(bytes9)
+                                                        };
+                                                        Some(e)
+                                                    }
+                                                    _ => _rt::invalid_enum_discriminant(),
+                                                },
+                                                advertisement_flags: AdvertisementFlags::empty()
+                                                    | AdvertisementFlags::from_bits_retain(
+                                                        ((l10 as u8) << 0) as _,
+                                                    ),
+                                                tx_power: match l11 {
+                                                    0 => None,
+                                                    1 => {
+                                                        let e = {
+                                                            let l12 = i32::from(*arg0.add(46).cast::<u8>());
+                                                            l12 as u8
+                                                        };
+                                                        Some(e)
+                                                    }
+                                                    _ => _rt::invalid_enum_discriminant(),
+                                                },
+                                                uuids: result21,
+                                                service_data: result33,
+                                                appearance: match l34 {
+                                                    0 => None,
+                                                    1 => {
+                                                        let e = {
+                                                            let l35 = i32::from(*arg0.add(66).cast::<u16>());
+                                                            l35 as u16
+                                                        };
+                                                        Some(e)
+                                                    }
+                                                    _ => _rt::invalid_enum_discriminant(),
+                                                },
+                                                manufacturer_data: match l36 {
+                                                    0 => None,
+                                                    1 => {
+                                                        let e = {
+                                                            let l37 = i32::from(*arg0.add(72).cast::<u16>());
+                                                            let l38 = *arg0.add(76).cast::<*mut u8>();
+                                                            let l39 = *arg0.add(80).cast::<usize>();
+                                                            let len40 = l39;
+                                                            super::super::super::super::rudel::base::ble::ManufacturerData {
+                                                                company_id: l37 as u16,
+                                                                data: _rt::Vec::from_raw_parts(l38.cast(), len40, len40),
+                                                            }
+                                                        };
+                                                        Some(e)
+                                                    }
+                                                    _ => _rt::invalid_enum_discriminant(),
+                                                },
+                                            }
+                                        };
+                                        AdvertisementData::Decoded(e44)
+                                    }
+                                    n => {
+                                        debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                        let e44 = {
+                                            let l41 = *arg0.add(32).cast::<*mut u8>();
+                                            let l42 = *arg0.add(36).cast::<usize>();
+                                            let len43 = l42;
+                                            _rt::Vec::from_raw_parts(l41.cast(), len43, len43)
+                                        };
+                                        AdvertisementData::Raw(e44)
+                                    }
+                                };
                                 Advertisement {
-                                    address: arg1 as u64,
-                                    received_at: arg2 as u64,
-                                    manufacturer_data: match arg3 {
-                                        0 => None,
-                                        1 => {
-                                            let e = {
-                                                let len0 = arg6;
-                                                ManufacturerData {
-                                                    manufacturer_id: arg4 as u16,
-                                                    data: _rt::Vec::from_raw_parts(arg5.cast(), len0, len0),
-                                                }
-                                            };
-                                            Some(e)
-                                        }
-                                        _ => _rt::invalid_enum_discriminant(),
-                                    },
-                                    service_data: result5,
+                                    received_at: l1 as u64,
+                                    address: l2 as u64,
+                                    rssi: l3 as i8,
+                                    advertisement_type: AdvertisementType::_lift(l4 as u8),
+                                    data: v44,
                                 }
                             };
-                            BleEvent::Advertisement(e6)
+                            BleEvent::Advertisement(e45)
                         }
                     };
-                    T::on_event(v6);
+                    T::on_event(v45);
+                    _rt::cabi_dealloc(arg0, 88, 8);
                 }
                 pub trait Guest {
                     /// Check if the ble module is implemented
@@ -971,10 +1533,8 @@ pub mod exports {
                     ($ty:ident with_types_in $($path_to_types:tt)*) => {
                         const _ : () = { #[export_name =
                         "rudel:base/ble-guest@0.0.1#on-event"] unsafe extern "C" fn
-                        export_on_event(arg0 : i32, arg1 : i64, arg2 : i64, arg3 : i32,
-                        arg4 : i32, arg5 : * mut u8, arg6 : usize, arg7 : * mut u8, arg8
-                        : usize,) { $($path_to_types)*:: _export_on_event_cabi::<$ty >
-                        (arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) } };
+                        export_on_event(arg0 : * mut u8,) { $($path_to_types)*::
+                        _export_on_event_cabi::<$ty > (arg0) } };
                     };
                 }
                 #[doc(hidden)]
@@ -982,7 +1542,6 @@ pub mod exports {
             }
             #[allow(dead_code, clippy::all)]
             pub mod run {
-                #[allow(unused_imports)]
                 use super::super::super::super::_rt;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -1094,15 +1653,24 @@ mod _rt {
             self as i32
         }
     }
-    #[cfg(target_arch = "wasm32")]
-    pub fn run_ctors_once() {
-        wit_bindgen::rt::run_ctors_once();
-    }
     pub unsafe fn invalid_enum_discriminant<T>() -> T {
         if cfg!(debug_assertions) {
             panic!("invalid enum discriminant")
         } else {
             core::hint::unreachable_unchecked()
+        }
+    }
+    pub use alloc_crate::alloc;
+    pub use alloc_crate::string::String;
+    #[cfg(target_arch = "wasm32")]
+    pub fn run_ctors_once() {
+        wit_bindgen::rt::run_ctors_once();
+    }
+    pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
+        if cfg!(debug_assertions) {
+            String::from_utf8(bytes).unwrap()
+        } else {
+            String::from_utf8_unchecked(bytes)
         }
     }
     pub unsafe fn cabi_dealloc(ptr: *mut u8, size: usize, align: usize) {
@@ -1113,7 +1681,6 @@ mod _rt {
         alloc::dealloc(ptr, layout);
     }
     extern crate alloc as alloc_crate;
-    pub use alloc_crate::alloc;
 }
 /// Generates `#[no_mangle]` functions to export the specified type as the
 /// root implementation of all generated traits.
@@ -1147,10 +1714,10 @@ macro_rules! __export_rudel_impl {
         $($path_to_types_root)*:: exports::rudel::base::run); const _ : () = {
         #[cfg(target_arch = "wasm32")] #[link_section =
         "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel:imports and exports"]
-        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 1596] = *
+        #[doc(hidden)] pub static __WIT_BINDGEN_COMPONENT_TYPE : [u8; 2360] = *
         b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc0\x0b\x01A\x02\x01\
-A\x0b\x01B\x16\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xbc\x11\x01A\x02\x01\
+A\x0e\x01B\x16\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
 \0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\x01\x06microsw\0y\x04\
 \0\x09yield-now\x01\x05\x01@\0\0y\x04\0\x12get-remaining-fuel\x01\x06\x01@\x01\x06\
@@ -1169,21 +1736,36 @@ d-count\x01\x10\x01@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\x11\x01@\0\0\x07
 \x04\0\x16get-ambient-light-type\x01\x12\x04\0\x11get-ambient-light\x01\x10\x01@\
 \0\0\x09\x04\0\x19get-vibration-sensor-type\x01\x13\x04\0\x0dget-vibration\x01\x10\
 \x04\0\x17get-voltage-sensor-type\x01\x13\x04\0\x0bget-voltage\x01\x10\x03\0\x19\
-rudel:base/hardware@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10semantic\
--version\x03\0\0\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16advertiseme\
-nt-settings\x03\0\x02\x01p}\x04\0\x12advertisement-data\x03\0\x04\x01@\0\0\x01\x04\
-\0\x0fget-ble-version\x01\x06\x01@\x01\x08settings\x03\0y\x04\0\x17configure-adv\
-ertisement\x01\x07\x01@\x01\x04data\x05\0y\x04\0\x16set-advertisement-data\x01\x08\
-\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x01B\x0d\x01p}\x01r\x02\x04uuid{\x04data\0\
-\x04\0\x0cservice-data\x03\0\x01\x01r\x02\x0fmanufacturer-id{\x04data\0\x04\0\x11\
-manufacturer-data\x03\0\x03\x01k\x04\x01p\x02\x01r\x04\x07addressw\x0breceived-a\
-tw\x11manufacturer-data\x05\x0cservice-data\x06\x04\0\x0dadvertisement\x03\0\x07\
-\x01q\x01\x0dadvertisement\x01\x08\0\x04\0\x09ble-event\x03\0\x09\x01@\x01\x05ev\
-ent\x0a\x01\0\x04\0\x08on-event\x01\x0b\x04\0\x1arudel:base/ble-guest@0.0.1\x05\x04\
-\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\0\x04\0\x14rudel:base/run@0.0.1\x05\x05\x04\
-\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\x0b\x01\0\x05rudel\x03\0\0\0G\x09producer\
-s\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bindgen-rust\x060.3\
-6.0";
+rudel:base/hardware@0.0.1\x05\x02\x01B\x1d\x02\x03\x02\x01\x01\x04\0\x10semantic\
+-version\x03\0\0\x01o\x02ww\x01q\x03\x06uuid16\x01{\0\x06uuid32\x01y\0\x07uuid12\
+8\x01\x02\0\x04\0\x0cservice-uuid\x03\0\x03\x01p}\x01r\x02\x04uuid\x04\x04data\x05\
+\x04\0\x0cservice-data\x03\0\x06\x01r\x02\x0acompany-id{\x04data\x05\x04\0\x11ma\
+nufacturer-data\x03\0\x08\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16ad\
+vertisement-interval\x03\0\x0a\x01p\x04\x01p\x07\x01k{\x01k\x09\x01r\x05\x10incl\
+ude-tx-power\x7f\x05uuids\x0c\x0cservice-data\x0d\x0aappearance\x0e\x11manufactu\
+rer-data\x0f\x04\0\x0cencoded-data\x03\0\x10\x01@\0\0\x01\x04\0\x0fget-ble-versi\
+on\x01\x12\x01j\0\0\x01@\x01\x08interval\x0b\0\x13\x04\0\x20configure-advertisem\
+ent-interval\x01\x14\x01@\x01\x04data\x11\0\x13\x04\0\x16set-advertisement-data\x01\
+\x15\x01@\x01\x04data\x05\0\x13\x04\0\x1aset-advertisement-data-raw\x01\x16\x01@\
+\x01\x07disable\x7f\x01\0\x04\0\x1edisable-decoded-advertisements\x01\x17\x03\0\x14\
+rudel:base/ble@0.0.1\x05\x03\x02\x03\0\x02\x0cservice-uuid\x02\x03\0\x02\x0cserv\
+ice-data\x02\x03\0\x02\x11manufacturer-data\x01B\x1b\x02\x03\x02\x01\x04\x04\0\x0c\
+service-uuid\x03\0\0\x02\x03\x02\x01\x05\x04\0\x0cservice-data\x03\0\x02\x02\x03\
+\x02\x01\x06\x04\0\x11manufacturer-data\x03\0\x04\x01n\x05\x14limited-discoverab\
+le\x14general-discoverable\x14br-edr-not-supported\x17simultaneous-controller\x11\
+simultaneous-host\x04\0\x13advertisement-flags\x03\0\x06\x01m\x05\x08indirect\x0a\
+direct-ind\x0dindirect-scan\x18indirect-not-connectable\x0dscan-response\x04\0\x12\
+advertisement-type\x03\0\x08\x01ks\x01k}\x01p\x01\x01p\x03\x01k{\x01k\x05\x01r\x07\
+\x04name\x0a\x13advertisement-flags\x07\x08tx-power\x0b\x05uuids\x0c\x0cservice-\
+data\x0d\x0aappearance\x0e\x11manufacturer-data\x0f\x04\0\x0cdecoded-data\x03\0\x10\
+\x01p}\x01q\x02\x07decoded\x01\x11\0\x03raw\x01\x12\0\x04\0\x12advertisement-dat\
+a\x03\0\x13\x01r\x05\x0breceived-atw\x07addressw\x04rssi~\x12advertisement-type\x09\
+\x04data\x14\x04\0\x0dadvertisement\x03\0\x15\x01q\x01\x0dadvertisement\x01\x16\0\
+\x04\0\x09ble-event\x03\0\x17\x01@\x01\x05event\x18\x01\0\x04\0\x08on-event\x01\x19\
+\x04\0\x1arudel:base/ble-guest@0.0.1\x05\x07\x01B\x02\x01@\0\x01\0\x04\0\x03run\x01\
+\0\x04\0\x14rudel:base/run@0.0.1\x05\x08\x04\0\x16rudel:base/rudel@0.0.1\x04\0\x0b\
+\x0b\x01\0\x05rudel\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-compo\
+nent\x070.220.0\x10wit-bindgen-rust\x060.36.0";
         };
     };
 }
@@ -1192,8 +1774,8 @@ pub use __export_rudel_impl as export;
 #[cfg(target_arch = "wasm32")]
 #[link_section = "component-type:wit-bindgen:0.36.0:rudel:base@0.0.1:rudel-with-all-of-its-exports-removed:encoded world"]
 #[doc(hidden)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1357] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb1\x09\x01A\x02\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1674] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xee\x0b\x01A\x02\x01\
 A\x07\x01B\x16\x01r\x03\x05major}\x05minor}\x05patch}\x04\0\x10semantic-version\x03\
 \0\0\x01m\x05\x05error\x07warning\x04info\x05debug\x05trace\x04\0\x09log-level\x03\
 \0\x02\x01@\0\0\x01\x04\0\x10get-base-version\x01\x04\x01@\x01\x06microsw\0y\x04\
@@ -1213,12 +1795,19 @@ d-count\x01\x10\x01@\x01\x02id{\0\x05\x04\0\x0cget-led-info\x01\x11\x01@\0\0\x07
 \x04\0\x16get-ambient-light-type\x01\x12\x04\0\x11get-ambient-light\x01\x10\x01@\
 \0\0\x09\x04\0\x19get-vibration-sensor-type\x01\x13\x04\0\x0dget-vibration\x01\x10\
 \x04\0\x17get-voltage-sensor-type\x01\x13\x04\0\x0bget-voltage\x01\x10\x03\0\x19\
-rudel:base/hardware@0.0.1\x05\x02\x01B\x0c\x02\x03\x02\x01\x01\x04\0\x10semantic\
--version\x03\0\0\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16advertiseme\
-nt-settings\x03\0\x02\x01p}\x04\0\x12advertisement-data\x03\0\x04\x01@\0\0\x01\x04\
-\0\x0fget-ble-version\x01\x06\x01@\x01\x08settings\x03\0y\x04\0\x17configure-adv\
-ertisement\x01\x07\x01@\x01\x04data\x05\0y\x04\0\x16set-advertisement-data\x01\x08\
-\x03\0\x14rudel:base/ble@0.0.1\x05\x03\x04\06rudel:base/rudel-with-all-of-its-ex\
-ports-removed@0.0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-exports-removed\x03\0\
-\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bi\
-ndgen-rust\x060.36.0";
+rudel:base/hardware@0.0.1\x05\x02\x01B\x1d\x02\x03\x02\x01\x01\x04\0\x10semantic\
+-version\x03\0\0\x01o\x02ww\x01q\x03\x06uuid16\x01{\0\x06uuid32\x01y\0\x07uuid12\
+8\x01\x02\0\x04\0\x0cservice-uuid\x03\0\x03\x01p}\x01r\x02\x04uuid\x04\x04data\x05\
+\x04\0\x0cservice-data\x03\0\x06\x01r\x02\x0acompany-id{\x04data\x05\x04\0\x11ma\
+nufacturer-data\x03\0\x08\x01r\x02\x0cmin-interval{\x0cmax-interval{\x04\0\x16ad\
+vertisement-interval\x03\0\x0a\x01p\x04\x01p\x07\x01k{\x01k\x09\x01r\x05\x10incl\
+ude-tx-power\x7f\x05uuids\x0c\x0cservice-data\x0d\x0aappearance\x0e\x11manufactu\
+rer-data\x0f\x04\0\x0cencoded-data\x03\0\x10\x01@\0\0\x01\x04\0\x0fget-ble-versi\
+on\x01\x12\x01j\0\0\x01@\x01\x08interval\x0b\0\x13\x04\0\x20configure-advertisem\
+ent-interval\x01\x14\x01@\x01\x04data\x11\0\x13\x04\0\x16set-advertisement-data\x01\
+\x15\x01@\x01\x04data\x05\0\x13\x04\0\x1aset-advertisement-data-raw\x01\x16\x01@\
+\x01\x07disable\x7f\x01\0\x04\0\x1edisable-decoded-advertisements\x01\x17\x03\0\x14\
+rudel:base/ble@0.0.1\x05\x03\x04\06rudel:base/rudel-with-all-of-its-exports-remo\
+ved@0.0.1\x04\0\x0b+\x01\0%rudel-with-all-of-its-exports-removed\x03\0\0\0G\x09p\
+roducers\x01\x0cprocessed-by\x02\x0dwit-component\x070.220.0\x10wit-bindgen-rust\
+\x060.36.0";

@@ -6,8 +6,10 @@ use crate::{
     },
     linker::glue,
 };
+// use types::{Advertisement, AdvertisementInterval, BleEvent, ManufacturerData, ServiceData};
 use wasmi::{Caller, Extern, Func, Linker, Store};
-
+mod gen;
+mod types;
 type GuestPtr = u32;
 
 mod _rt {
@@ -185,7 +187,7 @@ impl<'a, T: Host> WrappedCaller<'a, T> {
             u32, // Ble Event type
             u64,
             u64,
-            u32,
+            i32,
             u32,
             u32, //*mut u8,
             u32, //usize,
@@ -292,7 +294,7 @@ impl<'a, T: Host> WrappedCaller<'a, T> {
                 result7_0 as u32,
                 result7_1 as u64,
                 result7_2 as u64,
-                result7_3 as u32,
+                result7_3,
                 result7_4 as u32,
                 result7_5 as u32,
                 result7_6 as u32,
