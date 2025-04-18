@@ -33,7 +33,9 @@ pub static LED_PIN: LazyLock<Mutex<LedcDriver<'static>>> = LazyLock::new(|| {
             unsafe { ledc::CHANNEL0::new() },
             LedcTimerDriver::new(
                 unsafe { ledc::TIMER0::new() },
-                &TimerConfig::new().frequency(25.kHz().into()),
+                &TimerConfig::new()
+                    .frequency(6.kHz().into())
+                    .resolution(ledc::Resolution::Bits13),
             )
             .expect("timer init failed"),
             unsafe { gpio::Gpio8::new() },
@@ -275,7 +277,8 @@ impl Host for WasmHost {
     fn get_ambient_light(
         _caller: &mut WrappedCaller<'_, Self>,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        match LIGHT_SENSOR_ADC.lock().read() {
+        let result = LIGHT_SENSOR_ADC.lock().read();
+        match result {
             Ok(v) => Ok(v as u32),
             Err(err) => {
                 tracing::warn!(?err, "reading ambient light failed");

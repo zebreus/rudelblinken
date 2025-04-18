@@ -1,7 +1,8 @@
 use rudelblinken_sdk::{
     export,
     exports::{self},
-    set_advertisement_data, set_leds, time, yield_now, Advertisement, BleGuest, Guest,
+    get_ambient_light, set_advertisement_data, set_leds, time, yield_now, Advertisement, BleGuest,
+    Guest,
 };
 use std::sync::{LazyLock, Mutex};
 use talc::{ClaimOnOom, Span, Talc, Talck};
@@ -13,7 +14,7 @@ static mut HEAP: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
 static ALLOCATOR: Talck<spin::Mutex<()>, ClaimOnOom> =
     Talc::new(unsafe { ClaimOnOom::new(Span::from_array((&raw const HEAP).cast_mut())) }).lock();
 
-const NUDGE_STRENGHT: u8 = 20;
+const NUDGE_STRENGHT: u8 = 10;
 const MS_PER_STEP: u32 = 8;
 
 const SINE_TABLE: [u8; 256] = [
@@ -79,20 +80,23 @@ impl CycleState {
 static CYCLE_STATE: LazyLock<Mutex<CycleState>> = LazyLock::new(|| Mutex::new(CycleState::new()));
 
 fn calc_bright(fraction: u8) -> u32 {
+    // Related to PWM frequency
+    const MAX_VALUE: u32 = 2500;
     // relative brightness to use in bright ambient conditions (>= MAX_AMBIENT); 0-255
-    const MAX_BRIGHTNESS: u8 = (0.9 * 255.0) as u8;
-    // relative brightness to use in dark ambient conditions (<= MIN_AMBIENT); 0-255
-    // const MIN_BRIGHTNESS: u8 = (0.3 * 255.0) as u8;
+    const MAX_BRIGHTNESS_MULTIPLIER: u32 = (0.8 * MAX_VALUE as f32) as u32;
+    const MIN_BRIGHTNESS_MULTIPLIER: u32 = (0.2 * MAX_VALUE as f32) as u32;
 
-    // TODO: Include ambient here
-    let brightness_factor = MAX_BRIGHTNESS;
+    const BRIGHTNESS_MULTIPLIER_RANGE: u32 = MAX_BRIGHTNESS_MULTIPLIER - MIN_BRIGHTNESS_MULTIPLIER;
+    let ambient_reading = get_ambient_light();
+    let ambient_multiplier = ((ambient_reading * BRIGHTNESS_MULTIPLIER_RANGE as u32) / 2500)
+        + MIN_BRIGHTNESS_MULTIPLIER as u32;
 
-    let brightness = (SINE_TABLE[fraction as usize] as u32 * brightness_factor as u32) / 255;
+    // map fraction to sine wave and apply ambient light multiplier
+    let brightness: u64 = (SINE_TABLE[fraction as usize] as u64 * ambient_multiplier as u64) / 255;
 
-    // brightness ^ 3
-    let adjusted_brightness = ((brightness * brightness * brightness) / 255) / 255;
+    let adjusted_brightness = (brightness * brightness) / MAX_VALUE as u64;
 
-    adjusted_brightness
+    adjusted_brightness as u32
 }
 
 struct Test;
