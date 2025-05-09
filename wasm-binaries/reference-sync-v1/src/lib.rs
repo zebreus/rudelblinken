@@ -14,9 +14,6 @@ static mut HEAP: [u8; HEAP_SIZE] = [0u8; HEAP_SIZE];
 static ALLOCATOR: Talck<spin::Mutex<()>, ClaimOnOom> =
     Talc::new(unsafe { ClaimOnOom::new(Span::from_array((&raw const HEAP).cast_mut())) }).lock();
 
-const NUDGE_STRENGHT: u8 = 10;
-const MS_PER_STEP: u32 = 256;
-
 const SINE_TABLE: [u8; 256] = [
     // 0x80, 0x83, 0x86, 0x89, 0x8C, 0x90, 0x93, 0x96, 0x99, 0x9C, 0x9F, 0xA2, 0xA5, 0xA8, 0xAB, 0xAE,
     // 0xB1, 0xB3, 0xB6, 0xB9, 0xBC, 0xBF, 0xC1, 0xC4, 0xC7, 0xC9, 0xCC, 0xCE, 0xD1, 0xD3, 0xD5, 0xD8,
@@ -52,12 +49,20 @@ const SINE_TABLE: [u8; 256] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
 ];
 
+const NUDGE_STRENGHT: u8 = 10;
+const US_PER_STEP: u64 = 100;
+
 #[derive(Debug, Clone)]
 struct CycleState {
-    progress: u8,
-    prog_time: u32,
+    /// Progress in the cycle, 0-65536
+    progress: u16,
+    /// ???
+    prog_time: u64,
+    /// ???
     off_sum: i32,
+    /// ???
     off_cnt: u16,
+    /// ???
     nudge_rem: i8,
 }
 
@@ -65,48 +70,49 @@ impl CycleState {
     fn new() -> Self {
         Self {
             progress: 0,
-            prog_time: (time() / 1000) as u32,
+            prog_time: time(),
             off_sum: 0,
             off_cnt: 0,
             nudge_rem: 0,
         }
     }
 
-    fn progress_at(&self, timestamp: u32) -> u8 {
+    fn progress_at(&self, timestamp: u64) -> u16 {
         let dt = self.prog_time - timestamp;
-        let steps = dt / MS_PER_STEP;
-        self.progress.wrapping_add(steps as u8)
+        let steps = (dt / US_PER_STEP) as u16;
+        self.progress.wrapping_add(steps)
     }
 
-    fn register_nudge(&mut self, timestamp: u32, progress: u8) {
+    fn register_nudge(&mut self, timestamp: u64, progress: u16) {
         self.off_cnt += 1;
-        self.off_sum += progress.wrapping_sub(self.progress_at(timestamp)) as i8 as i32;
+        self.off_sum += progress.wrapping_sub(self.progress_at(timestamp)) as i16 as i32;
     }
 
-    fn update_progress(&mut self, timestamp: u32) {
+    fn update_progress(&mut self, timestamp: u64) {
         if self.off_cnt != 0 {
             let div = self.off_cnt as i32 * NUDGE_STRENGHT as i32;
             let nudge_base = self.off_sum + self.nudge_rem as i32;
             let nudge = nudge_base / div;
             self.nudge_rem = (nudge_base % div) as i8;
 
-            self.progress = self.progress.wrapping_add(nudge as u8);
+            self.progress = self.progress.wrapping_add(nudge as u16);
             self.off_sum = 0;
             self.off_cnt = 0;
         }
 
         let dt = self.prog_time - timestamp;
-        let t_off = dt % MS_PER_STEP;
+        let t_off = dt % US_PER_STEP;
         self.prog_time = timestamp - t_off;
 
-        let steps = dt / MS_PER_STEP;
-        self.progress = self.progress.wrapping_add(steps as u8);
+        let steps = dt / US_PER_STEP;
+        self.progress = self.progress.wrapping_add(steps as u16);
     }
 }
 
 static CYCLE_STATE: LazyLock<Mutex<CycleState>> = LazyLock::new(|| Mutex::new(CycleState::new()));
 
-fn calc_bright(fraction: u8) -> u32 {
+fn calc_bright(fraction: u16) -> u32 {
+    let fraction = (fraction / 256) as u8;
     // Related to PWM frequency
     const MAX_VALUE: u32 = 2500;
     // relative brightness to use in bright ambient conditions (>= MAX_AMBIENT); 0-255
@@ -135,10 +141,19 @@ impl Guest for Test {
                 let Ok(mut state) = CYCLE_STATE.try_lock() else {
                     continue;
                 };
-                state.update_progress((time() / 1000) as u32);
+                state.update_progress(time());
                 state.progress
             };
-            set_advertisement_data(&vec![0x00, 0x00, 0xca, 0x7e, 0xa2, progress]);
+            let progress_bytes = progress.to_le_bytes();
+            set_advertisement_data(&vec![
+                0x00,
+                0x00,
+                0xca,
+                0x7e,
+                0xa2,
+                progress_bytes[0],
+                progress_bytes[1],
+            ]);
             // TODO: Add high-level API for setting led
             set_leds(0, &[calc_bright(progress) as u16]);
         }
@@ -153,12 +168,13 @@ impl BleGuest for Test {
             )
         };
         let slice = &data[0..(advertisement.data_length as usize)];
-        let [0xca, 0x7e, 0xa2, other_progress] = slice else {
+        let [0xca, 0x7e, 0xa2, other_progress_0, other_progress_1] = slice else {
             return;
         };
+        let other_progress = u16::from_le_bytes([*other_progress_0, *other_progress_1]);
 
         if let Ok(mut state) = CYCLE_STATE.try_lock() {
-            state.register_nudge((advertisement.received_at / 1000) as u32, *other_progress);
+            state.register_nudge(advertisement.received_at, other_progress);
         }
     }
 }
