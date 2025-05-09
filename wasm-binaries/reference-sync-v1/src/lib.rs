@@ -49,68 +49,6 @@ const SINE_TABLE: [u8; 256] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
 ];
 
-const NUDGE_STRENGHT: u8 = 10;
-const US_PER_STEP: u64 = 100;
-
-#[derive(Debug, Clone)]
-struct CycleState {
-    /// Progress in the cycle, 0-65536
-    progress: u16,
-    /// ???
-    prog_time: u64,
-    /// ???
-    off_sum: i32,
-    /// ???
-    off_cnt: u16,
-    /// ???
-    nudge_rem: i8,
-}
-
-impl CycleState {
-    fn new() -> Self {
-        Self {
-            progress: 0,
-            prog_time: time(),
-            off_sum: 0,
-            off_cnt: 0,
-            nudge_rem: 0,
-        }
-    }
-
-    fn progress_at(&self, timestamp: u64) -> u16 {
-        let dt = self.prog_time - timestamp;
-        let steps = (dt / US_PER_STEP) as u16;
-        self.progress.wrapping_add(steps)
-    }
-
-    fn register_nudge(&mut self, timestamp: u64, progress: u16) {
-        self.off_cnt += 1;
-        self.off_sum += progress.wrapping_sub(self.progress_at(timestamp)) as i16 as i32;
-    }
-
-    fn update_progress(&mut self, timestamp: u64) {
-        if self.off_cnt != 0 {
-            let div = self.off_cnt as i32 * NUDGE_STRENGHT as i32;
-            let nudge_base = self.off_sum + self.nudge_rem as i32;
-            let nudge = nudge_base / div;
-            self.nudge_rem = (nudge_base % div) as i8;
-
-            self.progress = self.progress.wrapping_add(nudge as u16);
-            self.off_sum = 0;
-            self.off_cnt = 0;
-        }
-
-        let dt = self.prog_time - timestamp;
-        let t_off = dt % US_PER_STEP;
-        self.prog_time = timestamp - t_off;
-
-        let steps = dt / US_PER_STEP;
-        self.progress = self.progress.wrapping_add(steps as u16);
-    }
-}
-
-static CYCLE_STATE: LazyLock<Mutex<CycleState>> = LazyLock::new(|| Mutex::new(CycleState::new()));
-
 fn calc_bright(fraction: u16) -> u32 {
     let fraction = (fraction / 256) as u8;
     // Related to PWM frequency
@@ -132,16 +70,93 @@ fn calc_bright(fraction: u16) -> u32 {
     adjusted_brightness as u32
 }
 
+const NUDGE_STRENGTH: u8 = 10;
+const US_PER_STEP: u64 = 100;
+
+#[derive(Debug, Clone)]
+struct CycleState {
+    /// Progress in the cycle, 0-65536
+    progress: u16,
+    /// Timestamp of the last cycle state update
+    update_time: u64,
+    /// Accumulated offset of all other nodes since the last update
+    accumulated_offset_since_last_update: i32,
+    /// Number of received offsets since the last update
+    offsets_received_since_last_update: u16,
+    /// Unapplied nudge from the last update
+    nudge_remainder: i8,
+}
+
+impl CycleState {
+    fn new() -> Self {
+        Self {
+            progress: 0,
+            update_time: time(),
+            accumulated_offset_since_last_update: 0,
+            offsets_received_since_last_update: 0,
+            nudge_remainder: 0,
+        }
+    }
+
+    fn progress_at(&self, timestamp: u64) -> u16 {
+        // Difference between
+        let dt = self.update_time - timestamp;
+        let steps = (dt / US_PER_STEP) as u16;
+        self.progress.wrapping_add(steps)
+    }
+
+    /// This function gets called when a nudge is received
+    /// from another device. It is called with the timestamp
+    ///
+    /// timestamp: received_at
+    /// progress: progress of the other device
+    fn register_nudge(&mut self, received_at: u64, progress: u16) {
+        self.offsets_received_since_last_update += 1;
+        let progress_at_receive = self.progress_at(received_at);
+        self.accumulated_offset_since_last_update +=
+            progress.wrapping_sub(progress_at_receive) as i16 as i32;
+    }
+
+    /// This function gets called every tick
+    fn update_progress(&mut self) {
+        let now = time();
+
+        // Apply nudges to progress based on received offsets
+        if self.offsets_received_since_last_update != 0 {
+            let div = self.offsets_received_since_last_update as i32 * NUDGE_STRENGTH as i32;
+            let nudge_base =
+                self.accumulated_offset_since_last_update + self.nudge_remainder as i32;
+            let nudge = nudge_base / div;
+            self.nudge_remainder = (nudge_base % div) as i8;
+
+            self.progress = self.progress.wrapping_add(nudge as u16);
+            self.accumulated_offset_since_last_update = 0;
+            self.offsets_received_since_last_update = 0;
+        }
+
+        let step_duration = self.update_time - now;
+        // let t_off = dt % US_PER_STEP;
+        // Update progress
+        self.update_time = now;
+
+        // Add the appropriate number of steps based on time passed
+        let steps = step_duration / US_PER_STEP;
+        self.progress = self.progress.wrapping_add(steps as u16);
+    }
+}
+
+static CYCLE_STATE: LazyLock<Mutex<CycleState>> = LazyLock::new(|| Mutex::new(CycleState::new()));
+
 struct Test;
 impl Guest for Test {
     fn run() {
         loop {
-            yield_now(1_000);
+            yield_now(10);
             let progress = {
                 let Ok(mut state) = CYCLE_STATE.try_lock() else {
                     continue;
                 };
-                state.update_progress(time());
+                state.update_progress();
                 state.progress
             };
             let progress_bytes = progress.to_le_bytes();
