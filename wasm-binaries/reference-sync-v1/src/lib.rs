@@ -51,6 +51,9 @@ const SINE_TABLE: [u8; 256] = [
 ];
 
 fn calc_bright(progress: u16) -> u32 {
+    // This whole function is really hacky and should be replaced
+    //
+    // All *2 multipliers are hacked on, to make it a bit brighter
     let fraction = (progress / 256) as u8;
     // log(LogLevel::Error, format!("Progress: {}", progress).as_str());
     // log(LogLevel::Error, format!("Fraction: {}", fraction).as_str());
@@ -62,7 +65,7 @@ fn calc_bright(progress: u16) -> u32 {
 
     const BRIGHTNESS_MULTIPLIER_RANGE: u32 = MAX_BRIGHTNESS_MULTIPLIER - MIN_BRIGHTNESS_MULTIPLIER;
     let ambient_reading = get_ambient_light();
-    let ambient_multiplier = ((ambient_reading * BRIGHTNESS_MULTIPLIER_RANGE as u32) / 2500)
+    let ambient_multiplier = ((ambient_reading * BRIGHTNESS_MULTIPLIER_RANGE as u32) * 2 / 2500)
         + MIN_BRIGHTNESS_MULTIPLIER as u32;
 
     // map fraction to sine wave and apply ambient light multiplier
@@ -213,6 +216,16 @@ fn tick() -> u16 {
 struct Test;
 impl Guest for Test {
     fn run() {
+        // let mut table = [0u32; 256];
+        // for i in 0..255 {
+        //     let brightness = calc_bright(i * 256);
+        //     table[i as usize] = brightness;
+        //     yield_now(0);
+        // }
+        // log(
+        //     LogLevel::Error,
+        //     format!("Brightness table: {:?}", table).as_str(),
+        // );
         loop {
             let progress = tick();
 
