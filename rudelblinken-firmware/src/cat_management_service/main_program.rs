@@ -175,7 +175,7 @@ impl WasmRunner {
             loop {
                 // tracing::info!("Scanning for BLE devices");
                 ble_scan
-                    .start(&BLE_DEVICE, 1000, |dev, data| {
+                    .start(&BLE_DEVICE, 100, |dev, data| {
                         if let Some(md) = data.manufacture_data() {
                             let now = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
 

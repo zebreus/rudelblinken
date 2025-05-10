@@ -332,7 +332,7 @@ impl Host for WasmHost {
         _caller: &mut WrappedCaller<'_, Self>,
         settings: AdvertisementSettings,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        let min_interval = settings.min_interval.clamp(400, 1000);
+        let min_interval = settings.min_interval.clamp(100, 1000);
         let max_interval = settings.max_interval.clamp(min_interval, 1500);
 
         let mut ble_advertising = BLE_DEVICE.get_advertising().lock();
@@ -353,17 +353,17 @@ impl Host for WasmHost {
         data: &[u8],
     ) -> Result<u32, rudelblinken_runtime::Error> {
         let mut ble_advertising = BLE_DEVICE.get_advertising().lock();
-        ble_advertising
-            .stop()
-            .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
+        // ble_advertising
+        //     .stop()
+        //     .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
 
         let mut advertisment = create_ble_advertisment(Some(&data));
         if let Err(_) = ble_advertising.set_data(&mut advertisment) {
             return Ok(1);
         }
-        ble_advertising
-            .start()
-            .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
+        // ble_advertising
+        //     .start()
+        //     .map_err(|err| rudelblinken_runtime::Error::new(format!("{:?}", err)))?;
 
         Ok(0)
     }
