@@ -7,13 +7,13 @@ Host runtime for rudelblinken wasm modules. This crate provides functionality to
 For testing this provides a simulated host implementation in [rudelblinken_runtime::emulated_host::EmulatedHost]
 
 You can use it like this:
- 
+
 ```rust
 use rudelblinken_runtime::emulated_host::EmulatedHost;
 use rudelblinken_runtime::linker::setup;
 
 const WASM_MOD: &[u8] = include_bytes!(
-    "../../rudelblinken-wasm/target/wasm32-unknown-unknown/release/rudelblinken_wasm.wasm"
+    "../../wasm-binaries/binaries/infinite_loop_yielding.wasm"
 );
 
 let host = EmulatedHost::new();

@@ -94,7 +94,7 @@ The first prototypes were based on ESP32-C3 supermini boards. To use one, you on
 
 ## Developing for the rudelblinken platform
 
-Not recommended yet, as the project is still changing all the time. If you still want to try have a look at the **`rudelblinken-wasm`** crate and do the same thing it does.
+Not recommended yet, as the project is still changing all the time. If you still want to try have a look at the **`reference_sync_v1`** crate (in the `wasm-binaries` directory) and do the same thing it does.
 
 You should also be able to use other languages to target the rudelblinken platform, as long as they can compile to WebAssembly, however we have only tested Rust so far. You can use `wit-bindgen` to generate the bindings for your preferred language.
 
