@@ -168,14 +168,14 @@ impl WasmRunner {
     fn ble_thread(sender: Sender<HostEvent>) {
         task::block_on(async {
             let mut ble_scan = BLEScan::new();
-            ble_scan.active_scan(false).interval(100).window(99);
+            ble_scan.active_scan(false).interval(30).window(29);
             // We can only start scanning after we started the ble server/ advertising.
             // TODO: Figure out how to properly wait until the server started
             std::thread::sleep(MAIN_PROGRAM_DELAY);
             loop {
                 // tracing::info!("Scanning for BLE devices");
                 ble_scan
-                    .start(&BLE_DEVICE, 100, |dev, data| {
+                    .start(&BLE_DEVICE, 30, |dev, data| {
                         if let Some(md) = data.manufacture_data() {
                             let now = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
 

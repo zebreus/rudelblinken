@@ -71,11 +71,12 @@ fn fix_mac_address() {
 
 fn setup_ble_server() -> &'static mut BLEServer {
     let ble_device = BLEDevice::take();
-    // Set PHY to 2M for all connections
+    // Try to set coded phy for advertising.
+    // Not sure if this works at all
     unsafe {
         esp_idf_sys::ble_gap_set_prefered_default_le_phy(
-            esp_idf_sys::BLE_GAP_LE_PHY_2M_MASK as u8,
-            esp_idf_sys::BLE_GAP_LE_PHY_2M_MASK as u8,
+            esp_idf_sys::BLE_GAP_LE_PHY_CODED_MASK as u8,
+            esp_idf_sys::BLE_GAP_LE_PHY_CODED_MASK as u8,
         );
         esp_idf_sys::ble_att_set_preferred_mtu(esp_idf_sys::BLE_ATT_MTU_MAX as u16);
     }
@@ -83,13 +84,13 @@ fn setup_ble_server() -> &'static mut BLEServer {
         .set_preferred_mtu(esp_idf_sys::BLE_ATT_MTU_MAX as u16)
         .unwrap();
     ble_device
-        .set_power(PowerType::Default, PowerLevel::P9)
+        .set_power(PowerType::Default, PowerLevel::P3)
         .unwrap();
     ble_device
-        .set_power(PowerType::Advertising, PowerLevel::P9)
+        .set_power(PowerType::Advertising, PowerLevel::P3)
         .unwrap();
     ble_device
-        .set_power(PowerType::Scan, PowerLevel::P9)
+        .set_power(PowerType::Scan, PowerLevel::P3)
         .unwrap();
 
     let server = ble_device.get_server();
@@ -225,7 +226,7 @@ fn main() {
             .disc_mode(DiscMode::Gen)
             .scan_response(false)
             .min_interval(100)
-            .max_interval(250);
+            .max_interval(150);
         ble_advertising.lock().start().unwrap();
     }
 
