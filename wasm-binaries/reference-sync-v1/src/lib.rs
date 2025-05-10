@@ -49,8 +49,8 @@ const SINE_TABLE: [u8; 256] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
 ];
 
-fn calc_bright(fraction: u16) -> u32 {
-    let fraction = (fraction / 256) as u8;
+fn calc_bright(progress: u16) -> u32 {
+    let fraction = (progress / 256) as u8;
     // Related to PWM frequency
     const MAX_VALUE: u32 = 2500;
     // relative brightness to use in bright ambient conditions (>= MAX_AMBIENT); 0-255
@@ -70,8 +70,8 @@ fn calc_bright(fraction: u16) -> u32 {
     adjusted_brightness as u32
 }
 
-const NUDGE_STRENGTH: u8 = 10;
-const US_PER_STEP: u64 = 100;
+const NUDGE_STRENGTH: i32 = 50;
+const US_PER_STEP: u64 = 20;
 
 #[derive(Debug, Clone)]
 struct CycleState {
@@ -110,7 +110,7 @@ impl CycleState {
     ///
     /// timestamp: received_at
     /// progress: progress of the other device
-    fn register_nudge(&mut self, received_at: u64, progress: u16) {
+    fn register_nudge(&mut self, received_at: u64, progress: u16, source_address: u64) {
         self.offsets_received_since_last_update += 1;
         let progress_at_receive = self.progress_at(received_at);
         self.accumulated_offset_since_last_update +=
@@ -123,18 +123,27 @@ impl CycleState {
 
         // Apply nudges to progress based on received offsets
         if self.offsets_received_since_last_update != 0 {
-            let div = self.offsets_received_since_last_update as i32 * NUDGE_STRENGTH as i32;
-            let nudge_base =
-                self.accumulated_offset_since_last_update + self.nudge_remainder as i32;
-            let nudge = nudge_base / div;
-            self.nudge_remainder = (nudge_base % div) as i8;
+            // let div = self.offsets_received_since_last_update as i32 * NUDGE_STRENGTH as i32;
+            // let nudge_base =
+            //     self.accumulated_offset_since_last_update + self.nudge_remainder as i32;
+            // let nudge = nudge_base / div;
+            // self.nudge_remainder = (nudge_base % div) as i8;
 
-            self.progress = self.progress.wrapping_add(nudge as u16);
+            // log(LogLevel::Error, format!("Nudge by {}", nudge).as_str());
+
+            // self.progress = self.progress.wrapping_add(nudge as u16);
+            // self.accumulated_offset_since_last_update = 0;
+            // self.offsets_received_since_last_update = 0;
+
+            let average_offset = self.accumulated_offset_since_last_update
+                / self.offsets_received_since_last_update as i32;
+            let nudge: i32 = (average_offset / NUDGE_STRENGTH);
+            self.progress = self.progress.wrapping_add_signed(nudge as i16);
             self.accumulated_offset_since_last_update = 0;
             self.offsets_received_since_last_update = 0;
         }
 
-        let step_duration = self.update_time - now;
+        let step_duration = now - self.update_time;
         // let t_off = dt % US_PER_STEP;
         // Update progress
         self.update_time = now;
@@ -147,18 +156,20 @@ impl CycleState {
 
 static CYCLE_STATE: LazyLock<Mutex<CycleState>> = LazyLock::new(|| Mutex::new(CycleState::new()));
 
-struct Test;
-impl Guest for Test {
-    fn run() {
-        loop {
-            yield_now(10);
-            let progress = {
+/// Advance a tick, updating the cycle state and setting the advertisement data
+///
+/// Returns the progress of the cycle state
+fn tick() -> u16 {
+    let progress = loop {
+        yield_now(1);
+
                 let Ok(mut state) = CYCLE_STATE.try_lock() else {
                     continue;
                 };
                 state.update_progress();
-                state.progress
+        break state.progress;
             };
+
             let progress_bytes = progress.to_le_bytes();
             set_advertisement_data(&vec![
                 0x00,
@@ -169,6 +180,15 @@ impl Guest for Test {
                 progress_bytes[0],
                 progress_bytes[1],
             ]);
+    progress
+}
+
+struct Test;
+impl Guest for Test {
+    fn run() {
+        loop {
+            let progress = tick();
+
             // TODO: Add high-level API for setting led
             set_leds(0, &[calc_bright(progress) as u16]);
         }
@@ -189,7 +209,11 @@ impl BleGuest for Test {
         let other_progress = u16::from_le_bytes([*other_progress_0, *other_progress_1]);
 
         if let Ok(mut state) = CYCLE_STATE.try_lock() {
-            state.register_nudge(advertisement.received_at, other_progress);
+            state.register_nudge(
+                advertisement.received_at,
+                other_progress,
+                advertisement.address,
+            );
         }
     }
 }
