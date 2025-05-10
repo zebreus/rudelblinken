@@ -122,6 +122,9 @@ pub async fn scan_for<Fut, Err>(
     max_devices: u32,
     // Filter devices by name
     name_filter: impl Fn(&str) -> bool,
+    // Power cycle the adapter to make discovery more reliable
+    // TODO: Find a better fix
+    powercycle_adapter: bool,
     f: &dyn Fn(bluer::Device, AbortHandle) -> Fut,
 ) -> bluer::Result<()>
 where
@@ -131,6 +134,11 @@ where
     let session = bluer::Session::new().await?;
 
     let adapter = session.default_adapter().await?;
+
+    // Power cycle the adapter to make discovery more reliable
+    if powercycle_adapter {
+        adapter.set_powered(false).await?;
+    }
     adapter.set_powered(true).await?;
 
     let filter = DiscoveryFilter {
@@ -138,7 +146,7 @@ where
         rssi: None,
         pathloss: None,
         transport: bluer::DiscoveryTransport::Le,
-        duplicate_data: false,
+        duplicate_data: true,
         discoverable: false,
         pattern: Some("[rb]".to_string()),
         _non_exhaustive: (),

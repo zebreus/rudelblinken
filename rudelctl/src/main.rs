@@ -53,6 +53,9 @@ struct Cli {
     name: Option<String>,
     #[command(subcommand)]
     command: Commands,
+    /// Powercycle the bluetooth adapter before doing anything
+    #[arg(long, default_value = "true")]
+    powercycle: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -144,6 +147,7 @@ async fn main() -> bluer::Result<()> {
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
                 name_filter,
+                cli.powercycle,
                 &async |device: Device, abort| -> Result<Outcome, UpdateTargetError> {
                     let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
                     else {
@@ -200,6 +204,7 @@ async fn main() -> bluer::Result<()> {
                 Duration::from_millis((timeout * 1000.0) as u64),
                 devices,
                 name_filter,
+                cli.powercycle,
                 &async |device: Device, _| -> Result<Outcome, UpdateTargetError> {
                     let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
                     else {
@@ -220,6 +225,7 @@ async fn main() -> bluer::Result<()> {
                 Duration::from_secs(9999999999 as u64),
                 1,
                 name_filter,
+                cli.powercycle,
                 &async |device: Device, abort| -> Result<Outcome, UpdateTargetError> {
                     let Ok(update_target) = FileUploadClient::new_from_peripheral(&device).await
                     else {
@@ -241,6 +247,7 @@ async fn main() -> bluer::Result<()> {
                 Duration::from_millis((timeout * 1000.0) as u64),
                 u32::MAX,
                 name_filter,
+                cli.powercycle,
                 &async |device: Device, _| -> Result<Outcome, UpdateTargetError> {
                     let address = device.address();
                     let (name, rssi) =
