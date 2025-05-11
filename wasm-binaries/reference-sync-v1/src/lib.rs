@@ -129,6 +129,7 @@ impl CycleState {
 
     /// This function gets called when a nudge is received
     /// from another device. It is called with the timestamp
+    /// The goal is to create and maintain a list of other cat ear pairs
     ///
     /// received_at: when the ping was received
     /// progress: progress of the other device
@@ -138,7 +139,7 @@ impl CycleState {
         let offset = progress.wrapping_sub(progress_at_receive) as i16;
 
         let already_there = self
-            .peers
+            .peers // other cat ears
             .iter_mut()
             .find(|peer| peer.address == source_address);
         match already_there {
@@ -167,12 +168,17 @@ impl CycleState {
         if since_last_nudge > NUDGE_DELAY {
             self.nudge_time = self.nudge_time + NUDGE_DELAY;
             // Get the average offset of all peers that were recently heard from
-            let average_offset = self
+            let relevant_peers = self
                 .peers
                 .iter()
                 .filter(|peer| peer.received_at > (now.saturating_sub(MAX_PING_AGE)))
+                .collect::<Vec<_>>();
+            let count = relevant_peers.len();
+            let average_offset = relevant_peers
+                .iter()
                 .map(|peer| peer.offset as i32)
-                .sum::<i32>();
+                .sum::<i32>()
+                / count as i32;
 
             let nudge: i32 = average_offset / NUDGE_ATTENUATION;
             self.progress = self.progress.wrapping_add_signed(nudge as i16);
