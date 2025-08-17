@@ -2,9 +2,17 @@
 
 Synced blinking catears
 
+You probably want to use the rust rewrite at [github.com/zebreus/rudelblinken-rs](https://github.com/zebreus/rudelblinken-rs)
+
 ## Notes
 
 Less of a Readme, more a unstructured braindump
+
+## Hardware
+
+There is a [custom catears 3d model](https://github.com/zebreus/parametric-cat-ears) that is designed to make it easy to attach LED strips. There are also rudelblinken PCBs that contain everything you need and fit perfectly on the catears. You can find the schematics at [oshwlab.com/zebreus/rudelblinken](http://oshwlab.com/zebreus/rudelblinken) . Be aware that the current revision still has some design flaws.
+
+<!-- For some reason the oshwlab link only works with http, idk -->
 
 ## Updating all cat ears nearby
 
