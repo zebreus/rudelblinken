@@ -27,13 +27,14 @@ const BLE_WORKING_DURATION: u64 = 10 * 1000 * 1000;
 const BLE_WORKING_THRESHOLD: u32 = 10;
 
 const AMBIENT_PHASE_DURATION: u32 = 3;
+static AMBIENT_DURATION_UNTIL_PRINTING: LazyLock<Arc<Mutex<u32>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(45)));
 static AMBIENT_TEST_STATE_: LazyLock<Arc<Mutex<AmbientTestState>>> =
     LazyLock::new(|| Arc::new(Mutex::new(AmbientTestState::Low(0))));
 enum AmbientTestState {
     Low(u32),
     High(u32),
     LowAgain(u32),
-    HighAgain(u32),
 }
 
 fn test_ambient() {
@@ -49,7 +50,7 @@ fn test_ambient() {
                 if *counter == AMBIENT_PHASE_DURATION {
                     log(
                         LogLevel::Info,
-                        "[1/4] Please shine light on the sensor to start the test",
+                        "[1/3] Please shine light on the sensor to start the test",
                     );
                 }
                 AmbientTestState::Low(*counter + 1)
@@ -66,10 +67,18 @@ fn test_ambient() {
                 if *counter == AMBIENT_PHASE_DURATION {
                     log(
                         LogLevel::Info,
-                        "[2/4] Cover the sensor again to continue the test",
+                        "[2/3] Cover the sensor again to finish the test",
                     );
                 }
-                AmbientTestState::High(*counter + 1)
+                if *counter > 2 * AMBIENT_PHASE_DURATION {
+                    log(
+                        LogLevel::Info,
+                        "Sensor not covered fast enough. Ambient light sensor test failed, restarting",
+                    );
+                    AmbientTestState::Low(0)
+                } else {
+                    AmbientTestState::High(*counter + 1)
+                }
             } else {
                 if *counter >= AMBIENT_PHASE_DURATION {
                     AmbientTestState::LowAgain(0)
@@ -83,35 +92,15 @@ fn test_ambient() {
             }
         }
         AmbientTestState::LowAgain(counter) => {
-            if ambient < 5 {
-                if *counter == AMBIENT_PHASE_DURATION {
-                    log(
-                        LogLevel::Info,
-                        "[3/4] Shine light on the sensor again to finish the test",
-                    );
-                }
-                AmbientTestState::LowAgain(*counter + 1)
-            } else {
-                if *counter >= AMBIENT_PHASE_DURATION {
-                    AmbientTestState::HighAgain(0)
-                } else {
-                    log(
-                        LogLevel::Info,
-                        "Ambient light sensor test failed, restarting",
-                    );
-                    AmbientTestState::Low(0)
-                }
-            }
-        }
-        AmbientTestState::HighAgain(counter) => {
             if *counter >= AMBIENT_PHASE_DURATION {
                 AMBIENT_WORKING.call_once(|| {
                     log(LogLevel::Info, "✅: Ambient light sensor working");
                     true
                 });
             }
-            if ambient >= 5 {
-                AmbientTestState::HighAgain(*counter + 1)
+
+            if ambient < 5 {
+                AmbientTestState::LowAgain(*counter + 1)
             } else {
                 log(
                     LogLevel::Info,
@@ -123,6 +112,13 @@ fn test_ambient() {
     };
 
     *state = new_state;
+
+    let mut counter = AMBIENT_DURATION_UNTIL_PRINTING.lock().unwrap();
+    if *counter == 0 {
+        log(LogLevel::Info, &format!("Ambient light: {}", ambient));
+    } else {
+        *counter -= 1;
+    }
 }
 
 // fn test_microphone() {
