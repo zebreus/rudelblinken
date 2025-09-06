@@ -102,8 +102,8 @@
           MCU = "esp32c3";
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             pkgs.dbus.lib
-            # For rudelctl espflash
-            pkgs.libudev-zero
+            # Provides libudev for rudelctl espflash
+            pkgs.systemd
           ];
 
           buildInputs = [
@@ -122,7 +122,8 @@
             # For the cli:
             pkgs.dbus
             pkgs.pkg-config
-            pkgs.libudev-zero
+            # Provides libudev
+            pkgs.systemd
           ];
         };
 
