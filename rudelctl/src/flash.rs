@@ -14,21 +14,29 @@ pub struct FlashCommand {
     /// Monitor the device after flashing
     #[clap(short, long, default_value = "false")]
     monitor: bool,
+    /// Flash a firmware that runs the board test instead of rudelblinken.
+    #[clap(long, default_value = "false")]
+    test: bool,
 }
 
 /// Wraps espflash to flash the rudelblinken firmware.
 pub struct Flasher {
     monitor: bool,
+    /// Flash a special test firmware instead of the normal firmware.
+    board_test_firmware: bool,
 }
 
 impl Flasher {
     pub async fn new(command: FlashCommand) -> Result<Self, FlashError> {
         Ok(Flasher {
             monitor: command.monitor,
+            board_test_firmware: command.test,
         })
     }
 
     // This function is in large parts copied from espflash::bin::flash
+    //
+    // test_firmware: If true, flash the board test firmware instead of the normal firmware.
     pub async fn flash(&self) {
         #[derive(Debug, Args)]
         #[non_exhaustive]
@@ -85,7 +93,11 @@ impl Flasher {
         let target_xtal_freq = target.crystal_freq(flasher.connection()).unwrap();
 
         // Read the ELF data from the build path and load it to the target.
-        let elf_data_bytes: &[u8] = include_bytes!("../firmware/rudelblinken-firmware");
+        let elf_data_bytes: &[u8] = if !self.board_test_firmware {
+            include_bytes!("../firmware/rudelblinken-firmware")
+        } else {
+            include_bytes!("../firmware/board-test-firmware")
+        };
         let elf_data = Vec::from(elf_data_bytes);
 
         print_board_info(&mut flasher).unwrap();
