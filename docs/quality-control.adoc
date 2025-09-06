@@ -1,8 +1,8 @@
-# QC for rudelblinken
+= QC for rudelblinken
 
 NOTE:: This is mostly just a protocol and not authoritative. There are probably better ways to do this. If you have suggestions, please modify this document or open an issue.
 
-## Depaneling the boards
+== Depaneling the boards
 
 We start with 10 board panels
 
@@ -19,19 +19,19 @@ After these steps we have 10 individual boards with smooth edges.
 
 We used to break them apart but that caused delamination of the PCB layers in some boards.
 
-## Only for zeta boards: Reorienting the ESP32-C3 chip
+== Only for zeta boards: Reorienting the ESP32-C3 chip
 
 We have 300 rudelblinken zeta boards, which were assembled by the JLCPCB assembly service. However, the boards were assembled with a wrong orientation of the ESP32-C3 chip. This means that the boards will not work as intended as we got them. This document describes the steps we take to fix them and how we to test them.
 
 You need:
 
-- Mini hotplate
-- Good quality tweezers
-- Flux
+* Mini hotplate
+* Good quality tweezers
+* Flux
 
 1. Heat the hotplate to 240 degrees Celsius.
-   - The correct temperature is important. If it is too low, the solder will not melt too slowly and applying flux will cause it to harden again. If it is too hot, the PCB and components might get damaged.
-   - However the correct temperature depends on the ambient conditions. What I usually do is to head the hotplate to 230 degrees and then slowly increase it, until the solder melts nicely in about 10 seconds on a new board. Then I set it to 10 degrees higher than that to have some margin.
+** The correct temperature is important. If it is too low, the solder will not melt too slowly and applying flux will cause it to harden again. If it is too hot, the PCB and components might get damaged.
+** However the correct temperature depends on the ambient conditions. What I usually do is to head the hotplate to 230 degrees and then slowly increase it, until the solder melts nicely in about 10 seconds on a new board. Then I set it to 10 degrees higher than that to have some margin.
 2. Put a board on the hotplate and wait for 10 seconds.
 3. Grab the ESP32-C3 chip with the tweezers, lift it _carefully_ from the PCB. If you lift the PCB while doing this, increase the temperature slightly.
 4. While still holding the chip with the tweezers, rotate the hotplate with your other hand by 180 degrees.
@@ -39,7 +39,7 @@ You need:
 6. Apply some flux on all 4 sides of the chip and wiggle it slightly into the correct position.
 7. If the chip is well aligned and there are no super obvious solder bridges, remove the board from the hotplate and put it on a heat resistant surface to cool down.
 
-## Electrical testing
+== Electrical testing
 
 We do a smoketest to see if the board can work at all.
 
@@ -49,36 +49,47 @@ We do a smoketest to see if the board can work at all.
 
 NOTE:: The LED on the board does NOT indicate that the board is working or broken. Whether it lights up or not is a bit random.
 
-## Self-testing the boards
+== Self-testing the boards
 
-First take a known good board and flash the firmware as described in the README.md. Make sure that the board works as expected so that you have a reference.
+First take a known good board and do the test procedure described below to make sure that the test procedure works and you know what to expect.
 
 Now you take a new board and flash the board-test firmware. This firmware will run a series of tests and report the results via the serial console.
 
-`TODO: Add the board test to rudelctl`
+You need:
+
+* A computer with Linux and the `nix` package manager installed
+* The rudelblinken repository cloned
+* A USB C cable
+* An single color LED strip you can hold to boards for testing
+* A flashlight (your smartphone will do)
+
+Prepare your environment:
+
+1. `nix develop .` in the repository
+2. Go into the rudelctl directory `cd rudelctl`
+3. Make sure the rudelctl tool builds and works by running `cargo run --help`
 
 When running the board test firmware, we expect to see the following outputs:
 
 1. Attach the board via USB to your computer. The serial port should appear after at most 10 seconds.
-   - Put the board aside if it does not appear.
-2. Flash the board-test firmware.
-   - Put the board aside if flashing fails.
-3. Launch the board with the board-test firmware and monitor the serial output. (you probably already did this)
-4. After a few seconds you should see messages that 5V power supply is detected and that BLE is working.
-   - You expect to see the following message `✅ 5V power supply detected at (various voltages)`
-   - You expect to see the following message `✅ BLE working (received >20 advertisments in 10 seconds)`
-5. Perform the ambient light test by covering the ambient light sensor with your finger for 3 seconds and then shining a flashlight on it for 3 seconds, covering it again for 3 seconds and finally shining a flashlight on it again for 3 seconds.
+** Put the board aside if it does not appear.
+2. Flash the board-test firmware and monitor the serial port with `cargo run flash --test --monitor`
+** Put the board aside if flashing fails.
+3. After a few seconds you should see messages that 5V power supply is detected and that BLE is working.
+** You expect to see the following message `✅ 5V power supply detected at (various voltages)`
+** You expect to see the following message `✅ BLE working (received >20 advertisments in 10 seconds)`
+4. Perform the ambient light test by covering the ambient light sensor with your finger for 3 seconds and then shining a flashlight on it for 3 seconds, covering it again for 3 seconds and finally shining a flashlight on it again for 3 seconds.
+** Depending on the ambient light conditions you might need to cover the sensor instead of shining a flashlight on it.
+** You expect to see the following message after you performed the test `✅: Ambient light sensor working`
+5. If all tests passed, you should see the following message `🎉 All automated tests passed! (You need to test the LED strip manually)`
+6. Take a LED strip and hold it to the `D` and `+` pads on the PCB. It should be blinking.
+7. If all tests passed (3 automated + 1 manual), you can be reasonably sure that the board is working.
+** If any of the tests failed, put the board aside on a separate pile for further investigation.
 
-   - Depending on the ambient light conditions you might need to cover the sensor instead of shining a flashlight on it.
-   - You expect to see the following message after you performed the test `✅: Ambient light sensor working`
-
-6. If all tests passed, you should see the following message `🎉 All automated tests passed! (You need to test the LED strip manually)`
-7. Take a LED strip and hold it to the `D` and `+` pads on the PCB. It should be blinking.
-8. If all tests passed (3 automated + 1 manual), you can be reasonably sure that the board is working.
-   - If any of the tests failed, put the board aside on a separate pile for further investigation.
-
-NOTE:: The BLE test depends on random advertisements being sent by other devices. If you are in a RF quiet environment, the test might fail. In this case, try to run the test again in a more noisy environment.
+NOTE:: The BLE test depends on advertisements being sent by other devices. If you are in a RF quiet environment, the test might fail. In this case, try to run the test again in a more noisy environment.
 
 Your board is now tested and ready to be used.
 
-## Flashing the real firmware
+== Flashing the real firmware
+
+Similar to the board test step, you can flash the real firmware with `cargo run flash` (without `--test`) from the `rudelctl` directory.
