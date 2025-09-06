@@ -25,6 +25,8 @@ embassy = [
     "esp-idf-svc/critical-section",
     "esp-idf-svc/embassy-time-driver",
 ]
+# Build the firmware with the board test as the default application.
+board-test = []
 
 [profile.release]
 opt-level = "s"

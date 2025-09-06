@@ -12,8 +12,13 @@ const MAX_MAIN_PROGRAM_FS_LOCK_ATTEMPTS: usize = 50;
 /// The max number of attempts to read the main program before deleting it and returning the default program
 const MAX_MAIN_PROGRAM_UPGRADE_ATTEMPTS: usize = 5;
 
+#[cfg(not(feature = "board-test"))]
 const DEFAULT_MAIN_PROGRAM: &[u8] =
     include_bytes!("../../../../wasm-binaries/binaries/reference_sync_v1.wasm");
+
+#[cfg(feature = "board-test")]
+const DEFAULT_MAIN_PROGRAM: &[u8] =
+    include_bytes!("../../../../wasm-binaries/binaries/board_test.wasm");
 
 /// A wasm program as a byte slice
 ///
