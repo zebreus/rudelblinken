@@ -1,0 +1,84 @@
+# QC for rudelblinken
+
+NOTE:: This is mostly just a protocol and not authoritative. There are probably better ways to do this. If you have suggestions, please modify this document or open an issue.
+
+## Depaneling the boards
+
+We start with 10 board panels
+
+1. We carefully cut the panels into individual boards using small pliers. We first cut centered through the perforated area on the long side of the PCBs. We made sure to align your cut well with the edge of the PCB.
+2. Now we cut the perforated stub from the short side of the PCBs. Again we make sure that our cut is well aligned with the edge of the PCB and centered on the perforation.
+3. Now we have 10 individual boards. The edges are a bit rough.
+4. We use 100 grid sandpaper to smooth the edges of the boards. We put a A4 sheet of sandpaper on a flat surface and move the boards twice on each side along the sandpaper with light pressure. When done carefully this removes the rough edges and any small burrs while not damaging the PCB.
+
+When sanding the short sides we found it helpful to tilt the board slightly to the USB connector to avoid sanding into a via close to the edge of the rounded section.
+
+On some boards the are still slight marks from the perforation left, but this does not affect the functionality and they feel smooth. We do not recommend to sand the boards more as there are traces quite close to the edge of the PCB.
+
+After these steps we have 10 individual boards with smooth edges.
+
+We used to break them apart but that caused delamination of the PCB layers in some boards.
+
+## Only for zeta boards: Reorienting the ESP32-C3 chip
+
+We have 300 rudelblinken zeta boards, which were assembled by the JLCPCB assembly service. However, the boards were assembled with a wrong orientation of the ESP32-C3 chip. This means that the boards will not work as intended as we got them. This document describes the steps we take to fix them and how we to test them.
+
+You need:
+
+- Mini hotplate
+- Good quality tweezers
+- Flux
+
+1. Heat the hotplate to 240 degrees Celsius.
+   - The correct temperature is important. If it is too low, the solder will not melt too slowly and applying flux will cause it to harden again. If it is too hot, the PCB and components might get damaged.
+   - However the correct temperature depends on the ambient conditions. What I usually do is to head the hotplate to 230 degrees and then slowly increase it, until the solder melts nicely in about 10 seconds on a new board. Then I set it to 10 degrees higher than that to have some margin.
+2. Put a board on the hotplate and wait for 10 seconds.
+3. Grab the ESP32-C3 chip with the tweezers, lift it _carefully_ from the PCB. If you lift the PCB while doing this, increase the temperature slightly.
+4. While still holding the chip with the tweezers, rotate the hotplate with your other hand by 180 degrees.
+5. Put the chip back on the PCB. Make sure the dot on the chip is in the corner with the blue component on the PCB.
+6. Apply some flux on all 4 sides of the chip and wiggle it slightly into the correct position.
+7. If the chip is well aligned and there are no super obvious solder bridges, remove the board from the hotplate and put it on a heat resistant surface to cool down.
+
+## Electrical testing
+
+We do a smoketest to see if the board can work at all.
+
+1. Set up the USB power meter to measure the current consumption of the board.
+2. Connect the board via USB to the power meter and look at the current consumption after 2-3 seconds.
+3. If the current consumption is around 80-120mA, the board is probably OK. Otherwise put the board aside for further investigation.
+
+NOTE:: The LED on the board does NOT indicate that the board is working or broken. Whether it lights up or not is a bit random.
+
+## Self-testing the boards
+
+First take a known good board and flash the firmware as described in the README.md. Make sure that the board works as expected so that you have a reference.
+
+Now you take a new board and flash the board-test firmware. This firmware will run a series of tests and report the results via the serial console.
+
+`TODO: Add the board test to rudelctl`
+
+When running the board test firmware, we expect to see the following outputs:
+
+1. Attach the board via USB to your computer. The serial port should appear after at most 10 seconds.
+   - Put the board aside if it does not appear.
+2. Flash the board-test firmware.
+   - Put the board aside if flashing fails.
+3. Launch the board with the board-test firmware and monitor the serial output. (you probably already did this)
+4. After a few seconds you should see messages that 5V power supply is detected and that BLE is working.
+   - You expect to see the following message `✅ 5V power supply detected at (various voltages)`
+   - You expect to see the following message `✅ BLE working (received >20 advertisments in 10 seconds)`
+5. Perform the ambient light test by covering the ambient light sensor with your finger for 3 seconds and then shining a flashlight on it for 3 seconds, covering it again for 3 seconds and finally shining a flashlight on it again for 3 seconds.
+
+   - Depending on the ambient light conditions you might need to cover the sensor instead of shining a flashlight on it.
+   - You expect to see the following message after you performed the test `✅: Ambient light sensor working`
+
+6. If all tests passed, you should see the following message `🎉 All automated tests passed! (You need to test the LED strip manually)`
+7. Take a LED strip and hold it to the `D` and `+` pads on the PCB. It should be blinking.
+8. If all tests passed (3 automated + 1 manual), you can be reasonably sure that the board is working.
+   - If any of the tests failed, put the board aside on a separate pile for further investigation.
+
+NOTE:: The BLE test depends on random advertisements being sent by other devices. If you are in a RF quiet environment, the test might fail. In this case, try to run the test again in a more noisy environment.
+
+Your board is now tested and ready to be used.
+
+## Flashing the real firmware
