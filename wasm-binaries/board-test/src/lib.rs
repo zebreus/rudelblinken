@@ -40,7 +40,6 @@ fn test_ambient() {
             return;
         }
 
-        let mut state = &mut AMBIENT_TEST_STATE_;
         let new_state = match AMBIENT_TEST_STATE_ {
             AmbientTestState::Low(counter) => {
                 if ambient < 5 {
@@ -101,7 +100,7 @@ fn test_ambient() {
                 } else {
                     log(
                         LogLevel::Info,
-                        "Ambient light sensor test failed, restarting",
+                        "Ambient light sensor test failed, restarting 2",
                     );
                     AmbientTestState::Low(0)
                 }
@@ -111,7 +110,28 @@ fn test_ambient() {
         AMBIENT_TEST_STATE_ = new_state;
 
         if AMBIENT_DURATION_UNTIL_PRINTING == 0 {
-            log(LogLevel::Info, "Ambient light: {}");
+            if ambient == 0 {
+                log(LogLevel::Info, "Ambient light: 0");
+            } else if ambient == 1 {
+                log(LogLevel::Info, "Ambient light: 1");
+            } else if ambient == 2 {
+                log(LogLevel::Info, "Ambient light: 2");
+            } else if ambient == 3 {
+                log(LogLevel::Info, "Ambient light: 3");
+            } else if ambient == 4 {
+                log(LogLevel::Info, "Ambient light: 4");
+            } else if ambient == 5 {
+                log(LogLevel::Info, "Ambient light: 5");
+            } else if ambient > 5 && ambient < 50 {
+                log(LogLevel::Info, "Ambient light: 5-50");
+            } else if ambient >= 50 {
+                log(LogLevel::Info, "Ambient light: >50");
+            } else {
+                log(
+                    LogLevel::Warning,
+                    "Ambient light: {} (too high, please cover the sensor)",
+                );
+            }
         } else {
             AMBIENT_DURATION_UNTIL_PRINTING -= 1;
         }
