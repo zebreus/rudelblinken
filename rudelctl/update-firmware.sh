@@ -10,7 +10,7 @@ cd ../rudelblinken-firmware
 rm ./target/riscv32imc-esp-espidf/release/rudelblinken-firmware || true
 
 cargo build --release
-cp ./target/riscv32imc-esp-espidf/debug/rudelblinken-firmware ../rudelctl/firmware/rudelblinken-firmware
+cp ./target/riscv32imc-esp-espidf/release/rudelblinken-firmware ../rudelctl/firmware/rudelblinken-firmware
 
 cargo build --release -F board-test
-cp ./target/riscv32imc-esp-espidf/debug/rudelblinken-firmware ../rudelctl/firmware/board-test-firmware
+cp ./target/riscv32imc-esp-espidf/release/rudelblinken-firmware ../rudelctl/firmware/board-test-firmware
