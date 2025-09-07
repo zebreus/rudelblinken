@@ -1,10 +1,8 @@
 use rudelblinken_sdk::{
     get_ambient_light, get_voltage, log, set_leds, time, yield_now, Advertisement, LogLevel,
 };
-use spin::Once;
-use std::sync::{Arc, LazyLock, Mutex};
 
-static ADVERTISMENT_COUNTER: LazyLock<Mutex<u32>> = LazyLock::new(|| Mutex::new(0));
+static mut ADVERTISMENT_COUNTER: u32 = 0;
 
 fn measure_voltage() -> u16 {
     const SAMPLES: u32 = 10;
@@ -16,21 +14,19 @@ fn measure_voltage() -> u16 {
     (voltages / SAMPLES) as u16
 }
 
-static USB_SUPPLY_WORKING: Once<bool> = Once::new();
-static BATTERY_SUPPLY_WORKING: Once<bool> = Once::new();
-static BLE_WORKING: Once<bool> = Once::new();
-static AMBIENT_WORKING: Once<bool> = Once::new();
+static mut USB_SUPPLY_WORKING: Option<bool> = None;
+static mut BATTERY_SUPPLY_WORKING: Option<bool> = None;
+static mut BLE_WORKING: Option<bool> = None;
+static mut AMBIENT_WORKING: Option<bool> = None;
 
-static RESULT_PRINTED: Once<bool> = Once::new();
+static mut RESULT_PRINTED: Option<bool> = None;
 
 const BLE_WORKING_DURATION: u64 = 10 * 1000 * 1000;
 const BLE_WORKING_THRESHOLD: u32 = 10;
 
 const AMBIENT_PHASE_DURATION: u32 = 3;
-static AMBIENT_DURATION_UNTIL_PRINTING: LazyLock<Arc<Mutex<u32>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(45)));
-static AMBIENT_TEST_STATE_: LazyLock<Arc<Mutex<AmbientTestState>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(AmbientTestState::Low(0))));
+static mut AMBIENT_DURATION_UNTIL_PRINTING: u32 = 45;
+static mut AMBIENT_TEST_STATE_: AmbientTestState = AmbientTestState::Low(0);
 enum AmbientTestState {
     Low(u32),
     High(u32),
@@ -38,50 +34,70 @@ enum AmbientTestState {
 }
 
 fn test_ambient() {
-    let ambient = get_ambient_light();
-    if AMBIENT_WORKING.get().is_some() {
-        return;
-    }
+    unsafe {
+        let ambient = get_ambient_light();
+        if AMBIENT_WORKING.is_some() {
+            return;
+        }
 
-    let mut state = AMBIENT_TEST_STATE_.lock().unwrap();
-    let new_state = match &mut *state {
-        AmbientTestState::Low(counter) => {
-            if ambient < 5 {
-                if *counter == AMBIENT_PHASE_DURATION {
-                    log(
-                        LogLevel::Info,
-                        "[1/3] Please shine light on the sensor to start the test",
-                    );
-                }
-                AmbientTestState::Low(*counter + 1)
-            } else {
-                if *counter >= AMBIENT_PHASE_DURATION {
-                    AmbientTestState::High(0)
+        let mut state = &mut AMBIENT_TEST_STATE_;
+        let new_state = match AMBIENT_TEST_STATE_ {
+            AmbientTestState::Low(counter) => {
+                if ambient < 5 {
+                    if counter == AMBIENT_PHASE_DURATION {
+                        log(
+                            LogLevel::Info,
+                            "[1/3] Please shine light on the sensor to start the test",
+                        );
+                    }
+                    AmbientTestState::Low(counter + 1)
                 } else {
-                    AmbientTestState::Low(0)
+                    if counter >= AMBIENT_PHASE_DURATION {
+                        AmbientTestState::High(0)
+                    } else {
+                        AmbientTestState::Low(0)
+                    }
                 }
             }
-        }
-        AmbientTestState::High(counter) => {
-            if ambient >= 5 {
-                if *counter == AMBIENT_PHASE_DURATION {
-                    log(
-                        LogLevel::Info,
-                        "[2/3] Cover the sensor again to finish the test",
-                    );
-                }
-                if *counter > 2 * AMBIENT_PHASE_DURATION {
-                    log(
+            AmbientTestState::High(counter) => {
+                if ambient >= 5 {
+                    if counter == AMBIENT_PHASE_DURATION {
+                        log(
+                            LogLevel::Info,
+                            "[2/3] Cover the sensor again to finish the test",
+                        );
+                    }
+                    if counter > 2 * AMBIENT_PHASE_DURATION {
+                        log(
                         LogLevel::Info,
                         "Sensor not covered fast enough. Ambient light sensor test failed, restarting",
                     );
-                    AmbientTestState::Low(0)
+                        AmbientTestState::Low(0)
+                    } else {
+                        AmbientTestState::High(counter + 1)
+                    }
                 } else {
-                    AmbientTestState::High(*counter + 1)
+                    if counter >= AMBIENT_PHASE_DURATION {
+                        AmbientTestState::LowAgain(0)
+                    } else {
+                        log(
+                            LogLevel::Info,
+                            "Ambient light sensor test failed, restarting",
+                        );
+                        AmbientTestState::Low(0)
+                    }
                 }
-            } else {
-                if *counter >= AMBIENT_PHASE_DURATION {
-                    AmbientTestState::LowAgain(0)
+            }
+            AmbientTestState::LowAgain(counter) => {
+                if counter >= AMBIENT_PHASE_DURATION {
+                    if AMBIENT_WORKING.is_none() {
+                        log(LogLevel::Info, "✅: Ambient light sensor working");
+                        AMBIENT_WORKING = Some(true);
+                    }
+                }
+
+                if ambient < 5 {
+                    AmbientTestState::LowAgain(counter + 1)
                 } else {
                     log(
                         LogLevel::Info,
@@ -90,156 +106,118 @@ fn test_ambient() {
                     AmbientTestState::Low(0)
                 }
             }
+        };
+
+        AMBIENT_TEST_STATE_ = new_state;
+
+        if AMBIENT_DURATION_UNTIL_PRINTING == 0 {
+            log(LogLevel::Info, "Ambient light: {}");
+        } else {
+            AMBIENT_DURATION_UNTIL_PRINTING -= 1;
         }
-        AmbientTestState::LowAgain(counter) => {
-            if *counter >= AMBIENT_PHASE_DURATION {
-                AMBIENT_WORKING.call_once(|| {
-                    log(LogLevel::Info, "✅: Ambient light sensor working");
-                    true
-                });
-            }
-
-            if ambient < 5 {
-                AmbientTestState::LowAgain(*counter + 1)
-            } else {
-                log(
-                    LogLevel::Info,
-                    "Ambient light sensor test failed, restarting",
-                );
-                AmbientTestState::Low(0)
-            }
-        }
-    };
-
-    *state = new_state;
-
-    let mut counter = AMBIENT_DURATION_UNTIL_PRINTING.lock().unwrap();
-    if *counter == 0 {
-        log(LogLevel::Info, &format!("Ambient light: {}", ambient));
-    } else {
-        *counter -= 1;
     }
 }
 
 // fn test_microphone() {
 //     // let ambient = ();
 
-//     log(LogLevel::Info, &format!("Ambient: {}", ambient));
+//     log(LogLevel::Info, "Ambient: {}", ambient));
 // }
 
-fn test_voltage() {
-    let voltage = measure_voltage();
-    if voltage > 4900 && voltage < 5100 {
-        if USB_SUPPLY_WORKING.get().is_some() {
+fn testget_voltage() {
+    unsafe {
+        let voltage = measure_voltage();
+        if voltage > 4900 && voltage < 5100 {
+            if USB_SUPPLY_WORKING.is_some() {
+                return;
+            }
+            if USB_SUPPLY_WORKING.is_none() {
+                log(LogLevel::Info, "✅: 5V power supply detected at {}");
+                USB_SUPPLY_WORKING = Some(true);
+            }
             return;
         }
-        USB_SUPPLY_WORKING.call_once(|| {
-            log(
-                LogLevel::Info,
-                &format!("✅: 5V power supply detected at {}", voltage),
-            );
-            true
-        });
-        return;
-    }
-    if voltage > 3000 && voltage < 4300 {
-        if BATTERY_SUPPLY_WORKING.get().is_some() {
-            return;
-        }
-        if !USB_SUPPLY_WORKING.get().unwrap_or(&false) {
-            BATTERY_SUPPLY_WORKING.call_once(|| {
-                log(
-                    LogLevel::Info,
-                    &format!(
+        if voltage > 3000 && voltage < 4300 {
+            if BATTERY_SUPPLY_WORKING.is_some() {
+                return;
+            }
+            if !USB_SUPPLY_WORKING.unwrap_or(false) {
+                if BATTERY_SUPPLY_WORKING.is_none() {
+                    log(
+                        LogLevel::Info,
                         "❌: Battery power supply detected before 5V power supply at {}",
-                        voltage
-                    ),
-                );
-                false
-            });
+                    );
+                    BATTERY_SUPPLY_WORKING = Some(false);
+                }
+                return;
+            }
+            if BATTERY_SUPPLY_WORKING.is_none() {
+                log(LogLevel::Info, "✅: Battery power supply working at {}");
+                BATTERY_SUPPLY_WORKING = Some(true);
+            }
             return;
         }
-        BATTERY_SUPPLY_WORKING.call_once(|| {
-            log(
-                LogLevel::Info,
-                &format!("✅: Battery power supply working at {}", voltage),
-            );
-            true
-        });
-        return;
-    }
 
-    log(LogLevel::Info, &format!("Voltage: {}", voltage));
+        log(LogLevel::Info, "Voltage: {}");
+    }
 }
 
 fn test_ble() {
-    let now = time();
-    if BLE_WORKING.get().is_some() {
-        return;
-    }
-    if now < BLE_WORKING_DURATION {
-        return;
-    }
-    if let Ok(counter) = ADVERTISMENT_COUNTER.try_lock() {
-        if *counter < BLE_WORKING_THRESHOLD {
-            BLE_WORKING.call_once(|| {
-                log(
-                    LogLevel::Warning,
-                    &format!(
-                        "❌: BLE not working (received only {} of {} advertisments in {} seconds)",
-                        counter,
-                        BLE_WORKING_THRESHOLD,
-                        BLE_WORKING_DURATION / 1000 / 1000
-                    ),
-                );
-                false
-            });
+    unsafe {
+        let now = time();
+        if BLE_WORKING.is_some() {
             return;
         }
-        BLE_WORKING.call_once(|| {
+        if now < BLE_WORKING_DURATION {
+            return;
+        }
+        let counter = &mut ADVERTISMENT_COUNTER;
+        if *counter < BLE_WORKING_THRESHOLD {
+            if BLE_WORKING.is_none() {
+                log(
+                    LogLevel::Warning,
+                    "❌: BLE not working (received only {} of {} advertisments in {} seconds)",
+                );
+                BLE_WORKING = Some(false);
+            }
+            return;
+        }
+        if BLE_WORKING.is_none() {
             log(
                 LogLevel::Info,
-                &format!(
-                    "✅: BLE working (received {} advertisments in {} seconds)",
-                    counter,
-                    BLE_WORKING_DURATION / 1000 / 1000
-                ),
+                "✅: BLE working (received {} advertisments in {} seconds)",
             );
-            true
-        });
+            BLE_WORKING = Some(true);
+        }
         return;
-    } else {
-        log(LogLevel::Warning, "Failed to lock advertisement counter");
     }
 }
 
 #[rudelblinken_sdk_macro::main]
 fn main() {
-    loop {
-        yield_now(0);
+    unsafe {
+        loop {
+            yield_now(0);
 
-        test_voltage();
-        test_ble();
-        test_ambient();
+            testget_voltage();
+            test_ble();
+            test_ambient();
 
-        set_leds(0, &[255]);
-        yield_now(1000 * 300);
+            set_leds(0, &[255]);
+            yield_now(1000 * 300);
 
-        test_ambient();
+            test_ambient();
 
-        set_leds(0, &[0]);
-        yield_now(1000 * 300);
+            set_leds(0, &[0]);
+            yield_now(1000 * 300);
 
-        if let (Some(ble), Some(ambient), Some(voltage)) = (
-            BLE_WORKING.get(),
-            AMBIENT_WORKING.get(),
-            USB_SUPPLY_WORKING.get(),
-        ) {
-            if RESULT_PRINTED.get().is_some() {
-                continue;
-            }
-            RESULT_PRINTED.call_once(|| {
-                if *ble && *ambient && *voltage {
+            if let (Some(ble), Some(ambient), Some(voltage)) =
+                (BLE_WORKING, AMBIENT_WORKING, USB_SUPPLY_WORKING)
+            {
+                if RESULT_PRINTED.is_some() {
+                    continue;
+                }
+                if ble && ambient && voltage {
                     log(LogLevel::Info, "🎉 All automated tests passed!");
                     log(LogLevel::Info, "(You need to test the LED strip manually)");
                 } else {
@@ -252,16 +230,16 @@ fn main() {
                         "You can restart the test by resetting the board",
                     );
                 }
-                true
-            });
+                RESULT_PRINTED = Some(true);
+            }
         }
     }
 }
 
 #[rudelblinken_sdk_macro::on_advertisement]
 fn on_advertisement(_: Advertisement) {
-    let Ok(mut counter) = ADVERTISMENT_COUNTER.try_lock() else {
-        return;
-    };
-    *counter += 1;
+    unsafe {
+        let counter = &mut ADVERTISMENT_COUNTER;
+        *counter += 1;
+    }
 }
