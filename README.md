@@ -53,6 +53,18 @@ We chose WebAssembly as a foundation because:
     cargo run
     ```
 
+    Then you can flash the default program to execute using parttool.py and a bit of bash:
+    ```bash
+    f=../wasm-binaries/binaries/reference_sync_v1.wasm; tf=$(mktemp); \
+    ( \
+        l="$(wc -c "$f" | cut -d ' ' -f1)"; \
+        cat $f; head -c"$((32*1024-4-$l))" /dev/zero; \
+        printf "%08x" "$l" | fold -w2 | tac | xxd -p -r \
+    ) > "$tf"; \
+    /nix/store/k1dhx68bzlcv47wmlj0mhygl5x992sis-esp-idf-v5.2.2/components/partition_table/parttool.py \
+        write_partition --partition-name default_program --input "$tf"; rm "$tf"
+    ```
+
 4.  **Build Wasm examples:**
 
     The WASM examples are currently broken.

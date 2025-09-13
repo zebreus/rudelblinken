@@ -1,9 +1,15 @@
 //! Load the main program from the filesystem or return the default program
 use crate::config::main_program;
-use crate::storage::get_filesystem;
+use crate::storage::{get_filesystem, CreateStorageError};
 use crate::{storage::FlashStorage, wasm_service::wasm_host::WasmHost};
+use esp_idf_sys::{
+    esp_partition_find, esp_partition_get, esp_partition_mmap,
+    esp_partition_mmap_memory_t_ESP_PARTITION_MMAP_DATA, esp_partition_subtype_t,
+    esp_partition_type_t,
+};
 use rudelblinken_filesystem::file::{File, FileState};
-use std::time::Duration;
+use std::sync::LazyLock;
+use std::{os::raw::c_void, slice, time::Duration};
 
 /// The delay between attempts to load the main program
 const LOAD_MAIN_PROGRAM_RETRY_DELAY: Duration = Duration::from_millis(200);
@@ -11,14 +17,6 @@ const LOAD_MAIN_PROGRAM_RETRY_DELAY: Duration = Duration::from_millis(200);
 const MAX_MAIN_PROGRAM_FS_LOCK_ATTEMPTS: usize = 50;
 /// The max number of attempts to read the main program before deleting it and returning the default program
 const MAX_MAIN_PROGRAM_UPGRADE_ATTEMPTS: usize = 5;
-
-#[cfg(not(feature = "board-test"))]
-const DEFAULT_MAIN_PROGRAM: &[u8] =
-    include_bytes!("../../../../wasm-binaries/binaries/reference_sync_v1.wasm");
-
-#[cfg(feature = "board-test")]
-const DEFAULT_MAIN_PROGRAM: &[u8] =
-    include_bytes!("../../../../wasm-binaries/binaries/board_test.wasm");
 
 /// A wasm program as a byte slice
 ///
@@ -33,9 +31,77 @@ pub enum WasmProgram {
 impl AsRef<[u8]> for WasmProgram {
     fn as_ref(&self) -> &[u8] {
         match self {
-            WasmProgram::Default => DEFAULT_MAIN_PROGRAM,
+            WasmProgram::Default => DEFAULT_PROGRAM.get_content(),
             WasmProgram::MainProgram(file) => &file,
         }
+    }
+}
+
+const PROG_PART_TYPE: esp_partition_type_t = 0x41;
+const PROG_PART_SUBTYPE: esp_partition_subtype_t = 0x1;
+
+struct FlashProgram {
+    partition: *const esp_idf_sys::esp_partition_t,
+    storage: *const u8,
+}
+
+unsafe impl Sync for FlashProgram {}
+
+unsafe impl Send for FlashProgram {}
+
+impl FlashProgram {
+    fn get_content(&self) -> &'static [u8] {
+        let part_size = unsafe { (*self.partition).size };
+        let len_ptr = unsafe { self.storage.add(part_size as usize).sub(4) } as *const u32;
+        let len = unsafe { *len_ptr } as usize;
+        unsafe { slice::from_raw_parts(self.storage, len) }
+    }
+}
+
+static DEFAULT_PROGRAM: LazyLock<FlashProgram> =
+    LazyLock::new(|| get_default_program().expect("failed to load default program"));
+
+fn get_default_program() -> Result<FlashProgram, CreateStorageError> {
+    let mut label: Vec<i8> = String::from("default_program")
+        .bytes()
+        .into_iter()
+        .map(|c| c as i8)
+        .collect();
+    label.push(0);
+
+    // Find the partition
+    let partition;
+    unsafe {
+        let partition_iterator =
+            esp_partition_find(PROG_PART_TYPE, PROG_PART_SUBTYPE, label.as_mut_ptr());
+        if partition_iterator == std::ptr::null_mut() {
+            return Err(CreateStorageError::NoPartitionFound);
+        }
+        partition = esp_partition_get(partition_iterator);
+    }
+
+    let memory_mapped_flash: *mut u8;
+    let mut storage_handle: u32 = 0;
+    unsafe {
+        let mut mmap_pointer: *const c_void = std::ptr::null_mut();
+        let err = esp_partition_mmap(
+            partition,
+            0,
+            (*partition).size as usize,
+            esp_partition_mmap_memory_t_ESP_PARTITION_MMAP_DATA,
+            std::ptr::addr_of_mut!(mmap_pointer),
+            std::ptr::addr_of_mut!(storage_handle),
+        );
+        if err != 0 {
+            return Err(CreateStorageError::FailedToMmapSecrets);
+        }
+
+        memory_mapped_flash = mmap_pointer as _;
+
+        return Ok(FlashProgram {
+            partition,
+            storage: memory_mapped_flash,
+        });
     }
 }
 
