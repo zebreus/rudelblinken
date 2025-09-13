@@ -1,8 +1,12 @@
 //! Test wasm files on an emulated rudelblinken device.
+
 use clap::{Args, Parser};
-use espflash::cli::{
-    config::Config, connect, erase_partitions, flash_elf_image, make_flash_data, monitor::monitor,
-    print_board_info, EspflashProgress,
+use espflash::{
+    cli::{
+        config::Config, connect, erase_partitions, make_flash_data, monitor::monitor,
+        print_board_info, EspflashProgress,
+    },
+    elf::{ElfFirmwareImage, RomSegment},
 };
 use thiserror::Error;
 
@@ -17,6 +21,9 @@ pub struct FlashCommand {
     /// Flash a firmware that runs the board test instead of rudelblinken.
     #[clap(long, default_value = "false")]
     test: bool,
+    /// Flash the default program
+    #[clap(short, long, default_value = "true")]
+    default_program: bool,
 }
 
 /// Wraps espflash to flash the rudelblinken firmware.
@@ -24,6 +31,7 @@ pub struct Flasher {
     monitor: bool,
     /// Flash a special test firmware instead of the normal firmware.
     board_test_firmware: bool,
+    flash_default_program: bool,
 }
 
 impl Flasher {
@@ -31,6 +39,7 @@ impl Flasher {
         Ok(Flasher {
             monitor: command.monitor,
             board_test_firmware: command.test,
+            flash_default_program: command.default_program,
         })
     }
 
@@ -93,11 +102,7 @@ impl Flasher {
         let target_xtal_freq = target.crystal_freq(flasher.connection()).unwrap();
 
         // Read the ELF data from the build path and load it to the target.
-        let elf_data_bytes: &[u8] = if !self.board_test_firmware {
-            include_bytes!("../firmware/rudelblinken-firmware")
-        } else {
-            include_bytes!("../firmware/board-test-firmware")
-        };
+        let elf_data_bytes: &[u8] = include_bytes!("../firmware/rudelblinken-firmware");
         let elf_data = Vec::from(elf_data_bytes);
 
         print_board_info(&mut flasher).unwrap();
@@ -110,6 +115,7 @@ impl Flasher {
             .or_else(|| Some(espflash::flasher::FlashSize::_4Mb)); // Otherwise, use a reasonable default value
 
         if args.flash_args.ram {
+            let elf_data = Vec::from(elf_data_bytes);
             flasher
                 .load_elf_to_ram(&elf_data, Some(&mut EspflashProgress::default()))
                 .unwrap();
@@ -132,7 +138,54 @@ impl Flasher {
                 .unwrap();
             }
 
-            flash_elf_image(&mut flasher, &elf_data, flash_data, target_xtal_freq).unwrap();
+            let prog_seg = if self.flash_default_program {
+                let prog_part = flash_data
+                    .partition_table
+                    .as_ref()
+                    .and_then(|pt| pt.find("default_program").cloned())
+                    .expect("Failed to find default_program partition");
+
+                let program_bytes: &[u8] = if !self.board_test_firmware {
+                    include_bytes!("../firmware/default_program.wasm")
+                } else {
+                    include_bytes!("../firmware/test_program.wasm")
+                };
+                let prog_len = program_bytes.len();
+
+                let part_len = prog_part.size() as usize;
+                let mut buf = vec![0u8; part_len];
+                buf[0..prog_len].copy_from_slice(program_bytes);
+                buf[part_len - 4..].copy_from_slice(&(prog_len as u32).to_le_bytes());
+
+                Some(RomSegment {
+                    addr: prog_part.offset(),
+                    data: buf.into(),
+                })
+            } else {
+                None
+            };
+
+            let image = ElfFirmwareImage::try_from(&elf_data as &[u8]).unwrap();
+
+            let chip_revision = Some(
+                flasher
+                    .chip()
+                    .into_target()
+                    .chip_revision(&mut flasher.connection())
+                    .unwrap(),
+            );
+
+            let image = flasher
+                .chip()
+                .into_target()
+                .get_flash_image(&image, flash_data, chip_revision, target_xtal_freq)
+                .unwrap();
+
+            let segments = image.flash_segments().chain(prog_seg).collect::<Vec<_>>();
+
+            flasher
+                .write_bins_to_flash(&segments, Some(&mut EspflashProgress::default()))
+                .unwrap();
         }
 
         if self.monitor {
