@@ -4,10 +4,8 @@
 use cat_management_service::CatManagementService;
 use esp32_nimble::{
     enums::{ConnMode, DiscMode, PowerLevel, PowerType},
-    utilities::mutex::Mutex,
     BLEAdvertisementData, BLEDevice, BLEServer,
 };
-use esp_idf_hal::gpio::{self, PinDriver};
 use esp_idf_sys::{self as _, heap_caps_print_heap_info, MALLOC_CAP_DEFAULT};
 use file_upload_service::FileUploadService;
 use name::initialize_name;
@@ -158,10 +156,6 @@ pub fn print_memory_info() {
 }
 
 pub static BLE_DEVICE: LazyLock<&'static mut BLEDevice> = LazyLock::new(|| BLEDevice::take());
-pub static LED_PIN: LazyLock<Mutex<PinDriver<'static, gpio::Gpio8, gpio::Output>>> =
-    LazyLock::new(|| {
-        Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"))
-    });
 
 /// Create an BLE advertisement data with the given manufacturer data and common rudelblinken data
 ///
@@ -207,11 +201,7 @@ fn main() {
     get_filesystem().unwrap();
     print_memory_info();
 
-    let _led_pin =
-        Mutex::new(PinDriver::output(unsafe { gpio::Gpio8::new() }).expect("pin init failed"));
-
     let _file_upload_service = FileUploadService::new(server);
-    LazyLock::force(&LED_PIN);
 
     let _cat_management_service = CatManagementService::new(server);
 

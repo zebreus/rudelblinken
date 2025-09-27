@@ -1,3 +1,9 @@
+use crate::{
+    config::{self, get_config, LedStripColor, WasmGuestConfig},
+    create_ble_advertisment,
+    wasm_service::wasm_host::{singlecolor::LED_PIN, ws2812::WS2812},
+    BLE_DEVICE,
+};
 use esp32_nimble::utilities::mutex::Mutex;
 use esp_idf_hal::{
     adc::{
@@ -5,8 +11,6 @@ use esp_idf_hal::{
         oneshot::{config::AdcChannelConfig, AdcChannelDriver, AdcDriver},
     },
     gpio::{self},
-    ledc::{self, config::TimerConfig, LedcDriver, LedcTimerDriver},
-    units::FromValueType,
 };
 use esp_idf_sys::adc_atten_t_ADC_ATTEN_DB_12;
 use rudelblinken_runtime::{
@@ -16,33 +20,19 @@ use rudelblinken_runtime::{
     },
     linker::linker::WrappedCaller,
 };
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::{
+    sync::mpsc::{channel, Receiver, Sender},
+    time::Instant,
+};
 use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
 
-use crate::{
-    config::{self, get_config, LedStripColor, WasmGuestConfig},
-    create_ble_advertisment, BLE_DEVICE,
-};
+pub mod singlecolor;
+pub mod ws2812;
 
-pub static LED_PIN: LazyLock<Mutex<LedcDriver<'static>>> = LazyLock::new(|| {
-    Mutex::new(
-        LedcDriver::new(
-            unsafe { ledc::CHANNEL0::new() },
-            LedcTimerDriver::new(
-                unsafe { ledc::TIMER0::new() },
-                &TimerConfig::new()
-                    .frequency(6.kHz().into())
-                    .resolution(ledc::Resolution::Bits13),
-            )
-            .expect("timer init failed"),
-            unsafe { gpio::Gpio8::new() },
-        )
-        .expect("ledc driver init failed"),
-    )
-});
+static USE_WS2812: bool = true;
 
 static ADC_DRIVER: LazyLock<Arc<AdcDriver<'static, adc::ADC1>>> =
     LazyLock::new(|| Arc::new(AdcDriver::new(unsafe { adc::ADC1::new() }).unwrap()));
@@ -62,22 +52,6 @@ pub static LIGHT_SENSOR_ADC: LazyLock<
     .unwrap();
     Mutex::new(pin)
 });
-
-// pub static VIBRATION_SENSOR_ADC: LazyLock<
-//     Mutex<AdcChannelDriver<'static, gpio::Gpio4, Arc<AdcDriver<'static, adc::ADC1>>>>,
-// > = LazyLock::new(|| {
-//     let pin = AdcChannelDriver::new(
-//         ADC_DRIVER.clone(),
-//         unsafe { gpio::Gpio4::new() },
-//         &AdcChannelConfig {
-//             attenuation: adc_atten_t_ADC_ATTEN_DB_12,
-//             resolution: adc::Resolution::Resolution12Bit,
-//             calibration: true,
-//         },
-//     )
-//     .unwrap();
-//     Mutex::new(pin)
-// });
 
 pub static VOLTAGE_SENSOR_ADC: LazyLock<
     Mutex<AdcChannelDriver<'static, gpio::Gpio2, Arc<AdcDriver<'static, adc::ADC1>>>>,
@@ -131,6 +105,7 @@ pub struct WasmHost {
 impl WasmHost {
     pub fn new() -> (Sender<HostEvent>, Receiver<WasmEvent>, Self) {
         LazyLock::force(&LED_PIN);
+        LazyLock::force(&WS2812);
         let (host_sender, host_receiver) = channel::<HostEvent>();
         let (wasm_sender, wasm_receiver) = channel::<WasmEvent>();
         return (
@@ -145,6 +120,8 @@ impl WasmHost {
     }
 }
 
+static LAST_UPDATE: LazyLock<Mutex<Instant>> = LazyLock::new(|| Mutex::new(Instant::now()));
+
 impl Host for WasmHost {
     fn yield_now(
         caller: &mut WrappedCaller<'_, Self>,
@@ -155,6 +132,12 @@ impl Host for WasmHost {
         loop {
             // Sleep for 1 freeRTOS tick to force yielding
             std::thread::sleep(Duration::from_millis(1));
+            if USE_WS2812 {
+                let mut last_update = LAST_UPDATE.lock();
+                let elapsed = last_update.elapsed();
+                *last_update = Instant::now();
+                WS2812.lock().update_leds(&elapsed);
+            }
 
             loop {
                 let receiver = caller.data().host_events.lock();
@@ -231,7 +214,12 @@ impl Host for WasmHost {
         lux: &[u16],
     ) -> Result<u32, rudelblinken_runtime::Error> {
         if first_id == 0 && 0 < lux.len() {
-            host::to_error_code(LED_PIN.lock().set_duty(lux[0] as u32), 1)
+            if USE_WS2812 {
+                WS2812.lock().set_duty(lux[0] as u32);
+                Ok(0)
+            } else {
+                host::to_error_code(LED_PIN.lock().set_duty(lux[0] as u32), 1)
+            }
         } else {
             Ok(0)
         }
@@ -242,7 +230,12 @@ impl Host for WasmHost {
         _color: &LedColor,
         lux: u32,
     ) -> Result<u32, rudelblinken_runtime::Error> {
-        host::to_error_code(LED_PIN.lock().set_duty(lux), 1)
+        if USE_WS2812 {
+            WS2812.lock().set_duty(lux);
+            Ok(0)
+        } else {
+            host::to_error_code(LED_PIN.lock().set_duty(lux), 1)
+        }
     }
 
     fn led_count(
@@ -258,7 +251,11 @@ impl Host for WasmHost {
         if id == 0 {
             Ok(LedInfo {
                 color: get_config::<LedStripColor>(),
-                max_lux: LED_PIN.lock().get_max_duty() as u16,
+                max_lux: if USE_WS2812 {
+                    WS2812.lock().get_max_duty() as u16
+                } else {
+                    LED_PIN.lock().get_max_duty() as u16
+                },
             })
         } else {
             Ok(LedInfo {
