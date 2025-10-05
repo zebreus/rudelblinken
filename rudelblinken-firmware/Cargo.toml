@@ -55,8 +55,6 @@ blake3 = "1.5.4"
 tracing-subscriber = "0.3.18"
 tracing = "0.1.41"
 zerocopy = { version = "0.8.14", features = ["derive"] }
-ws2812-spi = "0.5.1"
-smart-leds = "0.4.0"
 
 [build-dependencies]
 embuild = {version = "0.32.0", features = ["espidf"] }

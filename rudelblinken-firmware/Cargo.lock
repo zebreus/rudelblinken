@@ -1585,12 +1585,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rgb"
-version = "0.8.52"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c6a884d2998352bb4daf0183589aec883f16a6da1f4dde84d8e2e9a5409a1ce"
-
-[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1627,13 +1621,11 @@ dependencies = [
  "itertools",
  "rudelblinken-filesystem",
  "rudelblinken-runtime",
- "smart-leds",
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
  "wasmi 0.39.1",
  "wat",
- "ws2812-spi",
  "zerocopy",
 ]
 
@@ -1820,24 +1812,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "smart-leds"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66df34e571fa9993fa6f99131a374d58ca3d694b75f9baac93458fe0d6057bf0"
-dependencies = [
- "smart-leds-trait",
-]
-
-[[package]]
-name = "smart-leds-trait"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7f4441a131924d58da6b83a7ad765c460e64630cce504376c3a87a2558c487f"
-dependencies = [
- "rgb",
-]
 
 [[package]]
 name = "spin"
@@ -2794,16 +2768,6 @@ name = "writeable"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea2f10b9bb0928dfb1b42b65e1f9e36f7f54dbdf08457afefb38afcdec4fa2bb"
-
-[[package]]
-name = "ws2812-spi"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2fd98e2b649252eced2ec3aa8d5048e7d2ac294276b0567939bbf47741f9934"
-dependencies = [
- "embedded-hal 1.0.0",
- "smart-leds-trait",
-]
 
 [[package]]
 name = "yoke"
