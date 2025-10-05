@@ -1,9 +1,9 @@
 use crate::service_helpers::DocumentableCharacteristic;
 use esp32_nimble::{
+    cpfd::{ChrFormat, ChrUnit},
     utilities::{mutex::Mutex, BleUuid},
-    uuid128, BLE2904Format, BLEServer, NimbleProperties,
+    uuid128, BLEServer, NimbleProperties,
 };
-use esp_idf_sys::BLE_GATT_CHR_UNIT_UNITLESS;
 use std::{
     ffi::CStr,
     io::{self, BufRead, Read},
@@ -157,22 +157,12 @@ impl SerialLoggingService {
         let tx_characteristic = service
             .lock()
             .create_characteristic(SERIAL_LOGGING_TIO_CHAR_TX, NimbleProperties::NOTIFY);
-        tx_characteristic.document(
-            "UART TX",
-            BLE2904Format::OPAQUE,
-            0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
-        );
+        tx_characteristic.document("UART TX", ChrFormat::Struct, 0, ChrUnit::Unitless);
 
         let rx_characteristic = service
             .lock()
             .create_characteristic(SERIAL_LOGGING_TIO_CHAR_RX, NimbleProperties::WRITE_NO_RSP);
-        rx_characteristic.document(
-            "UART RX",
-            BLE2904Format::OPAQUE,
-            0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
-        );
+        rx_characteristic.document("UART RX", ChrFormat::Struct, 0, ChrUnit::Unitless);
 
         let ble_logging = BleLoggingGlobals {
             rx_characteristic: rx_characteristic.clone(),

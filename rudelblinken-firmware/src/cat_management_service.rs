@@ -1,12 +1,12 @@
 //! The cat management service is reponsible for managing the currently running program and its environment
 use crate::config::{self, get_config, set_config, LedStripColor, WasmGuestConfig};
 use crate::service_helpers::DocumentableCharacteristic;
-use esp32_nimble::BLEServer;
 use esp32_nimble::{
+    cpfd::{ChrFormat, ChrUnit},
     utilities::{mutex::Mutex, BleUuid},
-    NimbleProperties,
+    BLEServer, NimbleProperties,
 };
-use esp_idf_sys::{self as _, BLE_GATT_CHR_UNIT_UNITLESS};
+use esp_idf_sys::{self as _};
 use main_program::WasmRunner;
 use rudelblinken_runtime::host::LedColor;
 use std::sync::Arc;
@@ -36,9 +36,7 @@ impl CatManagementService {
     pub fn new(server: &mut BLEServer) -> Arc<Mutex<CatManagementService>> {
         let wasm_runner = WasmRunner::new();
 
-        let cat_management_service = Arc::new(Mutex::new(CatManagementService {
-            wasm_runner: wasm_runner,
-        }));
+        let cat_management_service = Arc::new(Mutex::new(CatManagementService { wasm_runner }));
 
         let service = server.create_service(CAT_MANAGEMENT_SERVICE_UUID);
 
@@ -48,40 +46,37 @@ impl CatManagementService {
         );
         program_hash_characteristic.document(
             "Current program hash",
-            esp32_nimble::BLE2904Format::UTF8,
+            ChrFormat::Utf8s,
             0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
+            ChrUnit::Unitless,
         );
 
         let name_characteristic = service.lock().create_characteristic(
             CAT_MANAGEMENT_SERVICE_NAME_UUID,
             NimbleProperties::WRITE | NimbleProperties::READ,
         );
-        name_characteristic.document(
-            "Name",
-            esp32_nimble::BLE2904Format::UTF8,
-            0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
-        );
+        name_characteristic.document("Name", ChrFormat::Utf8s, 0, ChrUnit::Unitless);
+
         let strip_color_characteristic = service.lock().create_characteristic(
             CAT_MANAGEMENT_SERVICE_STRIP_COLOR_UUID,
             NimbleProperties::WRITE | NimbleProperties::READ,
         );
         strip_color_characteristic.document(
             "LED Strip Color (three u8 values)",
-            esp32_nimble::BLE2904Format::OPAQUE,
+            ChrFormat::Struct,
             0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
+            ChrUnit::Unitless,
         );
+
         let wasm_guest_config_characteristic = service.lock().create_characteristic(
             CAT_MANAGEMENT_SERVICE_WASM_GUEST_CONFIG_UUID,
             NimbleProperties::WRITE | NimbleProperties::READ,
         );
         wasm_guest_config_characteristic.document(
             "Configuration data for the wasm guest",
-            esp32_nimble::BLE2904Format::OPAQUE,
+            ChrFormat::Struct,
             0,
-            BLE_GATT_CHR_UNIT_UNITLESS,
+            ChrUnit::Unitless,
         );
 
         program_hash_characteristic.lock().on_read(move |value, _| {

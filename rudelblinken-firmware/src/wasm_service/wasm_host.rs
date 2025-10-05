@@ -8,7 +8,10 @@ use esp32_nimble::utilities::mutex::Mutex;
 use esp_idf_hal::{
     adc::{
         self,
-        oneshot::{config::AdcChannelConfig, AdcChannelDriver, AdcDriver},
+        oneshot::{
+            config::{AdcChannelConfig, Calibration},
+            AdcChannelDriver, AdcDriver,
+        },
     },
     gpio::{self},
 };
@@ -46,7 +49,7 @@ pub static LIGHT_SENSOR_ADC: LazyLock<
         &AdcChannelConfig {
             attenuation: adc_atten_t_ADC_ATTEN_DB_12,
             resolution: adc::Resolution::Resolution12Bit,
-            calibration: true,
+            calibration: Calibration::Curve,
         },
     )
     .unwrap();
@@ -62,7 +65,7 @@ pub static VOLTAGE_SENSOR_ADC: LazyLock<
         &AdcChannelConfig {
             attenuation: adc_atten_t_ADC_ATTEN_DB_12,
             resolution: adc::Resolution::Resolution12Bit,
-            calibration: true,
+            calibration: Calibration::Curve,
         },
     )
     .unwrap();

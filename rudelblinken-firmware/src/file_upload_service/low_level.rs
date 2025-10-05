@@ -3,10 +3,11 @@ use crate::{
     service_helpers::DocumentableCharacteristic,
 };
 use esp32_nimble::{
+    cpfd::{ChrFormat, ChrUnit},
     utilities::{mutex::Mutex, BleUuid},
-    BLE2904Format, BLEServer, BLEService, NimbleProperties,
+    BLEServer, BLEService, NimbleProperties,
 };
-use esp_idf_sys::{ble_svc_gatt_changed, BLE_GATT_CHR_UNIT_UNITLESS};
+use esp_idf_sys::ble_svc_gatt_changed;
 use std::sync::Arc;
 use zerocopy::TryFromBytes;
 
@@ -47,12 +48,7 @@ fn setup_data_characteristic(
         FILE_UPLOAD_SERVICE_DATA_UUID,
         NimbleProperties::WRITE_NO_RSP | NimbleProperties::WRITE,
     );
-    data_characteristic.document(
-        "Chunk Upload",
-        BLE2904Format::OPAQUE,
-        0,
-        BLE_GATT_CHR_UNIT_UNITLESS,
-    );
+    data_characteristic.document("Chunk Upload", ChrFormat::Struct, 0, ChrUnit::Unitless);
 
     let file_upload_service_clone = file_upload_service.clone();
     data_characteristic.lock().on_write(move |args| {
@@ -76,9 +72,9 @@ fn setup_upload_request_characteristic(
     );
     upload_request_characteristic.document(
         "File Upload Request",
-        BLE2904Format::OPAQUE,
+        ChrFormat::Struct,
         0,
-        BLE_GATT_CHR_UNIT_UNITLESS,
+        ChrUnit::Unitless,
     );
 
     let file_upload_service_clone = file_upload_service.clone();
@@ -113,9 +109,9 @@ fn setup_current_hash_characteristic(
     );
     current_hash_characteristic.document(
         "Hash of the current upload",
-        BLE2904Format::OPAQUE,
+        ChrFormat::Struct,
         0,
-        BLE_GATT_CHR_UNIT_UNITLESS,
+        ChrUnit::Unitless,
     );
 
     let file_upload_service_clone = file_upload_service.clone();
@@ -140,9 +136,9 @@ fn setup_upload_status_characteristic(
     );
     upload_status_characteristic.document(
         "Number of received chunks + Missing Chunks",
-        BLE2904Format::OPAQUE,
+        ChrFormat::Struct,
         0,
-        BLE_GATT_CHR_UNIT_UNITLESS,
+        ChrUnit::Unitless,
     );
 
     let file_upload_service_clone = file_upload_service.clone();
@@ -173,12 +169,7 @@ fn setup_last_error_characteristic(
     let last_error_characteristic = service
         .lock()
         .create_characteristic(FILE_UPLOAD_SERVICE_LAST_ERROR_UUID, NimbleProperties::READ);
-    last_error_characteristic.document(
-        "Last error code",
-        BLE2904Format::UINT16,
-        0,
-        BLE_GATT_CHR_UNIT_UNITLESS,
-    );
+    last_error_characteristic.document("Last error code", ChrFormat::Uint16, 0, ChrUnit::Unitless);
 
     let file_upload_service_clone = file_upload_service.clone();
     last_error_characteristic.lock().on_read(move |value, _| {
