@@ -16,13 +16,13 @@ proc-macro = true
 # allocator = ["spin", "talc"]
 
 [dependencies]
-darling = "0.20.1"
-proc-macro2 = { version = "1.0.56", features = ["span-locations"] }
-quote = { version = "1.0.26" }
-tempfile = "3.5.0"
-thiserror = "2.0.12"
-syn = { version = "2.0.100", features = ["full"] }
-spin = { version = "0.9.8", optional = false }
+darling = "0.21.3"
+proc-macro2 = { version = "1.0.101", features = ["span-locations"] }
+quote = { version = "1.0.41" }
+tempfile = "3.23.0"
+thiserror = "2.0.17"
+syn = { version = "2.0.106", features = ["full"] }
+spin = { version = "0.10.0", optional = false }
 talc = { version = "4.4.2", optional = false }
 rudelblinken-sdk = { path = "../rudelblinken-sdk", optional = false }
 

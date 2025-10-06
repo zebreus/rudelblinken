@@ -10,5 +10,5 @@ categories = ["wasm", "embedded"]
 keywords = ["rudelblinken"]
 
 [dependencies]
-talc = "4.4.2"
-wit-bindgen = "0.36.0"
+talc = "4.4.3"
+wit-bindgen = "0.46.0"
