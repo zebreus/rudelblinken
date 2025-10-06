@@ -39,7 +39,7 @@ panic = "abort"
 
 [dependencies]
 # wasmi = { version = "0.39.1", path = "../../wasmi/crates/wasmi" }
-wasmi = { version = "0.39.1" }
+wasmi = { version = "0.51.1" }
 esp32-nimble = "=0.11.1"
 esp-idf-svc = { version = "0.51", default-features = false }
 esp-idf-sys = "0.36.0"

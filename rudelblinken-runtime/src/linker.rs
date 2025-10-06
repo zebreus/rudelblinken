@@ -42,7 +42,7 @@ pub fn setup<T: Host>(wasm: &[u8], host: T) -> Result<LinkedHost<T>, wasmi::Erro
 
     setup_linker(&mut linker, &mut store)?;
 
-    let instance = linker.instantiate(&mut store, &module)?.start(&mut store)?;
+    let instance = linker.instantiate_and_start(&mut store, &module)?;
 
     let linked_instance = LinkedHost::new(instance, store);
     return Ok(linked_instance);

@@ -10,4 +10,4 @@ categories = ["wasm", "embedded"]
 keywords = ["rudelblinken", "wasm"]
 
 [dependencies]
-wasmi = "0.40.0"
+wasmi = "0.51.1"
