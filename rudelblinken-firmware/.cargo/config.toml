@@ -11,6 +11,3 @@ rustflags = [
 
 [unstable]
 build-std = ["std", "panic_abort"]
-
-# Workaround for https://github.com/esp-rs/esp-idf-template/issues/174
-CRATE_CC_NO_DEFAULTS = "1"

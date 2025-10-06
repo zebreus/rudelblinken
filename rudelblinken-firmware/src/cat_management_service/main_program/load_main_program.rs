@@ -62,11 +62,7 @@ static DEFAULT_PROGRAM: LazyLock<FlashProgram> =
     LazyLock::new(|| get_default_program().expect("failed to load default program"));
 
 fn get_default_program() -> Result<FlashProgram, CreateStorageError> {
-    let mut label: Vec<i8> = String::from("default_program")
-        .bytes()
-        .into_iter()
-        .map(|c| c as i8)
-        .collect();
+    let mut label: Vec<u8> = String::from("default_program").bytes().collect();
     label.push(0);
 
     // Find the partition

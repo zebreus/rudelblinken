@@ -77,11 +77,7 @@ pub enum CreateStorageError {
 impl FlashStorage {
     pub fn new() -> Result<FlashStorage, CreateStorageError> {
         // TODO: Make sure that there is only one flash storage instance.
-        let mut label: Vec<i8> = String::from("storage")
-            .bytes()
-            .into_iter()
-            .map(|c| c as i8)
-            .collect();
+        let mut label: Vec<u8> = String::from("storage").bytes().collect();
         label.push(0);
 
         // Find the partition

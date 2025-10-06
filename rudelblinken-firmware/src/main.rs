@@ -1,4 +1,3 @@
-#![feature(round_char_boundary)]
 #![feature(once_cell_try)]
 
 use cat_management_service::CatManagementService;

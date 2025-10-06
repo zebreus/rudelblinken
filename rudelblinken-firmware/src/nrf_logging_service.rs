@@ -17,16 +17,16 @@ const SERIAL_LOGGING_TIO_SERVICE: BleUuid = uuid128!("6E400001-B5A3-F393-E0A9-E5
 const SERIAL_LOGGING_TIO_CHAR_RX: BleUuid = uuid128!("6E400002-B5A3-F393-E0A9-E50E24DCCA9E"); // Write no response
 const SERIAL_LOGGING_TIO_CHAR_TX: BleUuid = uuid128!("6E400003-B5A3-F393-E0A9-E50E24DCCA9E"); // Notify
 
-extern "C" fn logger(format_string_pointer: *const i8, va_args: *mut core::ffi::c_void) -> i32 {
+extern "C" fn logger(format_string_pointer: *const u8, va_args: *mut core::ffi::c_void) -> i32 {
     let format_string = unsafe { CStr::from_ptr(format_string_pointer) };
     let format_string = format_string.to_bytes();
 
     let mut format_buffer = [0u8; 1024];
     unsafe {
         esp_idf_sys::snprintf(
-            format_buffer.as_mut_ptr() as *mut i8,
+            format_buffer.as_mut_ptr(),
             1024,
-            format_string.as_ptr() as *const i8,
+            format_string.as_ptr(),
             va_args,
         );
     }

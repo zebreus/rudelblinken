@@ -3,10 +3,9 @@
 
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
-    nixpkgs.url = "github:nixos/nixpkgs";
-    nixpkgs-wit-bindgen.url = "github:nixos/nixpkgs/563c21191ff0600457bd85dc531462c073a1574b";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     nixpkgs-esp-dev = {
-      url = "github:mirrexagon/nixpkgs-esp-dev/c25c658e2648bf71316c0389752ae9fc155e8b83";
+      url = "github:mirrexagon/nixpkgs-esp-dev";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     fenix = {
@@ -19,7 +18,6 @@
     {
       self,
       nixpkgs,
-      nixpkgs-wit-bindgen,
       fenix,
       flake-utils,
       nixpkgs-esp-dev,
@@ -27,28 +25,34 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs-wit-bindgen = import nixpkgs-wit-bindgen {
-          inherit system;
-        };
         pkgs = import nixpkgs {
           inherit system;
           overlays = [
-            (final: prev: {
-              esp-idf-esp32c3 = nixpkgs-esp-dev.packages.${system}.esp-idf-esp32c3;
-              wit-bindgen = pkgs-wit-bindgen.wit-bindgen;
-            })
-            fenix.overlays.default
+            (
+              _: super:
+              let
+                pkgs = fenix.inputs.nixpkgs.legacyPackages.${super.system};
+              in
+              fenix.overlays.default pkgs pkgs
+            )
           ];
         };
 
-        esp-idf-esp32c3 = nixpkgs-esp-dev.packages.${system}.esp-idf-esp32c3;
+        esp-idf-riscv = nixpkgs-esp-dev.packages.${system}.esp-idf-riscv.override {
+          rev = "v5.4.1";
+          sha256 = "sha256-5hwoy4QJFZdLApybV0LCxFD2VzM3Y6V7Qv5D3QjI16I=";
+        };
+
+        esp_idf_version = esp-idf-riscv.version;
+
         fenixPkgs = fenix.packages.${system};
         rustToolchain = fenixPkgs.combine [
           fenixPkgs.complete.toolchain
-          fenixPkgs.targets.riscv32imc-unknown-none-elf.stable.completeToolchain
-          fenixPkgs.targets.wasm32-unknown-unknown.stable.completeToolchain
 
-          (fenixPkgs.complete.withComponents [
+          fenixPkgs.targets.riscv32imc-unknown-none-elf.latest.toolchain
+          fenixPkgs.targets.wasm32-unknown-unknown.latest.toolchain
+
+          (fenixPkgs.latest.withComponents [
             "cargo"
             "clippy"
             "rust-src"
@@ -56,11 +60,6 @@
             "rustfmt"
           ])
         ];
-
-        # rustToolchain = fenix.packages.${system}.fromToolchainFile {
-        #   file = ./rust-toolchain.toml;
-        #   sha256 = "sha256-HAFn+jo7K/dwbCKRHNXQU+x9b+8LJ8xlQGL/tE0rNlE=";
-        # };
 
         fakeGit = pkgs.writeShellScriptBin "git" ''
 
@@ -74,16 +73,16 @@
               exit 0
             fi
             if test "$1" = "rev-parse" && test "$2" = "--short" && test "$3" = "HEAD" ; then
-              echo "v5.2.2"
+              echo "${esp_idf_version}"
               exit 0
             fi
             if test "$1" = "rev-parse" && test "$2" = "HEAD" ; then
-              echo "v5.2.2"
+              echo "${esp_idf_version}"
               exit 0
             fi
           fi
           if test "$5" = "describe" && test "$6" = "--all" && test "$7" = "--exact-match" ; then
-            echo "v5.2.2"
+            echo "${esp_idf_version}"
             exit 0
           fi
 
@@ -96,9 +95,8 @@
 
         devShell = pkgs.mkShell {
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
-          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           ESP_IDF_TOOLS_INSTALL_DIR = "fromenv";
-          ESP_IDF_VERSION = "v5.2.2";
+          ESP_IDF_VERSION = esp_idf_version;
           MCU = "esp32c3";
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             pkgs.dbus.lib
@@ -108,8 +106,8 @@
 
           buildInputs = [
             fakeGit
-            esp-idf-esp32c3
             rustToolchain
+            esp-idf-riscv
             pkgs.rust-analyzer-nightly
             pkgs.cargo-generate
             pkgs.cargo-espflash
@@ -119,9 +117,11 @@
             pkgs.wit-bindgen
             pkgs.cargo-rdme
             pkgs.jq
+
             # For the cli:
             pkgs.dbus
             pkgs.pkg-config
+
             # Provides libudev
             pkgs.systemd
           ];

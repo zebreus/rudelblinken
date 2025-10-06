@@ -23,7 +23,7 @@ experimental = ["esp-idf-svc/experimental"]
 embassy = [
     "esp-idf-svc/embassy-sync",
     "esp-idf-svc/critical-section",
-    "esp-idf-svc/embassy-time-driver",
+#    "esp-idf-svc/embassy-time-driver",
 ]
 
 [profile.release]
