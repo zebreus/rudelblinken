@@ -23,7 +23,7 @@ tempfile = "3.23.0"
 thiserror = "2.0.17"
 syn = { version = "2.0.106", features = ["full"] }
 spin = { version = "0.10.0", optional = false }
-talc = { version = "4.4.2", optional = false }
+talc = { version = "4.4.3", optional = false }
 rudelblinken-sdk = { path = "../rudelblinken-sdk", optional = false }
 
 [dev-dependencies]
