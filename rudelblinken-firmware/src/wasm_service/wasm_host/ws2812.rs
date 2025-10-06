@@ -86,19 +86,19 @@ impl LedState {
     }
 }
 
-pub fn rainbow(led: usize, j: u64, v: u32) -> [u8; 3] {
-    let h: usize = (led * 3 + ((j as usize / 10) % 256)) % 256;
-    let f: u16 = (h as u16 * 2 % 85) * 3;
-    let q: u16 = v as u16 * (255 - (255 * f) / 255) / 255;
-    let t: u16 = v as u16 * (255 - (255 * (255 - f)) / 255) / 255;
+pub fn rainbow(led_index: usize, time_ms: u64, brightness: u32) -> [u8; 3] {
+    let hue: usize = (led_index * 3 + ((time_ms as usize / 10) % 256)) % 256;
+    let fraction: u16 = (hue as u16 * 2 % 85) * 3;
+    let descending_color: u16 = brightness as u16 * (255 - (255 * fraction) / 255) / 255;
+    let ascending_color: u16 = brightness as u16 * (255 - (255 * (255 - fraction)) / 255) / 255;
 
-    match h as u8 {
-        0..=42 => [v as u8, t as u8, 0],
-        43..=84 => [q as u8, v as u8, 0],
-        85..=127 => [0, v as u8, t as u8],
-        128..=169 => [0, q as u8, v as u8],
-        170..=212 => [t as u8, 0, v as u8],
-        213..=254 => [v as u8, 0, q as u8],
-        255 => [v as u8, t as u8, 0],
+    match hue as u8 {
+        0..=42 => [brightness as u8, ascending_color as u8, 0],
+        43..=84 => [descending_color as u8, brightness as u8, 0],
+        85..=127 => [0, brightness as u8, ascending_color as u8],
+        128..=169 => [0, descending_color as u8, brightness as u8],
+        170..=212 => [ascending_color as u8, 0, brightness as u8],
+        213..=254 => [brightness as u8, 0, descending_color as u8],
+        255 => [brightness as u8, ascending_color as u8, 0],
     }
 }
