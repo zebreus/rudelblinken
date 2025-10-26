@@ -385,8 +385,9 @@ impl FileUploadClient {
             }
 
             let upload_status = upload_status
+                .into_iter()
                 .array_chunks::<2>()
-                .map(|chunk_id_bytes| u16::from_le_bytes(*chunk_id_bytes))
+                .map(|chunk_id_bytes| u16::from_le_bytes(chunk_id_bytes))
                 .collect::<Vec<u16>>();
             if upload_status.len() <= 1 {
                 break;
@@ -400,7 +401,8 @@ impl FileUploadClient {
             };
 
             // The number of chunks that will be uploaded this transfer
-            let number_of_chunks = std::cmp::min(missing_chunks.len(), simultaneous_chunks);
+            let number_of_chunks =
+                std::cmp::min(missing_chunks.len() as usize, simultaneous_chunks);
             log::info!("Transferring {} chunks", number_of_chunks);
             cancel_auto_increment.cancel();
             progress_bar.set_message("active");
