@@ -385,8 +385,9 @@ impl FileUploadClient {
             }
 
             let upload_status = upload_status
+                .into_iter()
                 .array_chunks::<2>()
-                .map(|chunk_id_bytes| u16::from_le_bytes(*chunk_id_bytes))
+                .map(|chunk_id_bytes| u16::from_le_bytes(chunk_id_bytes))
                 .collect::<Vec<u16>>();
             if upload_status.len() <= 1 {
                 break;

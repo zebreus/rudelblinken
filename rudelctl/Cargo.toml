@@ -30,7 +30,7 @@ rudelblinken-runtime = { path = "../rudelblinken-runtime", version = "0.1.0" }
 tempfile = "3.19.0"
 rand = "0.8.5"
 zerocopy = { version = "0.8.23", features = ["derive"] }
-indicatif = "0.17.11"
+indicatif = "0.18.1"
 log = "0.4.26"
 indicatif-log-bridge = "0.2.3"
 tokio-util = "0.7.14"
