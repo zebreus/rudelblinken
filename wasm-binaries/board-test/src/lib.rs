@@ -2,7 +2,7 @@ use rudelblinken_sdk::{
     get_ambient_light, get_voltage, log, set_leds, time, yield_now, Advertisement, LogLevel,
 };
 
-static mut ADVERTISMENT_COUNTER: u32 = 0;
+static mut ADVERTISEMENT_COUNTER: u32 = 0;
 
 fn measure_voltage() -> u16 {
     const SAMPLES: u32 = 10;
@@ -191,12 +191,12 @@ fn test_ble() {
         if now < BLE_WORKING_DURATION {
             return;
         }
-        let counter = &mut ADVERTISMENT_COUNTER;
+        let counter = &mut ADVERTISEMENT_COUNTER;
         if *counter < BLE_WORKING_THRESHOLD {
             if BLE_WORKING.is_none() {
                 log(
                     LogLevel::Warning,
-                    "❌: BLE not working (received only {} of {} advertisments in {} seconds)",
+                    "❌: BLE not working (received only {} of {} advertisements in {} seconds)",
                 );
                 BLE_WORKING = Some(false);
             }
@@ -205,7 +205,7 @@ fn test_ble() {
         if BLE_WORKING.is_none() {
             log(
                 LogLevel::Info,
-                "✅: BLE working (received {} advertisments in {} seconds)",
+                "✅: BLE working (received {} advertisements in {} seconds)",
             );
             BLE_WORKING = Some(true);
         }
@@ -259,7 +259,7 @@ fn main() {
 #[rudelblinken_sdk_macro::on_advertisement]
 fn on_advertisement(_: Advertisement) {
     unsafe {
-        let counter = &mut ADVERTISMENT_COUNTER;
+        let counter = &mut ADVERTISEMENT_COUNTER;
         *counter += 1;
     }
 }
