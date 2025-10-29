@@ -28,7 +28,6 @@
 #![feature(iter_array_chunks)]
 #![feature(async_trait_bounds)]
 #![feature(int_roundings)]
-#![feature(round_char_boundary)]
 
 mod bluetooth;
 mod emulator;
