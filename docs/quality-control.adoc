@@ -77,7 +77,7 @@ When running the board test firmware, we expect to see the following outputs:
 ** Put the board aside if flashing fails.
 3. After a few seconds you should see messages that 5V power supply is detected and that BLE is working.
 ** You expect to see the following message `✅ 5V power supply detected at (various voltages)`
-** You expect to see the following message `✅ BLE working (received >20 advertisments in 10 seconds)`
+** You expect to see the following message `✅ BLE working (received >20 advertisements in 10 seconds)`
 4. Perform the ambient light test by covering the ambient light sensor with your finger for 3 seconds and then shining a flashlight on it for 3 seconds, covering it again for 3 seconds and finally shining a flashlight on it again for 3 seconds.
 ** Depending on the ambient light conditions you might need to cover the sensor instead of shining a flashlight on it.
 ** You expect to see the following message after you performed the test `✅: Ambient light sensor working`

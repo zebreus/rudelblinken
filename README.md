@@ -14,7 +14,7 @@ The repository is structured into a set of crates, each with a defined role:
 - [**`rudelblinken-filesystem`**](rudelblinken-filesystem): This crate implements a zero-copy, flash-optimized filesystem for embedded systems. It is used to persist data and program files on the device.
 - [**`rudelblinken-sdk`**](rudelblinken-sdk): The Software Development Kit (SDK) for developing Wasm modules, it provides Rust APIs that allow the Wasm guest to interact with the host and peripherals through a set of common traits. You would link against this crate, when developing Wasm modules for rudelblinken.
 - [**`rudelblinken-firmware`**](rudelblinken-firmware): This crate implements the bare-metal firmware running on the ESP32-C3. It uses the runtime to run WASM binaries and provides facilities for installing, and debugging WASM modules via Bluetooth Low Energy.
-- [**`rudelctl`**](rudelctl): The CLI that allows interaction with the rudelblinken devices for tasks like uploading and running Wasm modules. It also has emulation capabilites for local testing.
+- [**`rudelctl`**](rudelctl): The CLI that allows interaction with the rudelblinken devices for tasks like uploading and running Wasm modules. It also has emulation capabilities for local testing.
 - [**`wasm-binaries`**](wasm-binaries): A collection of example Wasm binaries used for testing and demonstration purposes.
 
 ## Motivation for Using WebAssembly
@@ -34,7 +34,7 @@ We chose WebAssembly as a foundation because:
     ```
 
 2.  **Enter an environment with the required dependencies.**
-    TO build rudelblinken you need to have Rust targets for RISC-V, x86, and WASM installed.
+    To build rudelblinken you need to have Rust targets for RISC-V, x86, and WASM installed.
 
     We defined all dependencies using the nix package manager. For now this is the only supported way to build the project. After installing nix, you can use the following command to enter a shell with all dependencies available:
 
