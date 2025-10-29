@@ -347,7 +347,7 @@ impl<T: Storage + 'static + Send + Sync> Filesystem<T> {
                 panic!("In case of wraparound, the first entry should always be free");
             }
             if first_entry.1.length < wraparound_length as u16 {
-                panic!("In case of wraparound, the first entry should always be large enough to accomodate the wraparound");
+                panic!("In case of wraparound, the first entry should always be large enough to accommodate the wraparound");
             }
             free_ranges.insert(wraparound_length as u16, first_entry.1.clone());
             free_ranges.remove(&0);

@@ -24,6 +24,7 @@
 //! ## Updating the integrated rudelblinken firmware binary
 //!
 //! `rudelctl` contains a built-in rudelblinken firmware binary. To update the binary, run the `update-firmware.sh`` script in the root of this crate. This will build the firmware and copy the binary to the `firmware` directory. You need to have the entire repository checked out to run the script, because it will look for firmware sources in an adjacent directory.
+#![feature(async_closure)]
 #![feature(iter_array_chunks)]
 #![feature(async_trait_bounds)]
 #![feature(int_roundings)]

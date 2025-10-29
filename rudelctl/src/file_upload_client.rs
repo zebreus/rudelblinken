@@ -401,7 +401,8 @@ impl FileUploadClient {
             };
 
             // The number of chunks that will be uploaded this transfer
-            let number_of_chunks = std::cmp::min(missing_chunks.len(), simultaneous_chunks);
+            let number_of_chunks =
+                std::cmp::min(missing_chunks.len() as usize, simultaneous_chunks);
             log::info!("Transferring {} chunks", number_of_chunks);
             cancel_auto_increment.cancel();
             progress_bar.set_message("active");
