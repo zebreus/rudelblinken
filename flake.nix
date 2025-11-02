@@ -3,7 +3,7 @@
 
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:zebreus/nixpkgs/witx-codegen-init";
     nixpkgs-esp-dev = {
       url = "github:mirrexagon/nixpkgs-esp-dev";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -117,6 +117,7 @@
             pkgs.wit-bindgen
             pkgs.cargo-rdme
             pkgs.jq
+            pkgs.witx-codegen
 
             # For the cli:
             pkgs.dbus
