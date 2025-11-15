@@ -54,21 +54,25 @@ pub async fn connect_to_device(device: &Device) -> Result<(), UpdateTargetError>
         return Ok(());
     }
     log::debug!("Connecting...");
+    // Prefer a plain GATT connect for LE devices
     for attempt in 0..=max_attempts {
-        match device.pair().await {
+        match device.connect().await {
             Ok(()) => break,
             Err(err) => {
                 log::info!("Connect error {}/{}: {}", attempt, max_attempts, &err);
                 if attempt < max_attempts {
-                    sleep(Duration::from_secs(1)).await;
+                    sleep(Duration::from_millis(700)).await;
                     continue;
                 }
-                if !(device.is_connected().await.unwrap_or(false)) {
-                    return Err(UpdateTargetError::FailedToConnect(err));
+                // As a fallback, try pairing once if still not connected
+                if !device.is_connected().await.unwrap_or(false) {
+                    if let Err(perr) = device.pair().await {
+                        return Err(UpdateTargetError::FailedToConnect(perr));
+                    }
                 }
                 break;
             }
         }
     }
-    return Ok(());
+    Ok(())
 }
