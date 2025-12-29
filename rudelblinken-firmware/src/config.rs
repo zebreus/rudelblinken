@@ -91,6 +91,7 @@ pub fn set_config<V: ConfigValue>(val: V::V) {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct DeviceName {
     name: String,

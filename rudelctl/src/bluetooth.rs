@@ -1,4 +1,3 @@
-use bluer::monitor::{Monitor, MonitorEvent, Pattern, RssiSamplingPeriod, Type as MonitorType};
 use bluer::DiscoveryFilter;
 use futures::{
     pin_mut,
@@ -38,7 +37,7 @@ where
     }
     adapter.set_powered(true).await?;
 
-    /// !! AI Warning OwO (generated and untested, likely broken)
+    // !! AI Warning OwO (generated and untested, likely broken)
     /*  // Try Advertisement Monitor first (more reliable and passive on BlueZ)
     if let Ok(mm) = adapter.monitor().await {
         let name_prefix = b"[rb]".to_vec();
