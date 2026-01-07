@@ -1,0 +1,1088 @@
+use chumsky::{prelude::*, text};
+
+// Container for all parsed declarations
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Declarations {
+    /// Parsed struct declarations
+    pub structs: Vec<StructDecl>,
+    /// Parsed function declarations
+    pub functions: Vec<FunctionDecl>,
+    /// Parsed variable declarations
+    pub variables: Vec<VariableDecl>,
+}
+
+/// C struct declaration: `struct Name { fields... };`
+#[derive(Clone, Debug, PartialEq)]
+pub struct StructDecl {
+    /// The name of the struct
+    pub name: String,
+    /// The fields defined in the struct
+    pub fields: Vec<Field>,
+    /// Documentation comments preceding the struct
+    pub comment: Vec<String>,
+}
+
+/// C function declaration: `return_type name(params);`
+#[derive(Clone, Debug, PartialEq)]
+pub struct FunctionDecl {
+    /// The name of the function
+    pub name: String,
+    /// The return type of the function
+    pub return_type: Type,
+    /// The parameters of the function
+    pub parameters: Vec<Parameter>,
+    /// Documentation comments preceding the function
+    pub comment: Vec<String>,
+    /// GNU-style `__attribute__((...))` if present
+    pub attribute: Option<Attribute>,
+    /// C23 attribute specifier sequence `[[...]]` if present
+    pub c23_attributes: Option<C23Attributes>,
+}
+
+/// C variable declaration: `type name;`
+#[derive(Clone, Debug, PartialEq)]
+pub struct VariableDecl {
+    /// The name of the variable
+    pub name: String,
+    /// The type of the variable
+    pub var_type: Type,
+    /// Documentation comments preceding the variable
+    pub comment: Vec<String>,
+    /// GNU-style `__attribute__((...))` if present
+    pub attribute: Option<Attribute>,
+}
+
+/// A field in a struct: `type name;`
+#[derive(Clone, Debug, PartialEq)]
+pub struct Field {
+    /// The name of the field
+    pub name: String,
+    /// The type of the field
+    pub field_type: Type,
+    /// Documentation comments preceding the field
+    pub comment: Vec<String>,
+}
+
+/// A function parameter: `type name` or just `type` for anonymous parameters
+#[derive(Clone, Debug, PartialEq)]
+pub struct Parameter {
+    /// The name of the parameter (None for anonymous parameters)
+    pub name: Option<String>,
+    /// The type of the parameter
+    pub param_type: Type,
+}
+
+/// GNU-style `__attribute__((import_module("name"), import_name("name")))`
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Attribute {
+    /// `import_module("module_name")`
+    pub import_module: Option<String>,
+    /// `import_name("function_name")`
+    pub import_name: Option<String>,
+}
+
+/// C23 standard attribute specifier sequence `[[attr1, attr2]]`
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct C23Attributes {
+    /// `[[deprecated]]` or `[[deprecated("message")]]`
+    pub deprecated: Option<Option<String>>,
+    /// `[[nodiscard]]` or `[[nodiscard("reason")]]`
+    pub nodiscard: Option<Option<String>>,
+    /// `[[maybe_unused]]`
+    pub maybe_unused: Option<()>,
+    /// `[[noreturn]]`
+    pub noreturn: Option<()>,
+}
+
+/// C type representation
+#[derive(Clone, Debug, PartialEq)]
+pub enum Type {
+    /// `void`
+    Void,
+    /// `int`
+    Int,
+    /// `unsigned int`
+    UnsignedInt,
+    /// `char`
+    Char,
+    /// `unsigned char`
+    UnsignedChar,
+    /// `struct Name`
+    Struct(String),
+    /// Pointer to another type: `type*`
+    Pointer(Box<Type>),
+    /// Named type (typedef or other identifier)
+    Named(String),
+}
+
+// Parser for C-style comments
+fn comment<'src>() -> impl Parser<'src, &'src str, String, extra::Err<Rich<'src, char>>> {
+    choice((
+        // Line comment: // comment
+        just("//").ignore_then(
+            any()
+                .and_is(just('\n').not())
+                .repeated()
+                .to_slice()
+                .map(|s: &str| s.trim().to_string()),
+        ),
+        // Block comment: /* comment */
+        just("/*")
+            .ignore_then(
+                any()
+                    .and_is(just("*/").not())
+                    .repeated()
+                    .to_slice()
+                    .map(|s: &str| s.trim().to_string()),
+            )
+            .then_ignore(just("*/")),
+    ))
+}
+
+// Parser for optional comments before a declaration
+fn opt_comment<'src>() -> impl Parser<'src, &'src str, Vec<String>, extra::Err<Rich<'src, char>>> {
+    comment().padded().repeated().collect()
+}
+
+// Parser for string literals in attributes
+fn string_literal<'src>() -> impl Parser<'src, &'src str, String, extra::Err<Rich<'src, char>>> {
+    just('"')
+        .ignore_then(
+            none_of('"')
+                .repeated()
+                .to_slice()
+                .map(|s: &str| s.to_string()),
+        )
+        .then_ignore(just('"'))
+}
+
+// Parser for __attribute__((import_module("name"), import_name("name")))
+fn attribute<'src>() -> impl Parser<'src, &'src str, Attribute, extra::Err<Rich<'src, char>>> {
+    let import_module = just("import_module")
+        .padded()
+        .then_ignore(just('(').padded())
+        .ignore_then(string_literal())
+        .then_ignore(just(')').padded());
+
+    let import_name = just("import_name")
+        .padded()
+        .then_ignore(just('(').padded())
+        .ignore_then(string_literal())
+        .then_ignore(just(')').padded());
+
+    let attr_content = choice((
+        import_module.map(|s| (Some(s), None)),
+        import_name.map(|s| (None, Some(s))),
+    ));
+
+    just("__attribute__")
+        .padded()
+        .then_ignore(just("((").padded())
+        .ignore_then(
+            attr_content
+                .separated_by(just(',').padded())
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(just("))").padded())
+        .map(|attrs| {
+            let mut result = Attribute::default();
+            for (module, name) in attrs {
+                if let Some(m) = module {
+                    result.import_module = Some(m);
+                }
+                if let Some(n) = name {
+                    result.import_name = Some(n);
+                }
+            }
+            result
+        })
+}
+
+// Parser for optional attribute
+fn opt_attribute<'src>()
+-> impl Parser<'src, &'src str, Option<Attribute>, extra::Err<Rich<'src, char>>> {
+    attribute().or_not()
+}
+
+// Parser for individual C23 attributes that returns a tuple indicating which attribute was found
+fn c23_attribute_item<'src>() -> impl Parser<
+    'src,
+    &'src str,
+    (
+        Option<Option<String>>,
+        Option<Option<String>>,
+        Option<()>,
+        Option<()>,
+    ),
+    extra::Err<Rich<'src, char>>,
+> {
+    let deprecated = just("deprecated")
+        .padded()
+        .then(
+            just('(')
+                .padded()
+                .ignore_then(string_literal())
+                .then_ignore(just(')').padded())
+                .or_not(),
+        )
+        .map(|(_, msg)| (Some(msg), None, None, None));
+
+    let nodiscard = just("nodiscard")
+        .padded()
+        .then(
+            just('(')
+                .padded()
+                .ignore_then(string_literal())
+                .then_ignore(just(')').padded())
+                .or_not(),
+        )
+        .map(|(_, msg)| (None, Some(msg), None, None));
+
+    let maybe_unused = just("maybe_unused")
+        .padded()
+        .to((None, None, Some(()), None));
+
+    let noreturn = just("noreturn").padded().to((None, None, None, Some(())));
+
+    choice((deprecated, nodiscard, maybe_unused, noreturn))
+}
+
+// Parser for C23 attribute specifier: [[attr1, attr2, ...]]
+fn c23_attribute_specifier<'src>()
+-> impl Parser<'src, &'src str, C23Attributes, extra::Err<Rich<'src, char>>> {
+    just("[[")
+        .padded()
+        .ignore_then(
+            c23_attribute_item()
+                .separated_by(just(',').padded())
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(just("]]").padded())
+        .map(|attrs| {
+            let mut result = C23Attributes::default();
+            for (deprecated, nodiscard, maybe_unused, noreturn) in attrs {
+                if let Some(d) = deprecated {
+                    result.deprecated = Some(d);
+                }
+                if let Some(n) = nodiscard {
+                    result.nodiscard = Some(n);
+                }
+                if maybe_unused.is_some() {
+                    result.maybe_unused = Some(());
+                }
+                if noreturn.is_some() {
+                    result.noreturn = Some(());
+                }
+            }
+            result
+        })
+}
+
+// Parser for optional C23 attributes (can have multiple attribute specifiers)
+fn opt_c23_attributes<'src>()
+-> impl Parser<'src, &'src str, Option<C23Attributes>, extra::Err<Rich<'src, char>>> {
+    c23_attribute_specifier()
+        .repeated()
+        .collect::<Vec<_>>()
+        .map(|attrs| {
+            if attrs.is_empty() {
+                return None;
+            }
+            let mut result = C23Attributes::default();
+            for attr in attrs {
+                if attr.deprecated.is_some() {
+                    result.deprecated = attr.deprecated;
+                }
+                if attr.nodiscard.is_some() {
+                    result.nodiscard = attr.nodiscard;
+                }
+                if attr.maybe_unused.is_some() {
+                    result.maybe_unused = Some(());
+                }
+                if attr.noreturn.is_some() {
+                    result.noreturn = Some(());
+                }
+            }
+            Some(result)
+        })
+}
+
+// Parser for C identifiers
+fn ident<'src>() -> impl Parser<'src, &'src str, String, extra::Err<Rich<'src, char>>> {
+    text::ascii::ident().map(|s: &str| s.to_string()).padded()
+}
+
+// Parser for base types
+fn base_type<'src>() -> impl Parser<'src, &'src str, Type, extra::Err<Rich<'src, char>>> {
+    choice((
+        just("unsigned").padded().ignore_then(choice((
+            just("int").to(Type::UnsignedInt),
+            just("char").to(Type::UnsignedChar),
+        ))),
+        just("void").to(Type::Void),
+        just("int").to(Type::Int),
+        just("char").to(Type::Char),
+        just("struct")
+            .padded()
+            .ignore_then(ident())
+            .map(Type::Struct),
+        ident().map(Type::Named),
+    ))
+    .padded()
+}
+
+// Parser for types with pointers
+fn type_parser<'src>() -> impl Parser<'src, &'src str, Type, extra::Err<Rich<'src, char>>> {
+    base_type()
+        .then(just('*').padded().repeated().collect::<Vec<_>>())
+        .map(|(base, stars)| {
+            stars
+                .iter()
+                .fold(base, |acc, _| Type::Pointer(Box::new(acc)))
+        })
+}
+
+// Parser for struct fields
+fn field<'src>() -> impl Parser<'src, &'src str, Field, extra::Err<Rich<'src, char>>> {
+    opt_comment()
+        .then(type_parser())
+        .then(ident())
+        .then_ignore(just(';').padded())
+        .map(|((comment, field_type), name)| Field {
+            name,
+            field_type,
+            comment,
+        })
+}
+
+// Parser for struct declarations
+fn struct_decl<'src>() -> impl Parser<'src, &'src str, StructDecl, extra::Err<Rich<'src, char>>> {
+    opt_comment()
+        .then(just("struct").padded().ignore_then(ident()))
+        .then_ignore(just('{').padded())
+        .then(field().repeated().collect::<Vec<_>>())
+        .then_ignore(just('}').padded())
+        .then_ignore(just(';').padded())
+        .map(|((comment, name), fields)| StructDecl {
+            name,
+            fields,
+            comment,
+        })
+}
+
+// Parser for function parameters
+fn parameter<'src>() -> impl Parser<'src, &'src str, Parameter, extra::Err<Rich<'src, char>>> {
+    type_parser()
+        .then(ident().or_not())
+        .map(|(param_type, name)| Parameter { name, param_type })
+}
+
+// Parser for function declarations
+fn function_decl<'src>() -> impl Parser<'src, &'src str, FunctionDecl, extra::Err<Rich<'src, char>>>
+{
+    opt_comment()
+        .then(opt_c23_attributes())
+        .then(type_parser())
+        .then(ident())
+        .then_ignore(just('(').padded())
+        .then(
+            parameter()
+                .separated_by(just(',').padded())
+                .allow_trailing()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(just(')').padded())
+        .then(opt_attribute())
+        .then_ignore(just(';').padded())
+        .map(
+            |(((((comment, c23_attributes), return_type), name), parameters), attribute)| {
+                FunctionDecl {
+                    name,
+                    return_type,
+                    parameters,
+                    comment,
+                    attribute,
+                    c23_attributes,
+                }
+            },
+        )
+}
+
+// Parser for variable declarations
+fn variable_decl<'src>() -> impl Parser<'src, &'src str, VariableDecl, extra::Err<Rich<'src, char>>>
+{
+    opt_comment()
+        .then(type_parser())
+        .then(ident())
+        .then(opt_attribute())
+        .then_ignore(just(';').padded())
+        .map(|(((comment, var_type), name), attribute)| VariableDecl {
+            name,
+            var_type,
+            comment,
+            attribute,
+        })
+}
+
+/// Parse C declarations from a string
+pub fn parse_declarations(input: &str) -> Result<Declarations, Vec<Rich<'_, char>>> {
+    let struct_parser = struct_decl().map(|s| (Some(s), None, None));
+    let function_parser = function_decl().map(|f| (None, Some(f), None));
+    let variable_parser = variable_decl().map(|v| (None, None, Some(v)));
+
+    let parser = text::whitespace()
+        .ignore_then(
+            choice((struct_parser, function_parser, variable_parser))
+                .padded()
+                .repeated()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(end());
+
+    let declarations = parser.parse(input).into_result()?;
+
+    let mut result = Declarations::default();
+    for (s, f, v) in declarations {
+        if let Some(s) = s {
+            result.structs.push(s);
+        }
+        if let Some(f) = f {
+            result.functions.push(f);
+        }
+        if let Some(v) = v {
+            result.variables.push(v);
+        }
+    }
+
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_struct() {
+        let input = r#"
+            struct Point {
+                int x;
+                int y;
+            };
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.structs.len(), 1);
+        assert_eq!(result.functions.len(), 0);
+        assert_eq!(result.variables.len(), 0);
+
+        let s = &result.structs[0];
+        assert_eq!(s.name, "Point");
+        assert_eq!(s.fields.len(), 2);
+        assert_eq!(s.fields[0].name, "x");
+        assert_eq!(s.fields[0].field_type, Type::Int);
+        assert_eq!(s.fields[1].name, "y");
+        assert_eq!(s.fields[1].field_type, Type::Int);
+    }
+
+    #[test]
+    fn test_parse_function() {
+        let input = "int add(int a, int b);";
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.structs.len(), 0);
+        assert_eq!(result.functions.len(), 1);
+        assert_eq!(result.variables.len(), 0);
+
+        let f = &result.functions[0];
+        assert_eq!(f.name, "add");
+        assert_eq!(f.return_type, Type::Int);
+        assert_eq!(f.parameters.len(), 2);
+        assert_eq!(f.parameters[0].name, Some("a".to_string()));
+        assert_eq!(f.parameters[0].param_type, Type::Int);
+        assert_eq!(f.parameters[1].name, Some("b".to_string()));
+        assert_eq!(f.parameters[1].param_type, Type::Int);
+    }
+
+    #[test]
+    fn test_parse_variable() {
+        let input = "unsigned int counter;";
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.structs.len(), 0);
+        assert_eq!(result.functions.len(), 0);
+        assert_eq!(result.variables.len(), 1);
+
+        let v = &result.variables[0];
+        assert_eq!(v.name, "counter");
+        assert_eq!(v.var_type, Type::UnsignedInt);
+    }
+
+    #[test]
+    fn test_parse_pointer_type() {
+        let input = "void* ptr;";
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.variables.len(), 1);
+
+        let v = &result.variables[0];
+        assert_eq!(v.name, "ptr");
+        assert_eq!(v.var_type, Type::Pointer(Box::new(Type::Void)));
+    }
+
+    #[test]
+    fn test_parse_multiple_pointers() {
+        let input = "int** double_ptr;";
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.variables.len(), 1);
+
+        let v = &result.variables[0];
+        assert_eq!(v.name, "double_ptr");
+        assert_eq!(
+            v.var_type,
+            Type::Pointer(Box::new(Type::Pointer(Box::new(Type::Int))))
+        );
+    }
+
+    #[test]
+    fn test_parse_struct_type() {
+        let input = "struct Node node;";
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.variables.len(), 1);
+
+        let v = &result.variables[0];
+        assert_eq!(v.name, "node");
+        assert_eq!(v.var_type, Type::Struct("Node".to_string()));
+    }
+
+    #[test]
+    fn test_parse_function_no_params() {
+        let input = "void exit();";
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.functions.len(), 1);
+
+        let f = &result.functions[0];
+        assert_eq!(f.name, "exit");
+        assert_eq!(f.return_type, Type::Void);
+        assert_eq!(f.parameters.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_multiple_declarations() {
+        let input = r#"
+            struct Point {
+                int x;
+                int y;
+            };
+            
+            int add(int a, int b);
+            unsigned int counter;
+            void* get_pointer();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.structs.len(), 1);
+        assert_eq!(result.functions.len(), 2);
+        assert_eq!(result.variables.len(), 1);
+
+        assert_eq!(result.structs[0].name, "Point");
+        assert_eq!(result.functions[0].name, "add");
+        assert_eq!(result.variables[0].name, "counter");
+        assert_eq!(result.functions[1].name, "get_pointer");
+    }
+
+    #[test]
+    fn test_parse_anonymous_parameters() {
+        let input = "int process(int, char*);";
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.functions.len(), 1);
+
+        let f = &result.functions[0];
+        assert_eq!(f.name, "process");
+        assert_eq!(f.return_type, Type::Int);
+        assert_eq!(f.parameters.len(), 2);
+        assert_eq!(f.parameters[0].name, None);
+        assert_eq!(f.parameters[0].param_type, Type::Int);
+        assert_eq!(f.parameters[1].name, None);
+        assert_eq!(
+            f.parameters[1].param_type,
+            Type::Pointer(Box::new(Type::Char))
+        );
+    }
+
+    #[test]
+    fn test_parse_with_line_comments() {
+        let input = r#"
+            // This is a point structure
+            struct Point {
+                // X coordinate
+                int x;
+                // Y coordinate
+                int y;
+            };
+            
+            // Add two numbers
+            int add(int a, int b);
+            
+            // Global counter
+            unsigned int counter;
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.structs.len(), 1);
+        assert_eq!(result.functions.len(), 1);
+        assert_eq!(result.variables.len(), 1);
+
+        let s = &result.structs[0];
+        assert_eq!(s.name, "Point");
+        assert_eq!(s.fields[0].comment, vec!["X coordinate".to_string()]);
+        assert_eq!(s.fields[1].comment, vec!["Y coordinate".to_string()]);
+
+        let f = &result.functions[0];
+        assert_eq!(f.name, "add");
+        assert_eq!(f.comment, vec!["Add two numbers".to_string()]);
+
+        let v = &result.variables[0];
+        assert_eq!(v.name, "counter");
+        assert_eq!(v.comment, vec!["Global counter".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_with_block_comments() {
+        let input = r#"
+            /* This function calculates sum */
+            int sum(int x, int y);
+            
+            /* A field with description */
+            struct Data {
+                /* The value */
+                int value;
+            };
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.functions.len(), 1);
+        assert_eq!(result.structs.len(), 1);
+
+        let f = &result.functions[0];
+        assert_eq!(f.comment, vec!["This function calculates sum".to_string()]);
+
+        let s = &result.structs[0];
+        assert_eq!(s.fields[0].comment, vec!["The value".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_multiple_comments_on_same_declaration() {
+        let input = r#"
+            // First comment
+            // Second comment
+            /* Third comment */
+            int func();
+            
+            // Comment one
+            /* Comment two */
+            struct Test {
+                // Field comment 1
+                // Field comment 2
+                int value;
+            };
+            
+            /* Variable comment 1 */
+            // Variable comment 2
+            int var;
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+
+        let f = &result.functions[0];
+        assert_eq!(f.comment.len(), 3);
+        assert_eq!(f.comment[0], "First comment");
+        assert_eq!(f.comment[1], "Second comment");
+        assert_eq!(f.comment[2], "Third comment");
+
+        let s = &result.structs[0];
+        assert_eq!(s.comment.len(), 2);
+        assert_eq!(s.comment[0], "Comment one");
+        assert_eq!(s.comment[1], "Comment two");
+        assert_eq!(s.fields[0].comment.len(), 2);
+        assert_eq!(s.fields[0].comment[0], "Field comment 1");
+        assert_eq!(s.fields[0].comment[1], "Field comment 2");
+
+        let v = &result.variables[0];
+        assert_eq!(v.comment.len(), 2);
+        assert_eq!(v.comment[0], "Variable comment 1");
+        assert_eq!(v.comment[1], "Variable comment 2");
+    }
+
+    #[test]
+    fn test_parse_declarations_without_comments() {
+        let input = r#"
+            struct Empty {
+                int field;
+            };
+            
+            void no_comment();
+            
+            int no_comment_var;
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+
+        assert_eq!(result.structs[0].comment.len(), 0);
+        assert_eq!(result.structs[0].fields[0].comment.len(), 0);
+        assert_eq!(result.functions[0].comment.len(), 0);
+        assert_eq!(result.variables[0].comment.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_mixed_comments_and_no_comments() {
+        let input = r#"
+            // Commented struct
+            struct A {
+                // Commented field
+                int x;
+                int y;
+            };
+            
+            void uncommented_func();
+            
+            // Commented variable
+            int var;
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+
+        let s = &result.structs[0];
+        assert_eq!(s.comment, vec!["Commented struct".to_string()]);
+        assert_eq!(s.fields[0].comment, vec!["Commented field".to_string()]);
+        assert_eq!(s.fields[1].comment.len(), 0);
+
+        let f = &result.functions[0];
+        assert_eq!(f.comment.len(), 0);
+
+        let v = &result.variables[0];
+        assert_eq!(v.comment, vec!["Commented variable".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_struct_with_all_fields_commented() {
+        let input = r#"
+            // Main structure
+            struct AllCommented {
+                // First field
+                int a;
+                /* Second field */
+                int b;
+                // Third field
+                // With multiple lines
+                char* c;
+            };
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let s = &result.structs[0];
+
+        assert_eq!(s.comment, vec!["Main structure".to_string()]);
+        assert_eq!(s.fields.len(), 3);
+
+        assert_eq!(s.fields[0].comment, vec!["First field".to_string()]);
+        assert_eq!(s.fields[1].comment, vec!["Second field".to_string()]);
+        assert_eq!(s.fields[2].comment.len(), 2);
+        assert_eq!(s.fields[2].comment[0], "Third field");
+        assert_eq!(s.fields[2].comment[1], "With multiple lines");
+    }
+
+    #[test]
+    fn test_parse_multiline_block_comment() {
+        let input = r#"
+            /*
+             * This is a multiline
+             * block comment for
+             * a function
+             */
+            void documented();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert_eq!(f.comment.len(), 1);
+        assert!(f.comment[0].contains("multiline"));
+        assert!(f.comment[0].contains("block comment"));
+    }
+
+    #[test]
+    fn test_parse_empty_comments() {
+        let input = r#"
+            //
+            /* */
+            int func();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert_eq!(f.comment.len(), 2);
+        assert_eq!(f.comment[0], "");
+        assert_eq!(f.comment[1], "");
+    }
+
+    #[test]
+    fn test_parse_function_with_import_attribute() {
+        let input = r#"
+            int add(int a, int b) __attribute__((import_module("math"), import_name("add")));
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.functions.len(), 1);
+
+        let f = &result.functions[0];
+        assert_eq!(f.name, "add");
+        assert!(f.attribute.is_some());
+
+        let attr = f.attribute.as_ref().unwrap();
+        assert_eq!(attr.import_module, Some("math".to_string()));
+        assert_eq!(attr.import_name, Some("add".to_string()));
+    }
+
+    #[test]
+    fn test_parse_function_with_only_import_module() {
+        let input = r#"
+            void log(char* msg) __attribute__((import_module("env")));
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.attribute.is_some());
+        let attr = f.attribute.as_ref().unwrap();
+        assert_eq!(attr.import_module, Some("env".to_string()));
+        assert_eq!(attr.import_name, None);
+    }
+
+    #[test]
+    fn test_parse_function_with_only_import_name() {
+        let input = r#"
+            void print() __attribute__((import_name("print_fn")));
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.attribute.is_some());
+        let attr = f.attribute.as_ref().unwrap();
+        assert_eq!(attr.import_module, None);
+        assert_eq!(attr.import_name, Some("print_fn".to_string()));
+    }
+
+    #[test]
+    fn test_parse_variable_with_attribute() {
+        let input = r#"
+            int counter __attribute__((import_module("state"), import_name("counter")));
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.variables.len(), 1);
+
+        let v = &result.variables[0];
+        assert_eq!(v.name, "counter");
+        assert!(v.attribute.is_some());
+
+        let attr = v.attribute.as_ref().unwrap();
+        assert_eq!(attr.import_module, Some("state".to_string()));
+        assert_eq!(attr.import_name, Some("counter".to_string()));
+    }
+
+    #[test]
+    fn test_parse_function_without_attribute() {
+        let input = "int add(int a, int b);";
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+        assert!(f.attribute.is_none());
+    }
+
+    #[test]
+    fn test_parse_mixed_with_and_without_attributes() {
+        let input = r#"
+            int func1() __attribute__((import_module("mod1")));
+            int func2();
+            int func3() __attribute__((import_name("func_three")));
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.functions.len(), 3);
+
+        assert!(result.functions[0].attribute.is_some());
+        assert!(result.functions[1].attribute.is_none());
+        assert!(result.functions[2].attribute.is_some());
+    }
+
+    #[test]
+    fn test_parse_c23_deprecated_attribute() {
+        let input = r#"
+            [[deprecated]] int old_func();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        assert_eq!(result.functions.len(), 1);
+
+        let f = &result.functions[0];
+        assert_eq!(f.name, "old_func");
+        assert!(f.c23_attributes.is_some());
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.deprecated, Some(None));
+        assert_eq!(attrs.nodiscard, None);
+        assert_eq!(attrs.maybe_unused, None);
+        assert_eq!(attrs.noreturn, None);
+    }
+
+    #[test]
+    fn test_parse_c23_deprecated_with_message() {
+        let input = r#"
+            [[deprecated("Use new_func instead")]] int old_func();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.c23_attributes.is_some());
+        assert_eq!(
+            f.c23_attributes.as_ref().unwrap().deprecated,
+            Some(Some("Use new_func instead".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_c23_nodiscard_attribute() {
+        let input = r#"
+            [[nodiscard]] int get_value();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.c23_attributes.is_some());
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.nodiscard, Some(None));
+        assert_eq!(attrs.deprecated, None);
+    }
+
+    #[test]
+    fn test_parse_c23_nodiscard_with_reason() {
+        let input = r#"
+            [[nodiscard("Ignoring return value causes memory leak")]] void* allocate();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.c23_attributes.is_some());
+        assert_eq!(
+            f.c23_attributes.as_ref().unwrap().nodiscard,
+            Some(Some("Ignoring return value causes memory leak".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_c23_maybe_unused_attribute() {
+        let input = r#"
+            [[maybe_unused]] int helper();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.c23_attributes.is_some());
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.maybe_unused, Some(()));
+        assert_eq!(attrs.deprecated, None);
+        assert_eq!(attrs.nodiscard, None);
+        assert_eq!(attrs.noreturn, None);
+    }
+
+    #[test]
+    fn test_parse_c23_noreturn_attribute() {
+        let input = r#"
+            [[noreturn]] void exit_program();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.c23_attributes.is_some());
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.noreturn, Some(()));
+        assert_eq!(attrs.deprecated, None);
+        assert_eq!(attrs.nodiscard, None);
+        assert_eq!(attrs.maybe_unused, None);
+    }
+
+    #[test]
+    fn test_parse_c23_multiple_attributes_in_one_specifier() {
+        let input = r#"
+            [[deprecated, nodiscard]] int func();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.c23_attributes.is_some());
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.deprecated, Some(None));
+        assert_eq!(attrs.nodiscard, Some(None));
+        assert_eq!(attrs.maybe_unused, None);
+        assert_eq!(attrs.noreturn, None);
+    }
+
+    #[test]
+    fn test_parse_c23_multiple_attribute_specifiers() {
+        let input = r#"
+            [[deprecated]] [[nodiscard]] int func();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.c23_attributes.is_some());
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.deprecated, Some(None));
+        assert_eq!(attrs.nodiscard, Some(None));
+        assert_eq!(attrs.maybe_unused, None);
+        assert_eq!(attrs.noreturn, None);
+    }
+
+    #[test]
+    fn test_parse_c23_attributes_with_comments() {
+        let input = r#"
+            // This function is deprecated
+            [[deprecated("Use v2")]] int func_v1();
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert_eq!(f.comment, vec!["This function is deprecated".to_string()]);
+        assert!(f.c23_attributes.is_some());
+        assert_eq!(
+            f.c23_attributes.as_ref().unwrap().deprecated,
+            Some(Some("Use v2".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_c23_attributes_with_gnu_attributes() {
+        let input = r#"
+            [[nodiscard]] int get() __attribute__((import_module("mod"), import_name("get")));
+        "#;
+
+        let result = parse_declarations(input).unwrap();
+        let f = &result.functions[0];
+
+        assert!(f.c23_attributes.is_some());
+        assert_eq!(f.c23_attributes.as_ref().unwrap().nodiscard, Some(None));
+
+        assert!(f.attribute.is_some());
+        let attr = f.attribute.as_ref().unwrap();
+        assert_eq!(attr.import_module, Some("mod".to_string()));
+        assert_eq!(attr.import_name, Some("get".to_string()));
+    }
+}
