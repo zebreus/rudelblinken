@@ -195,4 +195,4 @@ impl From<parser::Type> for Type {
     }
 }
 
-pub mod c_header;
+pub mod c_guest;

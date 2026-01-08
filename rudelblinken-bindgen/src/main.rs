@@ -16,7 +16,7 @@ struct Args {
     output: Option<PathBuf>,
 
     /// Output format
-    #[arg(short, long, value_enum, default_value_t = OutputFormat::CHeader)]
+    #[arg(short, long, value_enum, default_value_t = OutputFormat::CGuest)]
     format: OutputFormat,
 }
 
@@ -24,7 +24,7 @@ struct Args {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
     /// Generate C header file
-    CHeader,
+    CGuest,
 }
 
 fn main() {
@@ -56,8 +56,8 @@ fn main() {
             // Generate output based on format
             debug!("Generating output in {:?} format", args.format);
             let output_content = match args.format {
-                OutputFormat::CHeader => {
-                    rudelblinken_bindgen::generator::c_header::generate(&gen_declarations)
+                OutputFormat::CGuest => {
+                    rudelblinken_bindgen::generator::c_guest::generate(&gen_declarations)
                 }
             };
 
