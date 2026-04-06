@@ -9,6 +9,44 @@ pub struct Declarations {
     pub functions: Vec<FunctionDecl>,
     /// Parsed variable declarations
     pub variables: Vec<VariableDecl>,
+    /// Parsed enum declarations
+    pub enums: Vec<EnumDecl>,
+    /// Parsed typedefs (not yet fully utilized but defined)
+    pub typedefs: Vec<TypedefDecl>,
+    /// Parsed preprocessor directives (pragma, static_assert, define)
+    pub directives: Vec<Directive>,
+}
+
+/// C enum declaration: `enum Name { variants... };`
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnumDecl {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+    pub comment: Vec<String>,
+}
+
+/// A variant in a C enum
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub value: Option<i64>,
+    pub comment: Vec<String>,
+}
+
+/// A C typedef declaration
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypedefDecl {
+    pub name: String,
+    pub target_type: Type,
+    pub comment: Vec<String>,
+}
+
+/// Preprocessor directives and static asserts
+#[derive(Clone, Debug, PartialEq)]
+pub enum Directive {
+    Pragma(String),
+    StaticAssert { expr: String, message: String },
+    Define { name: String, value: String },
 }
 
 /// C struct declaration: `struct Name { fields... };`
@@ -107,10 +145,18 @@ pub enum Type {
     Char,
     /// `unsigned char`
     UnsignedChar,
+    /// `long long`
+    LongLong,
+    /// `unsigned long long`
+    UnsignedLongLong,
     /// `struct Name`
     Struct(String),
+    /// `enum Name`
+    Enum(String),
     /// Pointer to another type: `type*`
     Pointer(Box<Type>),
+    /// Array of another type: `type[size]`
+    Array(Box<Type>, usize),
     /// Named type (typedef or other identifier)
     Named(String),
 }
@@ -317,10 +363,16 @@ fn ident<'src>() -> impl Parser<'src, &'src str, String, extra::Err<Rich<'src, c
 // Parser for base types
 fn base_type<'src>() -> impl Parser<'src, &'src str, Type, extra::Err<Rich<'src, char>>> {
     choice((
+        just("unsigned")
+            .padded()
+            .then(just("long").padded())
+            .then(just("long"))
+            .to(Type::UnsignedLongLong),
         just("unsigned").padded().ignore_then(choice((
             just("int").to(Type::UnsignedInt),
             just("char").to(Type::UnsignedChar),
         ))),
+        just("long").padded().then(just("long")).to(Type::LongLong),
         just("void").to(Type::Void),
         just("int").to(Type::Int),
         just("char").to(Type::Char),
@@ -328,12 +380,16 @@ fn base_type<'src>() -> impl Parser<'src, &'src str, Type, extra::Err<Rich<'src,
             .padded()
             .ignore_then(ident())
             .map(Type::Struct),
+        just("enum").padded().ignore_then(ident()).map(Type::Enum),
         ident().map(Type::Named),
     ))
     .padded()
 }
 
-// Parser for types with pointers
+// Parser for types with pointers (and arrays handled in fields/params because arrays are defined on the identifier `int x[5];`)
+// Actually, C syntax puts array brackets on the variable name, not the type name natively (mostly).
+// Wait, `type_parser` doesn't handle array brackets next to type name right now.
+// I'll adjust the `field` and `parameter` parsers to look for `[N]` after the identifier.
 fn type_parser<'src>() -> impl Parser<'src, &'src str, Type, extra::Err<Rich<'src, char>>> {
     base_type()
         .then(just('*').padded().repeated().collect::<Vec<_>>())
@@ -344,16 +400,33 @@ fn type_parser<'src>() -> impl Parser<'src, &'src str, Type, extra::Err<Rich<'sr
         })
 }
 
+// Parser for array dimension
+fn array_brackets<'src>() -> impl Parser<'src, &'src str, usize, extra::Err<Rich<'src, char>>> {
+    just('[')
+        .padded()
+        .ignore_then(
+            text::int(10)
+                .try_map(|s: &str, span| s.parse::<usize>().map_err(|e| Rich::custom(span, e))),
+        )
+        .then_ignore(just(']').padded())
+}
+
 // Parser for struct fields
 fn field<'src>() -> impl Parser<'src, &'src str, Field, extra::Err<Rich<'src, char>>> {
     opt_comment()
         .then(type_parser())
         .then(ident())
+        .then(array_brackets().or_not())
         .then_ignore(just(';').padded())
-        .map(|((comment, field_type), name)| Field {
-            name,
-            field_type,
-            comment,
+        .map(|(((comment, mut field_type), name), array_size)| {
+            if let Some(size) = array_size {
+                field_type = Type::Array(Box::new(field_type), size);
+            }
+            Field {
+                name,
+                field_type,
+                comment,
+            }
         })
 }
 
@@ -376,7 +449,13 @@ fn struct_decl<'src>() -> impl Parser<'src, &'src str, StructDecl, extra::Err<Ri
 fn parameter<'src>() -> impl Parser<'src, &'src str, Parameter, extra::Err<Rich<'src, char>>> {
     type_parser()
         .then(ident().or_not())
-        .map(|(param_type, name)| Parameter { name, param_type })
+        .then(array_brackets().or_not())
+        .map(|((mut param_type, name), array_size)| {
+            if let Some(size) = array_size {
+                param_type = Type::Array(Box::new(param_type), size);
+            }
+            Parameter { name, param_type }
+        })
 }
 
 // Parser for function declarations
@@ -416,35 +495,124 @@ fn variable_decl<'src>() -> impl Parser<'src, &'src str, VariableDecl, extra::Er
     opt_comment()
         .then(type_parser())
         .then(ident())
+        .then(array_brackets().or_not())
         .then(opt_attribute())
         .then_ignore(just(';').padded())
-        .map(|(((comment, var_type), name), attribute)| VariableDecl {
+        .map(
+            |((((comment, mut var_type), name), array_size), attribute)| {
+                if let Some(size) = array_size {
+                    var_type = Type::Array(Box::new(var_type), size);
+                }
+                VariableDecl {
+                    name,
+                    var_type,
+                    comment,
+                    attribute,
+                }
+            },
+        )
+}
+
+// Parser for enum variants
+fn enum_variant<'src>() -> impl Parser<'src, &'src str, EnumVariant, extra::Err<Rich<'src, char>>> {
+    opt_comment()
+        .then(ident())
+        .then(
+            just('=')
+                .padded()
+                .ignore_then(
+                    text::int(10).try_map(|s: &str, span| {
+                        s.parse::<i64>().map_err(|e| Rich::custom(span, e))
+                    }),
+                )
+                .or_not(),
+        )
+        .map(|((comment, name), value)| EnumVariant {
             name,
-            var_type,
+            value,
             comment,
-            attribute,
         })
+}
+
+// Parser for enum declarations
+fn enum_decl<'src>() -> impl Parser<'src, &'src str, EnumDecl, extra::Err<Rich<'src, char>>> {
+    opt_comment()
+        .then(just("enum").padded().ignore_then(ident()))
+        .then_ignore(just('{').padded())
+        .then(
+            enum_variant()
+                .separated_by(just(',').padded())
+                .allow_trailing()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(just('}').padded())
+        .then_ignore(just(';').padded())
+        .map(|((comment, name), variants)| EnumDecl {
+            name,
+            variants,
+            comment,
+        })
+}
+
+// Parser for preprocessor directives and static asserts
+fn directive_decl<'src>() -> impl Parser<'src, &'src str, Directive, extra::Err<Rich<'src, char>>> {
+    choice((
+        just("#pragma")
+            .padded()
+            .ignore_then(just("once").padded())
+            .map(|_| Directive::Pragma("once".to_string())),
+        just("#define")
+            .padded()
+            .ignore_then(ident().padded())
+            .then(text::ident().padded())
+            .map(|(k, v)| Directive::Define {
+                name: k,
+                value: v.to_string(),
+            }),
+        just("_Static_assert")
+            .padded()
+            .ignore_then(just('(').padded())
+            .ignore_then(
+                none_of(',')
+                    .repeated()
+                    .to_slice()
+                    .map(|s: &str| s.trim().to_string()),
+            )
+            .then_ignore(just(',').padded())
+            .then(string_literal())
+            .then_ignore(just(')').padded())
+            .then_ignore(just(';').padded())
+            .map(|(expr, message)| Directive::StaticAssert { expr, message }),
+    ))
 }
 
 /// Parse C declarations from a string
 pub fn parse_declarations(input: &str) -> Result<Declarations, Vec<Rich<'_, char>>> {
-    let struct_parser = struct_decl().map(|s| (Some(s), None, None));
-    let function_parser = function_decl().map(|f| (None, Some(f), None));
-    let variable_parser = variable_decl().map(|v| (None, None, Some(v)));
+    let struct_parser = struct_decl().map(|s| (Some(s), None, None, None, None));
+    let enum_parser = enum_decl().map(|e| (None, None, None, Some(e), None));
+    let directive_parser = directive_decl().map(|d| (None, None, None, None, Some(d)));
+    let function_parser = function_decl().map(|f| (None, Some(f), None, None, None));
+    let variable_parser = variable_decl().map(|v| (None, None, Some(v), None, None));
 
     let parser = text::whitespace()
         .ignore_then(
-            choice((struct_parser, function_parser, variable_parser))
-                .padded()
-                .repeated()
-                .collect::<Vec<_>>(),
+            choice((
+                directive_parser,
+                struct_parser,
+                enum_parser,
+                function_parser,
+                variable_parser,
+            ))
+            .padded()
+            .repeated()
+            .collect::<Vec<_>>(),
         )
         .then_ignore(end());
 
     let declarations = parser.parse(input).into_result()?;
 
     let mut result = Declarations::default();
-    for (s, f, v) in declarations {
+    for (s, f, v, e, d) in declarations {
         if let Some(s) = s {
             result.structs.push(s);
         }
@@ -453,6 +621,12 @@ pub fn parse_declarations(input: &str) -> Result<Declarations, Vec<Rich<'_, char
         }
         if let Some(v) = v {
             result.variables.push(v);
+        }
+        if let Some(e) = e {
+            result.enums.push(e);
+        }
+        if let Some(d) = d {
+            result.directives.push(d);
         }
     }
 

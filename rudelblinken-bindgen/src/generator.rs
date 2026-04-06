@@ -13,6 +13,10 @@ pub struct Declarations {
     pub functions: Vec<Function>,
     /// Variable declarations
     pub variables: Vec<Variable>,
+    /// Enum declarations
+    pub enums: Vec<Enum>,
+    /// Preprocessor directives
+    pub directives: Vec<Directive>,
 }
 
 /// Struct declaration
@@ -66,6 +70,29 @@ pub struct Variable {
     pub import_name: Option<String>,
 }
 
+/// Enum declaration
+#[derive(Clone, Debug, PartialEq)]
+pub struct Enum {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+    pub comment: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub value: Option<i64>,
+    pub comment: Vec<String>,
+}
+
+/// Preprocessor directives and static asserts
+#[derive(Clone, Debug, PartialEq)]
+pub enum Directive {
+    Pragma(String),
+    StaticAssert { expr: String, message: String },
+    Define { name: String, value: String },
+}
+
 /// A field in a struct
 #[derive(Clone, Debug, PartialEq)]
 pub struct Field {
@@ -99,10 +126,18 @@ pub enum Type {
     Char,
     /// `unsigned char`
     UnsignedChar,
+    /// `long long`
+    LongLong,
+    /// `unsigned long long`
+    UnsignedLongLong,
     /// `struct Name`
     Struct(String),
+    /// `enum Name`
+    Enum(String),
     /// Pointer to another type: `type*`
     Pointer(Box<Type>),
+    /// Array of another type: `type[size]`
+    Array(Box<Type>, usize),
     /// Named type (typedef or other identifier)
     Named(String),
 }
@@ -115,6 +150,12 @@ impl From<parser::Declarations> for Declarations {
             structs: parser_decls.structs.into_iter().map(Into::into).collect(),
             functions: parser_decls.functions.into_iter().map(Into::into).collect(),
             variables: parser_decls.variables.into_iter().map(Into::into).collect(),
+            enums: parser_decls.enums.into_iter().map(Into::into).collect(),
+            directives: parser_decls
+                .directives
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         }
     }
 }
@@ -161,6 +202,38 @@ impl From<parser::VariableDecl> for Variable {
     }
 }
 
+impl From<parser::EnumDecl> for Enum {
+    fn from(parser_enum: parser::EnumDecl) -> Self {
+        Enum {
+            name: parser_enum.name,
+            variants: parser_enum.variants.into_iter().map(Into::into).collect(),
+            comment: parser_enum.comment,
+        }
+    }
+}
+
+impl From<parser::EnumVariant> for EnumVariant {
+    fn from(parser_variant: parser::EnumVariant) -> Self {
+        EnumVariant {
+            name: parser_variant.name,
+            value: parser_variant.value,
+            comment: parser_variant.comment,
+        }
+    }
+}
+
+impl From<parser::Directive> for Directive {
+    fn from(parser_directive: parser::Directive) -> Self {
+        match parser_directive {
+            parser::Directive::Pragma(p) => Directive::Pragma(p),
+            parser::Directive::StaticAssert { expr, message } => {
+                Directive::StaticAssert { expr, message }
+            }
+            parser::Directive::Define { name, value } => Directive::Define { name, value },
+        }
+    }
+}
+
 impl From<parser::Field> for Field {
     fn from(parser_field: parser::Field) -> Self {
         Field {
@@ -188,8 +261,12 @@ impl From<parser::Type> for Type {
             parser::Type::UnsignedInt => Type::UnsignedInt,
             parser::Type::Char => Type::Char,
             parser::Type::UnsignedChar => Type::UnsignedChar,
+            parser::Type::LongLong => Type::LongLong,
+            parser::Type::UnsignedLongLong => Type::UnsignedLongLong,
             parser::Type::Struct(name) => Type::Struct(name),
+            parser::Type::Enum(name) => Type::Enum(name),
             parser::Type::Pointer(inner) => Type::Pointer(Box::new((*inner).into())),
+            parser::Type::Array(inner, size) => Type::Array(Box::new((*inner).into()), size),
             parser::Type::Named(name) => Type::Named(name),
         }
     }
