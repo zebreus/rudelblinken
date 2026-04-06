@@ -1,7 +1,7 @@
 #pragma once
 
-_Static_assert(sizeof(int) == 4, "int needs to be i32");
-_Static_assert(sizeof(long long) == 8, "long long needs to be i64");
+static_assert(sizeof(int) == 4, "int needs to be i32");
+static_assert(sizeof(long long) == 8, "long long needs to be i64");
 
 enum rudel_log_level { ERROR = 0, WARNING = 1, INFO = 2, DEBUG = 3, TRACE = 4 };
 
