@@ -9,7 +9,7 @@ fn main() {
     let mut stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     let mut stderr = std::io::stderr();
-    let exit_code = rudelblinken_bindgen::run(
+    let exit_code = rudelblinken_bindgen::run_cli(
         std::env::args_os(),
         &env_vars,
         &mut stdin,

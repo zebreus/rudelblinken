@@ -52,7 +52,7 @@ pub fn generate_bindings<'a>(
 
 /// Entrypoint that handles CLI arguments and environment variables
 /// Does not read from the global environment.
-pub fn run<I, T>(
+pub fn run_cli<I, T>(
     args: I,
     _env_vars: &HashMap<String, String>,
     stdin: &mut dyn Read,
@@ -71,12 +71,25 @@ where
         }
     };
 
+    match run(args, stdin) {
+        Ok(output_content) => {
+            let _ = write!(stdout, "{}", output_content);
+            0
+        }
+        Err(err) => {
+            let _ = write!(stderr, "{}", err);
+            1
+        }
+    }
+}
+
+pub fn run(args: Args, stdin: &mut dyn Read) -> Result<String, String> {
     let input = if args.input.as_os_str() == "-" {
         debug!("Reading from stdin");
         let mut buf = String::new();
         if let Err(err) = stdin.read_to_string(&mut buf) {
             error!("Error reading from stdin: {}", err);
-            return 1;
+            return Err(format!("Error reading from stdin: {}", err));
         }
         buf
     } else {
@@ -85,7 +98,7 @@ where
             Ok(s) => s,
             Err(err) => {
                 error!("Error reading file {:?}: {}", args.input, err);
-                return 1;
+                return Err(format!("Error reading file {:?}: {}", args.input, err));
             }
         }
     };
@@ -95,10 +108,10 @@ where
         Ok(decls) => decls,
         Err(errors) => {
             error!("Parse errors in {:?}:", args.input);
-            for error in errors {
+            for error in &errors {
                 error!("  {:?}", error);
             }
-            return 1;
+            return Err(format!("Parse errors in {:?}", args.input));
         }
     };
 
@@ -118,21 +131,15 @@ where
     };
 
     if let Some(output_path) = &args.output {
-        if output_path.as_os_str() == "-" {
-            debug!("Writing output to stdout");
-            let _ = write!(stdout, "{}", output_content);
-        } else {
+        if output_path.as_os_str() != "-" {
             debug!("Writing output to {:?}", output_path);
-            if let Err(err) = fs::write(output_path, output_content) {
+            if let Err(err) = fs::write(output_path, &output_content) {
                 error!("Error writing to {:?}: {}", output_path, err);
-                return 1;
+                return Err(format!("Error writing to {:?}: {}", output_path, err));
             }
             info!("Successfully wrote output to {:?}", output_path);
         }
-    } else {
-        debug!("Writing output to stdout");
-        let _ = write!(stdout, "{}", output_content);
     }
 
-    0
+    Ok(output_content)
 }
