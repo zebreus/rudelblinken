@@ -27,6 +27,7 @@ struct Case {
 
 #[derive(Debug)]
 enum Expected {
+    Success,
     Output(String),
     ErrorSubstring(String),
 }
@@ -42,6 +43,10 @@ fn run_case(case: &Case) {
     let result = run(args, &mut stdin);
 
     match (&case.expected, result) {
+        (Expected::Success, Ok(_actual)) => {}
+        (Expected::Success, Err(err)) => {
+            panic!("expected success for {} but got error\n{}", case.name, err);
+        }
         (Expected::Output(expected), Ok(actual)) => {
             if actual != *expected {
                 panic!(
@@ -87,7 +92,9 @@ fn collect_cases_inner(dir: &Path, cases: &mut Vec<Case>) {
     let expected = dir.join("output_c_guest.c");
     if input.is_file() && expected.is_file() {
         let expected_contents = fs::read_to_string(&expected).expect("read expected fixture");
-        let expectation = if let Some(rest) = expected_contents.strip_prefix("ERROR:") {
+        let expectation = if expected_contents.trim() == "SUCCESS" {
+            Expected::Success
+        } else if let Some(rest) = expected_contents.strip_prefix("ERROR:") {
             Expected::ErrorSubstring(rest.trim().to_string())
         } else {
             Expected::Output(expected_contents)
