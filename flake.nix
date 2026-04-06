@@ -119,6 +119,10 @@
             pkgs.jq
             pkgs.witx-codegen
 
+            # For building C wasm binaries
+            pkgs.clang-tools
+            pkgs.clang
+
             # For the cli:
             pkgs.dbus
             pkgs.pkg-config
