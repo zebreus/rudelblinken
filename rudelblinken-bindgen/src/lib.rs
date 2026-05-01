@@ -33,19 +33,53 @@ pub struct Args {
 /// Supported output formats
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
-    /// Generate C header file
+    /// Generate C header file for WebAssembly guests
     CGuest,
+    /// Generate Rust guest bindings
+    RustGuest,
 }
 
-/// High-level function to parse C headers and generate bindings
-pub fn generate_bindings<'a>(
-    input: &'a str,
-    format: &OutputFormat,
-) -> Result<String, Vec<chumsky::error::Rich<'a, char>>> {
-    let parsed = parser::parse_declarations(input)?;
+/// An error returned by [`generate_bindings`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindgenError {
+    pub line: usize,
+    pub column: usize,
+    pub message: String,
+}
+
+impl std::fmt::Display for BindgenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}: {}", self.line, self.column, self.message)
+    }
+}
+
+fn offset_to_line_col(input: &str, offset: usize) -> (usize, usize) {
+    let clamped = offset.min(input.len());
+    let prefix = &input[..clamped];
+    let line = prefix.chars().filter(|&c| c == '\n').count() + 1;
+    let col = prefix.rfind('\n').map(|nl| clamped - nl - 1).unwrap_or(clamped) + 1;
+    (line, col)
+}
+
+/// Parse a C header and generate bindings in the requested format.
+pub fn generate_bindings(input: &str, format: &OutputFormat) -> Result<String, Vec<BindgenError>> {
+    let parsed = parser::parse_declarations(input).map_err(|errs| {
+        errs.into_iter()
+            .map(|e| {
+                let offset = e.span().start;
+                let (line, col) = offset_to_line_col(input, offset);
+                BindgenError {
+                    line,
+                    column: col,
+                    message: format!("{}", e.reason()),
+                }
+            })
+            .collect::<Vec<_>>()
+    })?;
     let gen_declarations: generator::Declarations = parsed.into();
     let output = match format {
         OutputFormat::CGuest => generator::c_guest::generate(&gen_declarations),
+        OutputFormat::RustGuest => generator::rust_guest::generate(&gen_declarations),
     };
     Ok(output)
 }
@@ -103,32 +137,14 @@ pub fn run(args: Args, stdin: &mut dyn Read) -> Result<String, String> {
         }
     };
 
-    debug!("Parsing declarations");
-    let parser_declarations = match parser::parse_declarations(&input) {
-        Ok(decls) => decls,
-        Err(errors) => {
-            error!("Parse errors in {:?}:", args.input);
-            for error in &errors {
-                error!("  {:?}", error);
-            }
-            return Err(format!("Parse errors in {:?}", args.input));
-        }
-    };
-
-    info!(
-        "Parsed {} structs, {} functions, {} variables",
-        parser_declarations.structs.len(),
-        parser_declarations.functions.len(),
-        parser_declarations.variables.len()
-    );
-
-    debug!("Converting to generator representation");
-    let gen_declarations: generator::Declarations = parser_declarations.into();
-
     debug!("Generating output in {:?} format", args.format);
-    let output_content = match args.format {
-        OutputFormat::CGuest => generator::c_guest::generate(&gen_declarations),
-    };
+    let output_content = generate_bindings(&input, &args.format).map_err(|errs| {
+        error!("Parse errors in {:?}:", args.input);
+        for e in &errs {
+            error!("  {}", e);
+        }
+        format!("Parse errors in {:?}", args.input)
+    })?;
 
     if let Some(output_path) = &args.output {
         if output_path.as_os_str() != "-" {
@@ -142,4 +158,55 @@ pub fn run(args: Args, stdin: &mut dyn Read) -> Result<String, String> {
     }
 
     Ok(output_content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Cycle 1: parse errors are owned BindgenErrors ---
+
+    #[test]
+    fn parse_errors_are_owned_and_have_location() {
+        // "struct Broken { int x;" is missing the closing brace
+        let result = generate_bindings("struct Broken { int x;", &OutputFormat::CGuest);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty());
+        let err = &errors[0];
+        assert!(err.line >= 1, "line should be >= 1, got {}", err.line);
+        assert!(err.column >= 1, "column should be >= 1, got {}", err.column);
+        assert!(!err.message.is_empty(), "message should not be empty");
+    }
+
+    #[test]
+    fn parse_error_display_shows_location() {
+        let result = generate_bindings("struct Bad {", &OutputFormat::CGuest);
+        let errors = result.unwrap_err();
+        let display = format!("{}", errors[0]);
+        // Should be "line:col: message"
+        assert!(display.contains(':'), "display should contain ':', got: {display}");
+    }
+
+    // --- Cycle 2: RustGuest is a real adapter ---
+
+    #[test]
+    fn rust_guest_generates_repr_c_struct() {
+        let result = generate_bindings("struct Point { int x; int y; };", &OutputFormat::RustGuest);
+        assert!(result.is_ok(), "expected ok, got: {:?}", result);
+        let output = result.unwrap();
+        assert!(output.contains("pub struct Point"), "output:\n{output}");
+        assert!(output.contains("pub x: i32"), "output:\n{output}");
+        assert!(output.contains("pub y: i32"), "output:\n{output}");
+    }
+
+    #[test]
+    fn rust_guest_generates_extern_block_for_imported_function() {
+        let input = r#"void host_log(char *message) __attribute__((import_module("env"), import_name("log")));"#;
+        let result = generate_bindings(input, &OutputFormat::RustGuest);
+        assert!(result.is_ok(), "expected ok, got: {:?}", result);
+        let output = result.unwrap();
+        assert!(output.contains("extern \"C\""), "output:\n{output}");
+        assert!(output.contains("pub fn host_log"), "output:\n{output}");
+    }
 }

@@ -9,3 +9,7 @@ clap = { version = "4.5.51", features = ["derive"] }
 env_logger = "0.11.0"
 lang-c = "0.15.1"
 log = "0.4.0"
+prettyplease = "0.2"
+proc-macro2 = "1"
+syn = { version = "2", features = ["full"] }
+

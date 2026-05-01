@@ -52,21 +52,13 @@ pub fn generate(declarations: &Declarations) -> String {
 fn parse_type(type_decl: &Type) -> syn::Type {
     match type_decl {
         Type::Void => parse_quote! { () },
-        Type::Bool => parse_quote! { bool },
-        Type::Char => parse_quote! { i8 },
-        Type::SignedChar => parse_quote! { i8 },
-        Type::UnsignedChar => parse_quote! { u8 },
-        Type::Short => parse_quote! { i16 },
-        Type::UnsignedShort => parse_quote! { u16 },
         Type::Int => parse_quote! { i32 },
         Type::UnsignedInt => parse_quote! { u32 },
-        Type::Long => parse_quote! { i64 },
-        Type::UnsignedLong => parse_quote! { u64 },
+        Type::Char => parse_quote! { i8 },
+        Type::UnsignedChar => parse_quote! { u8 },
         Type::LongLong => parse_quote! { i64 },
         Type::UnsignedLongLong => parse_quote! { u64 },
-        Type::Float => parse_quote! { f32 },
-        Type::Double => parse_quote! { f64 },
-        Type::Struct(name) => {
+        Type::Struct(name) | Type::Enum(name) | Type::Named(name) => {
             let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
             parse_quote! { #ident }
         }
@@ -74,9 +66,9 @@ fn parse_type(type_decl: &Type) -> syn::Type {
             let inner_ty = parse_type(inner);
             parse_quote! { *mut #inner_ty }
         }
-        Type::Named(name) => {
-            let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-            parse_quote! { #ident }
+        Type::Array(inner, size) => {
+            let inner_ty = parse_type(inner);
+            parse_quote! { [#inner_ty; #size] }
         }
     }
 }
@@ -266,6 +258,8 @@ mod tests {
             }],
             functions: vec![],
             variables: vec![],
+            enums: vec![],
+            directives: vec![],
         };
 
         let result = generate(&decls);
@@ -301,6 +295,8 @@ mod tests {
                 noreturn: None,
             }],
             variables: vec![],
+            enums: vec![],
+            directives: vec![],
         };
 
         let result = generate(&decls);
@@ -325,6 +321,8 @@ mod tests {
                 noreturn: None,
             }],
             variables: vec![],
+            enums: vec![],
+            directives: vec![],
         };
 
         let result = generate(&decls);
@@ -349,8 +347,8 @@ mod tests {
                 maybe_unused: None,
                 noreturn: None,
             }],
-            variables: vec![],
-        };
+            variables: vec![],            enums: vec![],
+            directives: vec![],        };
 
         let result = generate(&decls);
         assert!(result.contains("#[deprecated(note = \"Use new_func instead\")]"));
@@ -374,6 +372,8 @@ mod tests {
                 noreturn: None,
             }],
             variables: vec![],
+            enums: vec![],
+            directives: vec![],
         };
 
         let result = generate(&decls);
@@ -393,6 +393,8 @@ mod tests {
                 import_module: None,
                 import_name: None,
             }],
+            enums: vec![],
+            directives: vec![],
         };
 
         let result = generate(&decls);

@@ -1,7 +1,14 @@
-/// Internal representation for code generation
+/// Language-neutral data model for code generation.
 ///
-/// This module provides types that are optimized for generating code in various formats.
-/// It transforms the parser's AST into a more generation-friendly structure.
+/// This module's types are intentionally separate from the parser types, even
+/// where they currently look identical. The parser models *C syntax*; these
+/// types model the *generator IR*, which will be consumed by multiple backends
+/// (C headers, Rust bindings, …) and will diverge from the C AST as backends
+/// grow their own requirements.
+///
+/// The [`From`] impls below are the seam: they translate from the C AST produced
+/// by the parser into this IR. All attribute-flattening (GNU / C23 → direct
+/// fields) happens here.
 use crate::parser;
 
 /// Collection of declarations ready for code generation
@@ -113,7 +120,8 @@ pub struct Parameter {
     pub param_type: Type,
 }
 
-/// C type representation
+/// IR type representation. Currently mirrors the C type set; backends may
+/// extend or map this as needed.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {
     /// `void`
@@ -145,40 +153,36 @@ pub enum Type {
 // Conversion from parser types to generator types
 
 impl From<parser::Declarations> for Declarations {
-    fn from(parser_decls: parser::Declarations) -> Self {
+    fn from(decls: parser::Declarations) -> Self {
         Declarations {
-            structs: parser_decls.structs.into_iter().map(Into::into).collect(),
-            functions: parser_decls.functions.into_iter().map(Into::into).collect(),
-            variables: parser_decls.variables.into_iter().map(Into::into).collect(),
-            enums: parser_decls.enums.into_iter().map(Into::into).collect(),
-            directives: parser_decls
-                .directives
-                .into_iter()
-                .map(Into::into)
-                .collect(),
+            structs: decls.structs.into_iter().map(Into::into).collect(),
+            functions: decls.functions.into_iter().map(Into::into).collect(),
+            variables: decls.variables.into_iter().map(Into::into).collect(),
+            enums: decls.enums.into_iter().map(Into::into).collect(),
+            directives: decls.directives.into_iter().map(Into::into).collect(),
         }
     }
 }
 
 impl From<parser::StructDecl> for Struct {
-    fn from(parser_struct: parser::StructDecl) -> Self {
+    fn from(struct_decl: parser::StructDecl) -> Self {
         Struct {
-            name: parser_struct.name,
-            fields: parser_struct.fields.into_iter().map(Into::into).collect(),
-            comment: parser_struct.comment,
+            name: struct_decl.name,
+            fields: struct_decl.fields.into_iter().map(Into::into).collect(),
+            comment: struct_decl.comment,
         }
     }
 }
 
 impl From<parser::FunctionDecl> for Function {
-    fn from(parser_func: parser::FunctionDecl) -> Self {
-        let gnu_attr = parser_func.attribute.unwrap_or_default();
-        let c23_attr = parser_func.c23_attributes.unwrap_or_default();
+    fn from(func: parser::FunctionDecl) -> Self {
+        let gnu_attr = func.attribute.unwrap_or_default();
+        let c23_attr = func.c23_attributes.unwrap_or_default();
         Function {
-            name: parser_func.name,
-            return_type: parser_func.return_type.into(),
-            parameters: parser_func.parameters.into_iter().map(Into::into).collect(),
-            comment: parser_func.comment,
+            name: func.name,
+            return_type: func.return_type.into(),
+            parameters: func.parameters.into_iter().map(Into::into).collect(),
+            comment: func.comment,
             import_module: gnu_attr.import_module,
             import_name: gnu_attr.import_name,
             deprecated: c23_attr.deprecated,
@@ -190,12 +194,12 @@ impl From<parser::FunctionDecl> for Function {
 }
 
 impl From<parser::VariableDecl> for Variable {
-    fn from(parser_var: parser::VariableDecl) -> Self {
-        let gnu_attr = parser_var.attribute.unwrap_or_default();
+    fn from(var: parser::VariableDecl) -> Self {
+        let gnu_attr = var.attribute.unwrap_or_default();
         Variable {
-            name: parser_var.name,
-            var_type: parser_var.var_type.into(),
-            comment: parser_var.comment,
+            name: var.name,
+            var_type: var.var_type.into(),
+            comment: var.comment,
             import_module: gnu_attr.import_module,
             import_name: gnu_attr.import_name,
         }
@@ -203,28 +207,28 @@ impl From<parser::VariableDecl> for Variable {
 }
 
 impl From<parser::EnumDecl> for Enum {
-    fn from(parser_enum: parser::EnumDecl) -> Self {
+    fn from(enum_decl: parser::EnumDecl) -> Self {
         Enum {
-            name: parser_enum.name,
-            variants: parser_enum.variants.into_iter().map(Into::into).collect(),
-            comment: parser_enum.comment,
+            name: enum_decl.name,
+            variants: enum_decl.variants.into_iter().map(Into::into).collect(),
+            comment: enum_decl.comment,
         }
     }
 }
 
 impl From<parser::EnumVariant> for EnumVariant {
-    fn from(parser_variant: parser::EnumVariant) -> Self {
+    fn from(variant: parser::EnumVariant) -> Self {
         EnumVariant {
-            name: parser_variant.name,
-            value: parser_variant.value,
-            comment: parser_variant.comment,
+            name: variant.name,
+            value: variant.value,
+            comment: variant.comment,
         }
     }
 }
 
 impl From<parser::Directive> for Directive {
-    fn from(parser_directive: parser::Directive) -> Self {
-        match parser_directive {
+    fn from(directive: parser::Directive) -> Self {
+        match directive {
             parser::Directive::Pragma(p) => Directive::Pragma(p),
             parser::Directive::StaticAssert { expr, message } => {
                 Directive::StaticAssert { expr, message }
@@ -235,20 +239,20 @@ impl From<parser::Directive> for Directive {
 }
 
 impl From<parser::Field> for Field {
-    fn from(parser_field: parser::Field) -> Self {
+    fn from(field: parser::Field) -> Self {
         Field {
-            name: parser_field.name,
-            field_type: parser_field.field_type.into(),
-            comment: parser_field.comment,
+            name: field.name,
+            field_type: field.field_type.into(),
+            comment: field.comment,
         }
     }
 }
 
 impl From<parser::Parameter> for Parameter {
-    fn from(parser_param: parser::Parameter) -> Self {
+    fn from(param: parser::Parameter) -> Self {
         Parameter {
-            name: parser_param.name,
-            param_type: parser_param.param_type.into(),
+            name: param.name,
+            param_type: param.param_type.into(),
         }
     }
 }
@@ -273,3 +277,4 @@ impl From<parser::Type> for Type {
 }
 
 pub mod c_guest;
+pub mod rust_guest;
