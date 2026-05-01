@@ -1,0 +1,5 @@
+*.wasm
+*.wat
+*.o
+generated_c_guest.h
+
