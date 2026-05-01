@@ -47,7 +47,9 @@ Also kind of like defines.
 
 Data containers. We don't support `typedef`ing structs, please just use the normal form (like `struct Name {int field;};`). The memory layout follows the ["Basic" C ABI](https://github.com/WebAssembly/tool-conventions/blob/main/BasicCABI.md).
 
-### typedef ???
+### typedef
+
+<!-- TODO: document typedef support (currently unsupported) -->
 
 ### function declarations
 
@@ -70,7 +72,7 @@ only a limited set of function attributes are supported. These are:
 - `__attribute__((import_name("field_name")))` or `[[import_name("field_name")]]`: Overrides the imported symbol name (the default is the C function identifier).
 - `__attribute__((export_name("field_name")))` or `[[export_name("field_name")]]`: Marks the function as a guest export and sets the exported symbol name.
 - `__attribute__((import_module("module_name")))` or `[[import_module("module_name")]]`: Specifies the WebAssembly module for imports.
-- TODO: noreturn and friends
+<!-- TODO: noreturn and friends -->
 
 Notes:
 
@@ -87,4 +89,4 @@ As we are only specifying interfaces, function definitions with bodies are not s
 
 Globals are for now not supported.
 
-###
+<!-- TODO: section placeholder, remove or fill in -->
