@@ -569,7 +569,7 @@ fn directive_decl<'src>() -> impl Parser<'src, &'src str, Directive, extra::Err<
                 name: k,
                 value: v.to_string(),
             }),
-        just("_Static_assert")
+        just("static_assert")
             .padded()
             .ignore_then(just('(').padded())
             .ignore_then(
