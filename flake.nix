@@ -122,6 +122,7 @@
             # For building C wasm binaries
             pkgs.clang-tools
             pkgs.clang
+            pkgs.lld
 
             # For the cli:
             pkgs.dbus
