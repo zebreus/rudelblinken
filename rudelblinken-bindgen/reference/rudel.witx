@@ -1,0 +1,204 @@
+;; rudel.witx - WITX interface definition for rudelblinken system
+;; This provides the same semantic interface as rudel.wit but in WITX format
+
+
+;; Base interface functions
+(module $rudel
+;; Basic types
+(typename $errno (enum (@witx tag u32) $success $invalid-argument $invalid-state $no-memory $timeout ))
+
+;; Semantic version type
+(typename $semantic-version
+  (record
+    (field $major u8)
+    (field $minor u8)
+    (field $patch u8)))
+
+;; Log level enumeration
+(typename $log-level
+  (enum (@witx tag u32)
+    $error
+    $warning
+    $info
+    $debug
+    $trace))
+
+;; LED color record
+(typename $led-color
+  (record
+    (field $red u8)
+    (field $green u8)
+    (field $blue u8)))
+
+;; LED info record
+(typename $led-info
+  (record
+    (field $color $led-color)
+    (field $max-lux u16)))
+
+;; Ambient light sensor type
+(typename $ambient-light-type
+  (enum (@witx tag u32)
+    $none
+    $basic))
+
+;; Vibration sensor type
+(typename $vibration-sensor-type
+  (enum (@witx tag u32)
+    $none
+    $ball))
+
+;; Voltage sensor type
+(typename $voltage-sensor-type
+  (enum (@witx tag u32)
+    $none
+    $basic))
+
+;; Configuration data tuple
+(typename $config-data
+  (record
+    (field $config $pointer)
+    (field $config-len u32)))
+
+;; Advertisement settings
+(typename $advertisement-settings
+  (record
+    (field $min-interval u16)
+    (field $max-interval u16)))
+;; remaining fuel before the program is killed
+(typename $remaining-fuel u32)
+;; microseconds since boot
+(typename $micros u64)
+;; device name (16 bytes, UTF-8 encoded, zero-padded)
+(typename $device-name string)
+;; number of leds
+(typename $number-of-leds u32)
+;; vibration intensity as u32. Not sure about unit, basically just the resistance across the sensor
+(typename $vibration-intensity u32)
+;; brightness in lux (currently not in lux)
+(typename $lux u32)
+;; voltage in millivolts
+(typename $millivolts u32)
+(typename $pointer u32)
+
+
+;;
+(typename $advertisement
+  (record
+    (field $address u64)
+    (field $company u16)
+    (field $data (in-buffer u8))
+    (field $received-at u64)))
+
+
+  ;; Get the version of the rudel base
+  (@interface func (export "get-base-version")
+    (result $error (expected $semantic-version (error $errno))))
+
+  ;; Yield for given duration and return new fuel amount
+  (@interface func (export "yield-now")
+    (param $micros u64)
+    (result $error (expected $remaining-fuel (error $errno))))
+
+  ;; Get the remaining fuel
+  (@interface func (export "get-remaining-fuel")
+    (result $error (expected $remaining-fuel (error $errno))))
+
+  ;; Sleep for given duration without yielding
+  ;; Returns the remaining fuel
+  (@interface func (export "sleep")
+    (param $micros u64)
+    (result $error (expected $remaining-fuel (error $errno))))
+
+  ;; Get time since boot in microseconds
+  (@interface func (export "time")
+    (result $error (expected $micros (error $errno))))
+
+  ;; Log a message
+  (@interface func (export "log")
+    (param $level $log-level)
+    (param $message string)
+    (result $error (expected (error $errno))))
+
+  ;; Get the name of this host (16 bytes, UTF-8 encoded, zero-padded)
+  (@interface func (export "get-name")
+    (result $error (expected $device-name (error $errno))))
+
+  ;; Get configuration for this guest
+  (@interface func (export "get-config")
+    (result $error (expected $config-data (error $errno))))
+
+  ;; Get hardware version
+  (@interface func (export "get-hardware-version")
+    (result $error (expected $semantic-version (error $errno))))
+
+  ;; Set LED intensities starting from first-id
+  (@interface func (export "set-leds")
+    (param $first-id u16)
+    (param $lux $pointer)
+    (param $lux-len u32)
+    (result $error (expected (error $errno))))
+
+  ;; Set all LEDs to the same color and intensity
+  (@interface func (export "set-rgb")
+    (param $color $led-color)
+    (param $lux u32)
+    (result $error (expected (error $errno))))
+
+  ;; Get the number of LEDs
+  (@interface func (export "led-count")
+    (result $error (expected $number-of-leds (error $errno))))
+
+  ;; Get information about a specific LED
+  (@interface func (export "get-led-info")
+    (param $id u16)
+    (result $error (expected $led-info (error $errno))))
+
+  ;; Get ambient light sensor type
+  (@interface func (export "get-ambient-light-type")
+    (result $error (expected $ambient-light-type (error $errno))))
+
+  ;; Get current ambient light level in lux
+  (@interface func (export "get-ambient-light")
+    (result $error (expected $lux (error $errno))))
+
+  ;; Get vibration sensor type
+  (@interface func (export "get-vibration-sensor-type")
+    (result $error (expected $vibration-sensor-type (error $errno))))
+
+  ;; Get vibration level
+  (@interface func (export "get-vibration")
+    (result $error (expected $vibration-intensity (error $errno))))
+
+  ;; Get voltage sensor type
+  (@interface func (export "get-voltage-sensor-type")
+    (result $error (expected $voltage-sensor-type (error $errno))))
+
+  ;; Get supply voltage in millivolts
+  (@interface func (export "get-voltage")
+    (result $error (expected $millivolts (error $errno))))
+
+  ;; Get BLE version
+  (@interface func (export "get-ble-version")
+    (result $error (expected $semantic-version (error $errno))))
+
+  ;; Configure BLE advertisement settings
+  (@interface func (export "configure-advertisement")
+    (param $settings $advertisement-settings)
+    (result $error (expected (error $errno))))
+
+  ;; Set advertisement data (up to 32 bytes)
+  (@interface func (export "set-advertisement-data")
+    (param $data $pointer)
+    (param $data-len u32)
+    (result $error (expected (error $errno))))
+
+  ;; Called when an advertisement is received
+  (@interface func (export "on-advertisement")
+    (param $advertisement $advertisement)
+    (result $error (expected (error $errno))))
+
+  ;; Run the program
+  (@interface func (export "run")
+    (result $error (expected (error $errno))))
+)

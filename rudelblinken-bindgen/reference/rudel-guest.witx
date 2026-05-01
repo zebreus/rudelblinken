@@ -1,0 +1,34 @@
+;; rudel.witx - WITX interface definition for rudelblinken system
+;; This provides the same semantic interface as rudel.wit but in WITX format
+
+
+;; Base interface functions
+;; Basic types
+
+(module $rudel-guest
+;; Advertisement record for BLE guest
+(typename $advertisement
+  (record
+    (field $address u64)
+    (field $company u16)
+    (field $data0 u32)
+    (field $data1 u32)
+    (field $data2 u32)
+    (field $data3 u32)
+    (field $data4 u32)
+    (field $data5 u32)
+    (field $data6 u32)
+    (field $data7 u32)
+    (field $data-length u8)
+    (field $received-at u64)))
+
+    (typename $micros u64)
+  ;; Called when an advertisement is received
+  (@interface func (export "on-advertisement")
+    (param $advertisement $advertisement)
+    (result $error u32))
+
+  ;; Run the program
+  (@interface func (export "run")
+    (result $error $micros))
+)
