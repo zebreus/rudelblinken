@@ -135,78 +135,50 @@ fn generate_decl_string(type_decl: &Type, name: &str) -> String {
     }
 }
 
-fn generate_gnu_attribute(
-    output: &mut String,
-    import_module: &Option<String>,
-    import_name: &Option<String>,
-) {
-    let mut attr_parts = Vec::new();
+fn generate_c23_attr_block(output: &mut String, func: &Function) {
+    let mut parts: Vec<String> = Vec::new();
 
-    if let Some(module) = import_module {
-        attr_parts.push(format!("import_module(\"{}\")", module));
-    }
-    if let Some(name) = import_name {
-        attr_parts.push(format!("import_name(\"{}\")", name));
-    }
-
-    if !attr_parts.is_empty() {
-        output.push_str(" __attribute__((");
-        output.push_str(&attr_parts.join(", "));
-        output.push_str("))");
-    }
-}
-
-fn generate_c23_attributes(
-    output: &mut String,
-    deprecated: &Option<Option<String>>,
-    nodiscard: &Option<Option<String>>,
-    maybe_unused: &Option<()>,
-    noreturn: &Option<()>,
-) {
-    let mut attr_parts = Vec::new();
-
-    if let Some(msg) = deprecated {
+    // Standard C23 attributes (no namespace needed)
+    if let Some(msg) = &func.deprecated {
         if let Some(text) = msg {
-            attr_parts.push(format!("deprecated(\"{}\")", text));
+            parts.push(format!("deprecated(\"{}\")", text));
         } else {
-            attr_parts.push("deprecated".to_string());
+            parts.push("deprecated".to_string());
         }
     }
-
-    if let Some(reason) = nodiscard {
+    if let Some(reason) = &func.nodiscard {
         if let Some(text) = reason {
-            attr_parts.push(format!("nodiscard(\"{}\")", text));
+            parts.push(format!("nodiscard(\"{}\")", text));
         } else {
-            attr_parts.push("nodiscard".to_string());
+            parts.push("nodiscard".to_string());
+        }
+    }
+    if func.maybe_unused.is_some() {
+        parts.push("maybe_unused".to_string());
+    }
+    if func.noreturn.is_some() {
+        parts.push("noreturn".to_string());
+    }
+
+    // clang-namespaced WASM linkage attributes
+    match &func.linkage {
+        crate::generator::Linkage::HostImport { module, name } => {
+            // Omit import_module when it is the default "env" for readability
+            if module != "env" {
+                parts.push(format!("clang::import_module(\"{}\")", module));
+            }
+            parts.push(format!("clang::import_name(\"{}\")", name));
+        }
+        crate::generator::Linkage::GuestExport { name } => {
+            parts.push(format!("clang::export_name(\"{}\")", name));
         }
     }
 
-    if maybe_unused.is_some() {
-        attr_parts.push("maybe_unused".to_string());
-    }
-
-    if noreturn.is_some() {
-        attr_parts.push("noreturn".to_string());
-    }
-
-    if !attr_parts.is_empty() {
+    if !parts.is_empty() {
         output.push_str("[[");
-        output.push_str(&attr_parts.join(", "));
+        output.push_str(&parts.join(", "));
         output.push_str("]] ");
     }
-}
-
-fn has_gnu_attributes(import_module: &Option<String>, import_name: &Option<String>) -> bool {
-    import_module.is_some() || import_name.is_some()
-}
-
-fn has_c23_attributes(
-    deprecated: &Option<Option<String>>,
-    nodiscard: &Option<Option<String>>,
-    maybe_unused: &Option<()>,
-    noreturn: &Option<()>,
-) -> bool {
-    deprecated.is_some() || nodiscard.is_some() || maybe_unused.is_some() || noreturn.is_some()
 }
 
 fn generate_struct(output: &mut String, struct_decl: &Struct) {
@@ -228,22 +200,7 @@ fn generate_struct(output: &mut String, struct_decl: &Struct) {
 
 fn generate_function(output: &mut String, func_decl: &Function) {
     generate_comments(output, &func_decl.comment);
-
-    if has_c23_attributes(
-        &func_decl.deprecated,
-        &func_decl.nodiscard,
-        &func_decl.maybe_unused,
-        &func_decl.noreturn,
-    ) {
-        generate_c23_attributes(
-            output,
-            &func_decl.deprecated,
-            &func_decl.nodiscard,
-            &func_decl.maybe_unused,
-            &func_decl.noreturn,
-        );
-    }
-
+    generate_c23_attr_block(output, func_decl);
     output.push_str(&generate_decl_string(
         &func_decl.return_type,
         &func_decl.name,
@@ -266,23 +223,12 @@ fn generate_function(output: &mut String, func_decl: &Function) {
     }
 
     output.push(')');
-
-    if has_gnu_attributes(&func_decl.import_module, &func_decl.import_name) {
-        generate_gnu_attribute(output, &func_decl.import_module, &func_decl.import_name);
-    }
-
     output.push_str(";\n");
 }
 
 fn generate_variable(output: &mut String, var_decl: &Variable) {
     generate_comments(output, &var_decl.comment);
-
     output.push_str(&generate_decl_string(&var_decl.var_type, &var_decl.name));
-
-    if has_gnu_attributes(&var_decl.import_module, &var_decl.import_name) {
-        generate_gnu_attribute(output, &var_decl.import_module, &var_decl.import_name);
-    }
-
     output.push_str(";\n");
 }
 
@@ -307,6 +253,14 @@ fn generate_enum(output: &mut String, enum_decl: &Enum) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generator::Linkage;
+
+    fn host_import(name: &str) -> Linkage {
+        Linkage::HostImport {
+            module: "env".to_string(),
+            name: name.to_string(),
+        }
+    }
 
     #[test]
     fn test_generate_simple_struct() {
@@ -355,8 +309,7 @@ mod tests {
                     },
                 ],
                 comment: vec![],
-                import_module: None,
-                import_name: None,
+                linkage: host_import("add"),
                 deprecated: None,
                 nodiscard: None,
                 maybe_unused: None,
@@ -368,7 +321,7 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(result, "int add(int a, int b);\n");
+        assert_eq!(result, "[[clang::import_name(\"add\")]] int add(int a, int b);\n");
     }
 
     #[test]
@@ -380,8 +333,7 @@ mod tests {
                 return_type: Type::Void,
                 parameters: vec![],
                 comment: vec!["Test function".to_string()],
-                import_module: None,
-                import_name: None,
+                linkage: host_import("test"),
                 deprecated: None,
                 nodiscard: None,
                 maybe_unused: None,
@@ -393,11 +345,11 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(result, "// Test function\nvoid test();\n");
+        assert_eq!(result, "// Test function\n[[clang::import_name(\"test\")]] void test();\n");
     }
 
     #[test]
-    fn test_generate_with_gnu_attribute() {
+    fn test_generate_with_non_env_module() {
         let decls = Declarations {
             structs: vec![],
             functions: vec![Function {
@@ -405,8 +357,10 @@ mod tests {
                 return_type: Type::Int,
                 parameters: vec![],
                 comment: vec![],
-                import_module: Some("math".to_string()),
-                import_name: Some("add".to_string()),
+                linkage: Linkage::HostImport {
+                    module: "math".to_string(),
+                    name: "add".to_string(),
+                },
                 deprecated: None,
                 nodiscard: None,
                 maybe_unused: None,
@@ -420,8 +374,62 @@ mod tests {
         let result = generate(&decls);
         assert_eq!(
             result,
-            "int imported() __attribute__((import_module(\"math\"), import_name(\"add\")));\n"
+            "[[clang::import_module(\"math\"), clang::import_name(\"add\")]] int imported();\n"
         );
+    }
+
+    #[test]
+    fn test_generate_with_env_module_omitted() {
+        // module "env" is omitted in output for readability
+        let decls = Declarations {
+            structs: vec![],
+            functions: vec![Function {
+                name: "log".to_string(),
+                return_type: Type::Void,
+                parameters: vec![],
+                comment: vec![],
+                linkage: Linkage::HostImport {
+                    module: "env".to_string(),
+                    name: "log".to_string(),
+                },
+                deprecated: None,
+                nodiscard: None,
+                maybe_unused: None,
+                noreturn: None,
+            }],
+            variables: vec![],
+            enums: vec![],
+            directives: vec![],
+        };
+
+        let result = generate(&decls);
+        assert_eq!(result, "[[clang::import_name(\"log\")]] void log();\n");
+    }
+
+    #[test]
+    fn test_generate_guest_export() {
+        let decls = Declarations {
+            structs: vec![],
+            functions: vec![Function {
+                name: "run".to_string(),
+                return_type: Type::Void,
+                parameters: vec![],
+                comment: vec![],
+                linkage: Linkage::GuestExport {
+                    name: "run".to_string(),
+                },
+                deprecated: None,
+                nodiscard: None,
+                maybe_unused: None,
+                noreturn: None,
+            }],
+            variables: vec![],
+            enums: vec![],
+            directives: vec![],
+        };
+
+        let result = generate(&decls);
+        assert_eq!(result, "[[clang::export_name(\"run\")]] void run();\n");
     }
 
     #[test]
@@ -433,8 +441,7 @@ mod tests {
                 return_type: Type::Int,
                 parameters: vec![],
                 comment: vec![],
-                import_module: None,
-                import_name: None,
+                linkage: host_import("old_func"),
                 deprecated: Some(None),
                 nodiscard: Some(None),
                 maybe_unused: None,
@@ -446,7 +453,7 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(result, "[[deprecated, nodiscard]] int old_func();\n");
+        assert_eq!(result, "[[deprecated, nodiscard, clang::import_name(\"old_func\")]] int old_func();\n");
     }
 
     #[test]
@@ -458,8 +465,6 @@ mod tests {
                 name: "ptr".to_string(),
                 var_type: Type::Pointer(Box::new(Type::Void)),
                 comment: vec![],
-                import_module: None,
-                import_name: None,
             }],
             enums: vec![],
             directives: vec![],
@@ -478,8 +483,6 @@ mod tests {
                 name: "arr".to_string(),
                 var_type: Type::Array(Box::new(Type::Int), 16),
                 comment: vec![],
-                import_module: None,
-                import_name: None,
             }],
             enums: vec![],
             directives: vec![],
@@ -498,8 +501,6 @@ mod tests {
                 name: "color".to_string(),
                 var_type: Type::Enum("Color".to_string()),
                 comment: vec![],
-                import_module: None,
-                import_name: None,
             }],
             enums: vec![],
             directives: vec![],

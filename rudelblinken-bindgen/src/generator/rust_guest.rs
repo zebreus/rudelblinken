@@ -14,20 +14,24 @@ pub fn generate(declarations: &Declarations) -> String {
         items.push(generate_struct_item(struct_decl));
     }
 
-    // Generate extern block for imported functions
-    let imported_functions: Vec<_> = declarations
-        .functions
-        .iter()
-        .filter(|f| f.import_module.is_some() || f.import_name.is_some())
-        .collect();
-
-    if !imported_functions.is_empty() {
-        items.push(generate_extern_block(&imported_functions));
+    // Group host-imported functions by module and emit one extern block per module
+    let mut imports_by_module: std::collections::BTreeMap<String, Vec<&Function>> =
+        std::collections::BTreeMap::new();
+    for func in &declarations.functions {
+        if let Linkage::HostImport { module, .. } = &func.linkage {
+            imports_by_module
+                .entry(module.clone())
+                .or_default()
+                .push(func);
+        }
+    }
+    for (module, funcs) in &imports_by_module {
+        items.push(generate_extern_block(module, funcs));
     }
 
-    // Generate regular function declarations
+    // Generate guest-exported function stubs
     for func in &declarations.functions {
-        if func.import_module.is_none() && func.import_name.is_none() {
+        if matches!(func.linkage, Linkage::GuestExport { .. }) {
             items.push(generate_function_item(func));
         }
     }
@@ -115,13 +119,14 @@ fn generate_struct_item(struct_decl: &Struct) -> syn::Item {
     }
 }
 
-fn generate_extern_block(functions: &[&Function]) -> syn::Item {
+fn generate_extern_block(module: &str, functions: &[&Function]) -> syn::Item {
     let foreign_items: Vec<syn::ForeignItem> = functions
         .iter()
         .map(|func| generate_extern_function_item(func))
         .collect();
 
     parse_quote! {
+        #[link(wasm_import_module = #module)]
         extern "C" {
             #(#foreign_items)*
         }
@@ -132,9 +137,27 @@ fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
     let name = syn::Ident::new(&func.name, proc_macro2::Span::call_site());
     let mut attrs: Vec<syn::Attribute> = Vec::new();
 
-    // Add link_name attribute if present
-    if let Some(import_name) = &func.import_name {
-        attrs.push(parse_quote! { #[link_name = #import_name] });
+    // Standard C23 attributes mapped to Rust equivalents
+    if let Some(msg) = &func.deprecated {
+        if let Some(text) = msg {
+            attrs.push(parse_quote! { #[deprecated(note = #text)] });
+        } else {
+            attrs.push(parse_quote! { #[deprecated] });
+        }
+    }
+    if let Some(reason) = &func.nodiscard {
+        if let Some(text) = reason {
+            attrs.push(parse_quote! { #[must_use = #text] });
+        } else {
+            attrs.push(parse_quote! { #[must_use] });
+        }
+    }
+
+    // Add link_name attribute when the WASM import name differs from the C name
+    if let Linkage::HostImport { name: import_name, .. } = &func.linkage {
+        if import_name != &func.name {
+            attrs.push(parse_quote! { #[link_name = #import_name] });
+        }
     }
 
     let inputs: Vec<syn::FnArg> = func
@@ -168,6 +191,11 @@ fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
 fn generate_function_item(func: &Function) -> syn::Item {
     let name = syn::Ident::new(&func.name, proc_macro2::Span::call_site());
     let mut attrs = generate_doc_comments(&func.comment);
+
+    // Add export_name attribute for guest exports
+    if let Linkage::GuestExport { name: export_name } = &func.linkage {
+        attrs.push(parse_quote! { #[export_name = #export_name] });
+    }
 
     // Add deprecation attribute if present
     if let Some(deprecated) = &func.deprecated {
@@ -236,6 +264,14 @@ fn generate_variable_item(var: &Variable) -> syn::Item {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generator::Linkage;
+
+    fn host_import(name: &str) -> Linkage {
+        Linkage::HostImport {
+            module: "env".to_string(),
+            name: name.to_string(),
+        }
+    }
 
     #[test]
     fn test_generate_simple_struct() {
@@ -287,8 +323,7 @@ mod tests {
                     },
                 ],
                 comment: vec![],
-                import_module: None,
-                import_name: None,
+                linkage: host_import("add"),
                 deprecated: None,
                 nodiscard: None,
                 maybe_unused: None,
@@ -300,12 +335,11 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert!(result.contains("pub fn add(a: i32, b: i32) -> i32"));
-        assert!(result.contains("todo!()"));
+        assert!(result.contains("pub fn add(a: i32, b: i32) -> i32;"));
     }
 
     #[test]
-    fn test_generate_extern_function() {
+    fn test_generate_extern_function_with_link_module() {
         let decls = Declarations {
             structs: vec![],
             functions: vec![Function {
@@ -313,8 +347,10 @@ mod tests {
                 return_type: Type::Int,
                 parameters: vec![],
                 comment: vec![],
-                import_module: Some("math".to_string()),
-                import_name: Some("add".to_string()),
+                linkage: Linkage::HostImport {
+                    module: "math".to_string(),
+                    name: "add".to_string(),
+                },
                 deprecated: None,
                 nodiscard: None,
                 maybe_unused: None,
@@ -326,9 +362,68 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert!(result.contains("extern \"C\""));
-        assert!(result.contains("#[link_name = \"add\"]"));
-        assert!(result.contains("pub fn imported() -> i32;"));
+        assert!(result.contains("extern \"C\""), "output:\n{result}");
+        assert!(result.contains(r#"wasm_import_module = "math""#), "output:\n{result}");
+        assert!(result.contains(r#"link_name = "add""#), "output:\n{result}");
+        assert!(result.contains("pub fn imported() -> i32;"), "output:\n{result}");
+    }
+
+    #[test]
+    fn test_generate_ext_block_module_env() {
+        // env module: wasm_import_module attr is still emitted (always explicit in IR)
+        let decls = Declarations {
+            structs: vec![],
+            functions: vec![Function {
+                name: "log".to_string(),
+                return_type: Type::Void,
+                parameters: vec![],
+                comment: vec![],
+                linkage: Linkage::HostImport {
+                    module: "env".to_string(),
+                    name: "log".to_string(),
+                },
+                deprecated: None,
+                nodiscard: None,
+                maybe_unused: None,
+                noreturn: None,
+            }],
+            variables: vec![],
+            enums: vec![],
+            directives: vec![],
+        };
+
+        let result = generate(&decls);
+        assert!(result.contains("extern \"C\""), "output:\n{result}");
+        assert!(result.contains(r#"wasm_import_module = "env""#), "output:\n{result}");
+        // import name equals C name — no link_name needed
+        assert!(!result.contains("link_name"), "output:\n{result}");
+    }
+
+    #[test]
+    fn test_generate_guest_export() {
+        let decls = Declarations {
+            structs: vec![],
+            functions: vec![Function {
+                name: "run".to_string(),
+                return_type: Type::Void,
+                parameters: vec![],
+                comment: vec![],
+                linkage: Linkage::GuestExport {
+                    name: "run".to_string(),
+                },
+                deprecated: None,
+                nodiscard: None,
+                maybe_unused: None,
+                noreturn: None,
+            }],
+            variables: vec![],
+            enums: vec![],
+            directives: vec![],
+        };
+
+        let result = generate(&decls);
+        assert!(result.contains(r#"#[export_name = "run"]"#), "output:\n{result}");
+        assert!(result.contains("pub fn run()"), "output:\n{result}");
     }
 
     #[test]
@@ -340,15 +435,16 @@ mod tests {
                 return_type: Type::Int,
                 parameters: vec![],
                 comment: vec![],
-                import_module: None,
-                import_name: None,
+                linkage: host_import("old_func"),
                 deprecated: Some(Some("Use new_func instead".to_string())),
                 nodiscard: Some(None),
                 maybe_unused: None,
                 noreturn: None,
             }],
-            variables: vec![],            enums: vec![],
-            directives: vec![],        };
+            variables: vec![],
+            enums: vec![],
+            directives: vec![],
+        };
 
         let result = generate(&decls);
         assert!(result.contains("#[deprecated(note = \"Use new_func instead\")]"));
@@ -364,8 +460,7 @@ mod tests {
                 return_type: Type::Void,
                 parameters: vec![],
                 comment: vec![],
-                import_module: None,
-                import_name: None,
+                linkage: host_import("do_something"),
                 deprecated: None,
                 nodiscard: None,
                 maybe_unused: None,
@@ -390,8 +485,6 @@ mod tests {
                 name: "ptr".to_string(),
                 var_type: Type::Pointer(Box::new(Type::Void)),
                 comment: vec![],
-                import_module: None,
-                import_name: None,
             }],
             enums: vec![],
             directives: vec![],

@@ -71,8 +71,6 @@ pub struct FunctionDecl {
     pub parameters: Vec<Parameter>,
     /// Documentation comments preceding the function
     pub comment: Vec<String>,
-    /// GNU-style `__attribute__((...))` if present
-    pub attribute: Option<Attribute>,
     /// C23 attribute specifier sequence `[[...]]` if present
     pub c23_attributes: Option<C23Attributes>,
 }
@@ -86,8 +84,6 @@ pub struct VariableDecl {
     pub var_type: Type,
     /// Documentation comments preceding the variable
     pub comment: Vec<String>,
-    /// GNU-style `__attribute__((...))` if present
-    pub attribute: Option<Attribute>,
 }
 
 /// A field in a struct: `type name;`
@@ -110,16 +106,11 @@ pub struct Parameter {
     pub param_type: Type,
 }
 
-/// GNU-style `__attribute__((import_module("name"), import_name("name")))`
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct Attribute {
-    /// `import_module("module_name")`
-    pub import_module: Option<String>,
-    /// `import_name("function_name")`
-    pub import_name: Option<String>,
-}
-
-/// C23 standard attribute specifier sequence `[[attr1, attr2]]`
+/// C23 attribute specifier sequence `[[attr1, attr2]]`
+///
+/// Covers both standard C23 attributes and clang-namespaced WASM linkage
+/// attributes (`[[clang::import_module(...)]]`, etc.). GNU-style
+/// `__attribute__((...))` is not accepted.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct C23Attributes {
     /// `[[deprecated]]` or `[[deprecated("message")]]`
@@ -130,6 +121,12 @@ pub struct C23Attributes {
     pub maybe_unused: Option<()>,
     /// `[[noreturn]]`
     pub noreturn: Option<()>,
+    /// `[[clang::import_module("module_name")]]`
+    pub import_module: Option<String>,
+    /// `[[clang::import_name("function_name")]]`
+    pub import_name: Option<String>,
+    /// `[[clang::export_name("export_name")]]`
+    pub export_name: Option<String>,
 }
 
 /// C type representation
@@ -202,96 +199,82 @@ fn string_literal<'src>() -> impl Parser<'src, &'src str, String, extra::Err<Ric
         .then_ignore(just('"'))
 }
 
-// Parser for __attribute__((import_module("name"), import_name("name")))
-fn attribute<'src>() -> impl Parser<'src, &'src str, Attribute, extra::Err<Rich<'src, char>>> {
-    let import_module = just("import_module")
-        .padded()
-        .then_ignore(just('(').padded())
-        .ignore_then(string_literal())
-        .then_ignore(just(')').padded());
-
-    let import_name = just("import_name")
-        .padded()
-        .then_ignore(just('(').padded())
-        .ignore_then(string_literal())
-        .then_ignore(just(')').padded());
-
-    let attr_content = choice((
-        import_module.map(|s| (Some(s), None)),
-        import_name.map(|s| (None, Some(s))),
-    ));
-
-    just("__attribute__")
-        .padded()
-        .then_ignore(just("((").padded())
-        .ignore_then(
-            attr_content
-                .separated_by(just(',').padded())
-                .at_least(1)
-                .collect::<Vec<_>>(),
-        )
-        .then_ignore(just("))").padded())
-        .map(|attrs| {
-            let mut result = Attribute::default();
-            for (module, name) in attrs {
-                if let Some(m) = module {
-                    result.import_module = Some(m);
-                }
-                if let Some(n) = name {
-                    result.import_name = Some(n);
-                }
-            }
-            result
-        })
+// Discriminant enum for a single parsed C23 attribute item
+#[derive(Clone)]
+enum C23AttributeItem {
+    Deprecated(Option<String>),
+    Nodiscard(Option<String>),
+    MaybeUnused,
+    Noreturn,
+    ImportModule(String),
+    ImportName(String),
+    ExportName(String),
 }
 
-// Parser for optional attribute
-fn opt_attribute<'src>()
--> impl Parser<'src, &'src str, Option<Attribute>, extra::Err<Rich<'src, char>>> {
-    attribute().or_not()
+// Parser for a string argument inside an attribute: `("value")`
+fn opt_string_arg<'src>()
+-> impl Parser<'src, &'src str, Option<String>, extra::Err<Rich<'src, char>>> {
+    just('(')
+        .padded()
+        .ignore_then(string_literal())
+        .then_ignore(just(')').padded())
+        .or_not()
 }
 
-// Parser for individual C23 attributes that returns a tuple indicating which attribute was found
-fn c23_attribute_item<'src>() -> impl Parser<
-    'src,
-    &'src str,
-    (
-        Option<Option<String>>,
-        Option<Option<String>>,
-        Option<()>,
-        Option<()>,
-    ),
-    extra::Err<Rich<'src, char>>,
-> {
+// Parser for individual C23 attribute items (standard and clang-namespaced)
+fn c23_attribute_item<'src>()
+-> impl Parser<'src, &'src str, C23AttributeItem, extra::Err<Rich<'src, char>>> {
+    // Standard C23 attributes (no namespace)
     let deprecated = just("deprecated")
         .padded()
-        .then(
-            just('(')
-                .padded()
-                .ignore_then(string_literal())
-                .then_ignore(just(')').padded())
-                .or_not(),
-        )
-        .map(|(_, msg)| (Some(msg), None, None, None));
+        .ignore_then(opt_string_arg())
+        .map(C23AttributeItem::Deprecated);
 
     let nodiscard = just("nodiscard")
         .padded()
-        .then(
-            just('(')
-                .padded()
-                .ignore_then(string_literal())
-                .then_ignore(just(')').padded())
-                .or_not(),
-        )
-        .map(|(_, msg)| (None, Some(msg), None, None));
+        .ignore_then(opt_string_arg())
+        .map(C23AttributeItem::Nodiscard);
 
     let maybe_unused = just("maybe_unused")
         .padded()
-        .to((None, None, Some(()), None));
+        .to(C23AttributeItem::MaybeUnused);
 
-    let noreturn = just("noreturn").padded().to((None, None, None, Some(())));
+    let noreturn = just("noreturn").padded().to(C23AttributeItem::Noreturn);
 
-    choice((deprecated, nodiscard, maybe_unused, noreturn))
+    // clang-namespaced WASM linkage attributes
+    let import_module = just("clang::")
+        .padded()
+        .ignore_then(just("import_module").padded())
+        .ignore_then(just('(').padded())
+        .ignore_then(string_literal())
+        .then_ignore(just(')').padded())
+        .map(C23AttributeItem::ImportModule);
+
+    let import_name = just("clang::")
+        .padded()
+        .ignore_then(just("import_name").padded())
+        .ignore_then(just('(').padded())
+        .ignore_then(string_literal())
+        .then_ignore(just(')').padded())
+        .map(C23AttributeItem::ImportName);
+
+    let export_name = just("clang::")
+        .padded()
+        .ignore_then(just("export_name").padded())
+        .ignore_then(just('(').padded())
+        .ignore_then(string_literal())
+        .then_ignore(just(')').padded())
+        .map(C23AttributeItem::ExportName);
+
+    choice((
+        deprecated,
+        nodiscard,
+        maybe_unused,
+        noreturn,
+        import_module,
+        import_name,
+        export_name,
+    ))
 }
 
 // Parser for C23 attribute specifier: [[attr1, attr2, ...]]
@@ -306,20 +289,17 @@ fn c23_attribute_specifier<'src>()
                 .collect::<Vec<_>>(),
         )
         .then_ignore(just("]]").padded())
-        .map(|attrs| {
+        .map(|items| {
             let mut result = C23Attributes::default();
-            for (deprecated, nodiscard, maybe_unused, noreturn) in attrs {
-                if let Some(d) = deprecated {
-                    result.deprecated = Some(d);
-                }
-                if let Some(n) = nodiscard {
-                    result.nodiscard = Some(n);
-                }
-                if maybe_unused.is_some() {
-                    result.maybe_unused = Some(());
-                }
-                if noreturn.is_some() {
-                    result.noreturn = Some(());
+            for item in items {
+                match item {
+                    C23AttributeItem::Deprecated(msg) => result.deprecated = Some(msg),
+                    C23AttributeItem::Nodiscard(reason) => result.nodiscard = Some(reason),
+                    C23AttributeItem::MaybeUnused => result.maybe_unused = Some(()),
+                    C23AttributeItem::Noreturn => result.noreturn = Some(()),
+                    C23AttributeItem::ImportModule(m) => result.import_module = Some(m),
+                    C23AttributeItem::ImportName(n) => result.import_name = Some(n),
+                    C23AttributeItem::ExportName(n) => result.export_name = Some(n),
                 }
             }
             result
@@ -349,6 +329,15 @@ fn opt_c23_attributes<'src>()
                 }
                 if attr.noreturn.is_some() {
                     result.noreturn = Some(());
+                }
+                if attr.import_module.is_some() {
+                    result.import_module = attr.import_module;
+                }
+                if attr.import_name.is_some() {
+                    result.import_name = attr.import_name;
+                }
+                if attr.export_name.is_some() {
+                    result.export_name = attr.export_name;
                 }
             }
             Some(result)
@@ -473,20 +462,14 @@ fn function_decl<'src>() -> impl Parser<'src, &'src str, FunctionDecl, extra::Er
                 .collect::<Vec<_>>(),
         )
         .then_ignore(just(')').padded())
-        .then(opt_attribute())
         .then_ignore(just(';').padded())
-        .map(
-            |(((((comment, c23_attributes), return_type), name), parameters), attribute)| {
-                FunctionDecl {
-                    name,
-                    return_type,
-                    parameters,
-                    comment,
-                    attribute,
-                    c23_attributes,
-                }
-            },
-        )
+        .map(|((((comment, c23_attributes), return_type), name), parameters)| FunctionDecl {
+            name,
+            return_type,
+            parameters,
+            comment,
+            c23_attributes,
+        })
 }
 
 // Parser for variable declarations
@@ -496,21 +479,17 @@ fn variable_decl<'src>() -> impl Parser<'src, &'src str, VariableDecl, extra::Er
         .then(type_parser())
         .then(ident())
         .then(array_brackets().or_not())
-        .then(opt_attribute())
         .then_ignore(just(';').padded())
-        .map(
-            |((((comment, mut var_type), name), array_size), attribute)| {
-                if let Some(size) = array_size {
-                    var_type = Type::Array(Box::new(var_type), size);
-                }
-                VariableDecl {
-                    name,
-                    var_type,
-                    comment,
-                    attribute,
-                }
-            },
-        )
+        .map(|(((comment, mut var_type), name), array_size)| {
+            if let Some(size) = array_size {
+                var_type = Type::Array(Box::new(var_type), size);
+            }
+            VariableDecl {
+                name,
+                var_type,
+                comment,
+            }
+        })
 }
 
 // Parser for enum variants
@@ -1002,7 +981,7 @@ mod tests {
     #[test]
     fn test_parse_function_with_import_attribute() {
         let input = r#"
-            int add(int a, int b) __attribute__((import_module("math"), import_name("add")));
+            [[clang::import_module("math"), clang::import_name("add")]] int add(int a, int b);
         "#;
 
         let result = parse_declarations(input).unwrap();
@@ -1010,59 +989,57 @@ mod tests {
 
         let f = &result.functions[0];
         assert_eq!(f.name, "add");
-        assert!(f.attribute.is_some());
+        assert!(f.c23_attributes.is_some());
 
-        let attr = f.attribute.as_ref().unwrap();
-        assert_eq!(attr.import_module, Some("math".to_string()));
-        assert_eq!(attr.import_name, Some("add".to_string()));
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.import_module, Some("math".to_string()));
+        assert_eq!(attrs.import_name, Some("add".to_string()));
     }
 
     #[test]
     fn test_parse_function_with_only_import_module() {
         let input = r#"
-            void log(char* msg) __attribute__((import_module("env")));
+            [[clang::import_module("env")]] void log(char* msg);
         "#;
 
         let result = parse_declarations(input).unwrap();
         let f = &result.functions[0];
 
-        assert!(f.attribute.is_some());
-        let attr = f.attribute.as_ref().unwrap();
-        assert_eq!(attr.import_module, Some("env".to_string()));
-        assert_eq!(attr.import_name, None);
+        assert!(f.c23_attributes.is_some());
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.import_module, Some("env".to_string()));
+        assert_eq!(attrs.import_name, None);
     }
 
     #[test]
     fn test_parse_function_with_only_import_name() {
         let input = r#"
-            void print() __attribute__((import_name("print_fn")));
+            [[clang::import_name("print_fn")]] void print();
         "#;
 
         let result = parse_declarations(input).unwrap();
         let f = &result.functions[0];
 
-        assert!(f.attribute.is_some());
-        let attr = f.attribute.as_ref().unwrap();
-        assert_eq!(attr.import_module, None);
-        assert_eq!(attr.import_name, Some("print_fn".to_string()));
+        assert!(f.c23_attributes.is_some());
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.import_module, None);
+        assert_eq!(attrs.import_name, Some("print_fn".to_string()));
     }
 
     #[test]
-    fn test_parse_variable_with_attribute() {
+    fn test_parse_function_with_export_name() {
         let input = r#"
-            int counter __attribute__((import_module("state"), import_name("counter")));
+            [[clang::export_name("guest_run")]] void run();
         "#;
 
         let result = parse_declarations(input).unwrap();
-        assert_eq!(result.variables.len(), 1);
+        let f = &result.functions[0];
 
-        let v = &result.variables[0];
-        assert_eq!(v.name, "counter");
-        assert!(v.attribute.is_some());
-
-        let attr = v.attribute.as_ref().unwrap();
-        assert_eq!(attr.import_module, Some("state".to_string()));
-        assert_eq!(attr.import_name, Some("counter".to_string()));
+        assert!(f.c23_attributes.is_some());
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.export_name, Some("guest_run".to_string()));
+        assert_eq!(attrs.import_module, None);
+        assert_eq!(attrs.import_name, None);
     }
 
     #[test]
@@ -1071,23 +1048,23 @@ mod tests {
 
         let result = parse_declarations(input).unwrap();
         let f = &result.functions[0];
-        assert!(f.attribute.is_none());
+        assert!(f.c23_attributes.is_none());
     }
 
     #[test]
     fn test_parse_mixed_with_and_without_attributes() {
         let input = r#"
-            int func1() __attribute__((import_module("mod1")));
+            [[clang::import_module("mod1")]] int func1();
             int func2();
-            int func3() __attribute__((import_name("func_three")));
+            [[clang::import_name("func_three")]] int func3();
         "#;
 
         let result = parse_declarations(input).unwrap();
         assert_eq!(result.functions.len(), 3);
 
-        assert!(result.functions[0].attribute.is_some());
-        assert!(result.functions[1].attribute.is_none());
-        assert!(result.functions[2].attribute.is_some());
+        assert!(result.functions[0].c23_attributes.is_some());
+        assert!(result.functions[1].c23_attributes.is_none());
+        assert!(result.functions[2].c23_attributes.is_some());
     }
 
     #[test]
@@ -1243,20 +1220,18 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_c23_attributes_with_gnu_attributes() {
+    fn test_parse_c23_attributes_with_wasm_linkage() {
         let input = r#"
-            [[nodiscard]] int get() __attribute__((import_module("mod"), import_name("get")));
+            [[nodiscard, clang::import_module("mod"), clang::import_name("get")]] int get();
         "#;
 
         let result = parse_declarations(input).unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
-        assert_eq!(f.c23_attributes.as_ref().unwrap().nodiscard, Some(None));
-
-        assert!(f.attribute.is_some());
-        let attr = f.attribute.as_ref().unwrap();
-        assert_eq!(attr.import_module, Some("mod".to_string()));
-        assert_eq!(attr.import_name, Some("get".to_string()));
+        let attrs = f.c23_attributes.as_ref().unwrap();
+        assert_eq!(attrs.nodiscard, Some(None));
+        assert_eq!(attrs.import_module, Some("mod".to_string()));
+        assert_eq!(attrs.import_name, Some("get".to_string()));
     }
 }

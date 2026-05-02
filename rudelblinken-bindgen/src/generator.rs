@@ -7,9 +7,23 @@
 /// grow their own requirements.
 ///
 /// The [`From`] impls below are the seam: they translate from the C AST produced
-/// by the parser into this IR. All attribute-flattening (GNU / C23 → direct
-/// fields) happens here.
+/// by the parser into this IR. All attribute-flattening and linkage resolution
+/// happens here — imported in the parser, resolved at the seam, invisible to backends.
 use crate::parser;
+
+/// WASM linkage direction for a function declaration.
+///
+/// Every function is definitively one of these two at lowering time.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Linkage {
+    /// Function is implemented in the Host and imported by the Guest.
+    /// `module` defaults to `"env"` if no `[[clang::import_module(...)]]` was present.
+    /// `name` defaults to the C function name if no `[[clang::import_name(...)]]` was present.
+    HostImport { module: String, name: String },
+    /// Function is implemented in the Guest and exported to the Host.
+    /// `name` is the WASM export symbol name from `[[clang::export_name(...)]]`.
+    GuestExport { name: String },
+}
 
 /// Collection of declarations ready for code generation
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -48,10 +62,8 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     /// Documentation comments
     pub comment: Vec<String>,
-    /// GNU-style `__attribute__((import_module("module_name")))`
-    pub import_module: Option<String>,
-    /// GNU-style `__attribute__((import_name("function_name")))`
-    pub import_name: Option<String>,
+    /// WASM linkage direction, resolved from C23 attributes
+    pub linkage: Linkage,
     /// C23 `[[deprecated]]` or `[[deprecated("message")]]`
     pub deprecated: Option<Option<String>>,
     /// C23 `[[nodiscard]]` or `[[nodiscard("reason")]]`
@@ -71,10 +83,6 @@ pub struct Variable {
     pub var_type: Type,
     /// Documentation comments
     pub comment: Vec<String>,
-    /// GNU-style `__attribute__((import_module("module_name")))`
-    pub import_module: Option<String>,
-    /// GNU-style `__attribute__((import_name("function_name")))`
-    pub import_name: Option<String>,
 }
 
 /// Enum declaration
@@ -176,32 +184,35 @@ impl From<parser::StructDecl> for Struct {
 
 impl From<parser::FunctionDecl> for Function {
     fn from(func: parser::FunctionDecl) -> Self {
-        let gnu_attr = func.attribute.unwrap_or_default();
-        let c23_attr = func.c23_attributes.unwrap_or_default();
+        let c23 = func.c23_attributes.unwrap_or_default();
+        let linkage = if let Some(export_name) = c23.export_name {
+            Linkage::GuestExport { name: export_name }
+        } else {
+            Linkage::HostImport {
+                module: c23.import_module.unwrap_or_else(|| "env".to_string()),
+                name: c23.import_name.unwrap_or_else(|| func.name.clone()),
+            }
+        };
         Function {
             name: func.name,
             return_type: func.return_type.into(),
             parameters: func.parameters.into_iter().map(Into::into).collect(),
             comment: func.comment,
-            import_module: gnu_attr.import_module,
-            import_name: gnu_attr.import_name,
-            deprecated: c23_attr.deprecated,
-            nodiscard: c23_attr.nodiscard,
-            maybe_unused: c23_attr.maybe_unused,
-            noreturn: c23_attr.noreturn,
+            linkage,
+            deprecated: c23.deprecated,
+            nodiscard: c23.nodiscard,
+            maybe_unused: c23.maybe_unused,
+            noreturn: c23.noreturn,
         }
     }
 }
 
 impl From<parser::VariableDecl> for Variable {
     fn from(var: parser::VariableDecl) -> Self {
-        let gnu_attr = var.attribute.unwrap_or_default();
         Variable {
             name: var.name,
             var_type: var.var_type.into(),
             comment: var.comment,
-            import_module: gnu_attr.import_module,
-            import_name: gnu_attr.import_name,
         }
     }
 }

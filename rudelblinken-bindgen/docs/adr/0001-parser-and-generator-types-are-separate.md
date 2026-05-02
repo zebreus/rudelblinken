@@ -6,9 +6,11 @@ The `parser` module and `generator` module each define their own type hierarchie
 
 **Parser IR** (`parser` module): models *C syntax* faithfully. Its job is to represent what was written in the input header — including raw attributes (`__attribute__((...))`, `[[...]]`), legacy forms, and anything else the parser accepts. It is a structural reflection of the source text.
 
-**Generator IR** (`generator` module): models *semantics* for code generation. Its job is to represent what each declaration *means* — stripped of syntactic noise and attribute syntax. Concrete example: where the parser IR has an opaque `attribute` field containing raw GNU or C23 attribute tokens, the generator IR has direct typed fields (`import_module: Option<String>`, `import_name: Option<String>`, etc.). A backend never inspects raw attribute syntax; it reads resolved semantic fields.
+**Generator IR** (`generator` module): models *semantics* for code generation. Its job is to represent what each declaration *means* — stripped of syntactic noise and attribute syntax. Concrete example: where the parser IR has C23 attribute data, the generator IR has a `Linkage` enum — `HostImport { module, name }` or `GuestExport { name }` — with all defaults already resolved. A backend never inspects raw attribute syntax; it reads resolved semantic fields.
 
 The generator IR also maps cleanly to the WASM C ABI that the input C header implies. Backends generate idiomatic code for their target language, but the generated code must produce the same ABI layout and import/export linkage as the original C declarations.
+
+The generator IR models the full bidirectional host/guest contract — both directions, resolved to concrete linkage — even when not all backends have a consumer for both directions yet. The SDK and runtime currently use WIT-generated bindings rather than rudelblinken-bindgen output; they will migrate to rudelblinken-bindgen once it is ready. Until then, the GuestExport path in the generator IR and backends is implemented and tested in anticipation of that migration, not dead code.
 
 ## The seam
 

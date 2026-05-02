@@ -2,8 +2,8 @@ pub mod generator;
 pub mod parser;
 
 pub use parser::{
-    Attribute, C23Attributes, Declarations, Directive, EnumDecl, EnumVariant, Field, FunctionDecl,
-    Parameter, StructDecl, Type, TypedefDecl, VariableDecl, parse_declarations,
+    C23Attributes, Declarations, Directive, EnumDecl, EnumVariant, Field, FunctionDecl, Parameter,
+    StructDecl, Type, TypedefDecl, VariableDecl, parse_declarations,
 };
 
 use clap::{Parser, ValueEnum};
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn rust_guest_generates_extern_block_for_imported_function() {
-        let input = r#"void host_log(char *message) __attribute__((import_module("env"), import_name("log")));"#;
+        let input = r#"[[clang::import_module("env"), clang::import_name("log")]] void host_log(char *message);"#;
         let result = generate_bindings(input, &OutputFormat::RustGuest);
         assert!(result.is_ok(), "expected ok, got: {:?}", result);
         let output = result.unwrap();

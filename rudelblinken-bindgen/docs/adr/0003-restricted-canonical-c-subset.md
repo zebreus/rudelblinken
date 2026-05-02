@@ -10,7 +10,29 @@ Example: named structs (`struct Name { ... };`) are supported; `typedef`-anonymo
 
 ## C23 preferred over legacy conventions
 
-Where C23 provides a modern form, only the modern form is accepted. Legacy equivalents (e.g. `_Static_assert` vs `static_assert`, GNU `__attribute__` vs `[[...]]` C23 attributes) are either unsupported or deprecated in the input format. This reduces the surface area of the parser and keeps the input consistent.
+Where C23 provides a modern form, only the modern form is accepted. Legacy equivalents (e.g. `_Static_assert` vs `static_assert`) are either unsupported or deprecated in the input format. This reduces the surface area of the parser and keeps the input consistent.
+
+### WASM linkage attributes
+
+WASM linkage is expressed exclusively through C23 `[[...]]` attribute specifiers in **prefix** position (before the return type):
+
+| Meaning                   | Canonical form                                                   |
+|---------------------------|------------------------------------------------------------------|
+| Import from host          | `[[clang::import_module("mod"), clang::import_name("name")]]`    |
+| Import from host ("env")  | `[[clang::import_name("name")]]` (module defaults to `"env"`)    |
+| Export from guest         | `[[clang::export_name("name")]]`                                 |
+
+Every function declaration is definitively one of these two directions. There is no neutral/unannotated third kind. A function with no WASM linkage attribute is implicitly a host import (clang's default WASM import module is `"env"` and the import name defaults to the C function name). There is no implicit guest export — clang has no convention for it; an `[[clang::export_name(...)]]` attribute is always required to mark a function as a guest export.
+
+The generator IR stores the resolved `"env"` module explicitly (it is always present after lowering), but the C backend omits the `import_module` attribute from output when the module is `"env"`. This is a deliberate readability choice: `[[clang::import_name("log")]]` is cleaner than repeating `[[clang::import_module("env"), clang::import_name("log")]]` on every function in a typical rudel header where all imports come from `"env"`. The IR stays unambiguous; the human-readable output stays concise.
+
+GNU `__attribute__((import_module(...), import_name(...)))` and `__attribute__((export_name(...)))` suffix forms are **not accepted**. There is no backwards-compatibility shim. Backwards compatibility with the GNU form is explicitly out of scope — the canonical form is the only form, and old inputs must be migrated.
+
+The suffix form (`void f() [[clang::...]]`) is also rejected: clang itself rejects it for function declarations ("cannot be applied to types"), so it cannot be used portably even in valid C23.
+
+The bare (no-namespace) form — e.g. `[[import_name("log")]]` — is also not accepted; clang silently ignores unknown unscoped attributes, making it impossible to distinguish a mistyped name from intentional use. The `clang::` namespace is required for all WASM linkage attributes.
+
+The C23 attribute forms for WASM linkage (`[[clang::import_module(...)]]`, `[[clang::import_name(...)]]`, `[[clang::export_name(...)]]`) were verified to be supported by clang before being adopted as the canonical input and output form. The `compile_cases/c23_export_name` test fixture is the ongoing proof of this: it compiles a header using `[[clang::export_name(...)]]` through clang to WASM and verifies the result. If clang ever stops supporting these C23 attribute forms the fixture will fail and the canonical form must be revisited.
 
 ## Annotation comments as an escape hatch
 

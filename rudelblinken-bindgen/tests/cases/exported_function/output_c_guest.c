@@ -1,1 +1,1 @@
-ERROR: Parse errors in
+[[clang::export_name("guest_exported")]] int exported();
