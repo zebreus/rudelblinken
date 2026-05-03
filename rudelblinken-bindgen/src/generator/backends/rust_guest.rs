@@ -24,8 +24,7 @@ fn to_syn_type(ty: &Type) -> syn::Type {
         }
         Type::Array(inner, size) => {
             let inner_ty = to_syn_type(inner);
-            let size_lit =
-                syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
+            let size_lit = syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
             parse_quote! { [#inner_ty; #size_lit] }
         }
     }
@@ -35,12 +34,10 @@ fn to_syn_type(ty: &Type) -> syn::Type {
 pub fn generate(declarations: &Declarations) -> String {
     let mut items: Vec<syn::Item> = Vec::new();
 
-    // Generate struct definitions
     for struct_decl in &declarations.structs {
         items.push(generate_struct_item(struct_decl));
     }
 
-    // Group host-imported functions by module and emit one extern block per module
     let mut imports_by_module: std::collections::BTreeMap<String, Vec<&Function>> =
         std::collections::BTreeMap::new();
     for func in &declarations.functions {
@@ -55,19 +52,16 @@ pub fn generate(declarations: &Declarations) -> String {
         items.push(generate_extern_block(module, funcs));
     }
 
-    // Generate guest-exported function stubs
     for func in &declarations.functions {
         if matches!(func.linkage, Linkage::GuestExport { .. }) {
             items.push(generate_function_item(func));
         }
     }
 
-    // Generate static variables
     for var in &declarations.variables {
         items.push(generate_variable_item(var));
     }
 
-    // Build the file
     let file = syn::File {
         shebang: None,
         attrs: vec![parse_quote! {
@@ -139,7 +133,6 @@ fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
     let name = syn::Ident::new(&func.name, proc_macro2::Span::call_site());
     let mut attrs: Vec<syn::Attribute> = Vec::new();
 
-    // Standard C23 attributes mapped to Rust equivalents
     if let Some(msg) = &func.deprecated {
         if let Some(text) = msg {
             attrs.push(parse_quote! { #[deprecated(note = #text)] });
@@ -155,7 +148,6 @@ fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
         }
     }
 
-    // Add link_name attribute when the WASM import name differs from the C name
     if let Linkage::HostImport {
         name: import_name, ..
     } = &func.linkage
@@ -197,12 +189,10 @@ fn generate_function_item(func: &Function) -> syn::Item {
     let name = syn::Ident::new(&func.name, proc_macro2::Span::call_site());
     let mut attrs = generate_doc_comments(&func.comment);
 
-    // Add export_name attribute for guest exports
     if let Linkage::GuestExport { name: export_name } = &func.linkage {
         attrs.push(parse_quote! { #[unsafe(export_name = #export_name)] });
     }
 
-    // Add deprecation attribute if present
     if let Some(deprecated) = &func.deprecated {
         if let Some(msg) = deprecated {
             attrs.push(parse_quote! { #[deprecated(note = #msg)] });
@@ -211,7 +201,6 @@ fn generate_function_item(func: &Function) -> syn::Item {
         }
     }
 
-    // Add must_use attribute for nodiscard
     if let Some(nodiscard) = &func.nodiscard {
         if let Some(reason) = nodiscard {
             attrs.push(parse_quote! { #[must_use = #reason] });
@@ -220,7 +209,6 @@ fn generate_function_item(func: &Function) -> syn::Item {
         }
     }
 
-    // Add allow(dead_code) for maybe_unused
     if func.maybe_unused.is_some() {
         attrs.push(parse_quote! { #[allow(dead_code)] });
     }
@@ -381,7 +369,6 @@ mod tests {
 
     #[test]
     fn test_generate_ext_block_module_env() {
-        // env module: wasm_import_module attr is still emitted (always explicit in IR)
         let decls = Declarations {
             structs: vec![],
             functions: vec![Function {
@@ -409,7 +396,6 @@ mod tests {
             result.contains(r#"wasm_import_module = "env""#),
             "output:\n{result}"
         );
-        // import name equals C name — no link_name needed
         assert!(!result.contains("link_name"), "output:\n{result}");
     }
 

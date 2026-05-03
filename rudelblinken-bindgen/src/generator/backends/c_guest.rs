@@ -394,7 +394,6 @@ mod tests {
 
     #[test]
     fn test_generate_with_env_module_omitted() {
-        // module "env" is omitted in output for readability
         let decls = Declarations {
             structs: vec![],
             functions: vec![Function {
@@ -551,9 +550,15 @@ mod tests {
     fn to_c_parts_primitives() {
         assert_eq!(to_c_parts(&Type::Void), ("void".into(), "".into()));
         assert_eq!(to_c_parts(&Type::Int), ("int".into(), "".into()));
-        assert_eq!(to_c_parts(&Type::UnsignedInt), ("unsigned int".into(), "".into()));
+        assert_eq!(
+            to_c_parts(&Type::UnsignedInt),
+            ("unsigned int".into(), "".into())
+        );
         assert_eq!(to_c_parts(&Type::Char), ("char".into(), "".into()));
-        assert_eq!(to_c_parts(&Type::UnsignedChar), ("unsigned char".into(), "".into()));
+        assert_eq!(
+            to_c_parts(&Type::UnsignedChar),
+            ("unsigned char".into(), "".into())
+        );
         assert_eq!(to_c_parts(&Type::LongLong), ("long long".into(), "".into()));
         assert_eq!(
             to_c_parts(&Type::UnsignedLongLong),
@@ -563,16 +568,19 @@ mod tests {
 
     #[test]
     fn to_c_parts_pointer_to_pointer_doubles_star() {
-        let (prefix, suffix) =
-            to_c_parts(&Type::Pointer(Box::new(Type::Pointer(Box::new(Type::Char)))));
+        let (prefix, suffix) = to_c_parts(&Type::Pointer(Box::new(Type::Pointer(Box::new(
+            Type::Char,
+        )))));
         assert_eq!(prefix, "char**");
         assert_eq!(suffix, "");
     }
 
     #[test]
     fn to_c_parts_pointer_inside_array_nests_correctly() {
-        let (prefix, suffix) =
-            to_c_parts(&Type::Array(Box::new(Type::Pointer(Box::new(Type::Int))), 4));
+        let (prefix, suffix) = to_c_parts(&Type::Array(
+            Box::new(Type::Pointer(Box::new(Type::Int))),
+            4,
+        ));
         assert_eq!(prefix, "int*");
         assert_eq!(suffix, "[4]");
     }

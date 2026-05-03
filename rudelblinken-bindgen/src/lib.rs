@@ -205,8 +205,8 @@ pub fn generate_bindings(
     })?;
     let gen_declarations = generator::Declarations::lower(validated);
     let output = match format {
-        OutputFormat::CGuest => generator::c_guest::generate(&gen_declarations),
-        OutputFormat::RustGuest => generator::rust_guest::generate(&gen_declarations),
+        OutputFormat::CGuest => generator::backends::c_guest::generate(&gen_declarations),
+        OutputFormat::RustGuest => generator::backends::rust_guest::generate(&gen_declarations),
     };
     Ok(output)
 }
