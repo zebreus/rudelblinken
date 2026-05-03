@@ -313,6 +313,7 @@ fn c23_attribute_item<'src>()
         import_name,
         export_name,
     ))
+    .labelled("attribute name")
 }
 
 // Parser for C23 attribute specifier: [[attr1, attr2, ...]]
@@ -476,9 +477,12 @@ fn base_type<'src>() -> impl Parser<'src, &'src str, Type, extra::Err<Rich<'src,
         just("char").to(Type::Char),
         just("struct")
             .padded()
-            .ignore_then(ident())
+            .ignore_then(ident().labelled("struct type name"))
             .map(Type::Struct),
-        just("enum").padded().ignore_then(ident()).map(Type::Enum),
+        just("enum")
+            .padded()
+            .ignore_then(ident().labelled("enum type name"))
+            .map(Type::Enum),
         ident().map(Type::Named),
     ))
     .padded()
@@ -513,7 +517,7 @@ fn array_brackets<'src>() -> impl Parser<'src, &'src str, usize, extra::Err<Rich
 fn field<'src>() -> impl Parser<'src, &'src str, Field, extra::Err<Rich<'src, char>>> {
     opt_comment()
         .then(type_parser())
-        .then(ident())
+        .then(ident().labelled("field name"))
         .then(array_brackets().or_not())
         .then_ignore(just(';').padded())
         .map(|(((comment, mut field_type), name), array_size)| {
@@ -526,12 +530,17 @@ fn field<'src>() -> impl Parser<'src, &'src str, Field, extra::Err<Rich<'src, ch
                 comment,
             }
         })
+        .labelled("struct field")
 }
 
 // Parser for struct declarations
 fn struct_decl<'src>() -> impl Parser<'src, &'src str, StructDecl, extra::Err<Rich<'src, char>>> {
     opt_comment()
-        .then(just("struct").padded().ignore_then(ident()))
+        .then(
+            just("struct")
+                .padded()
+                .ignore_then(ident().labelled("struct name")),
+        )
         .then_ignore(just('{').padded())
         .then(field().repeated().collect::<Vec<_>>())
         .then_ignore(just('}').padded())
@@ -555,6 +564,7 @@ fn parameter<'src>() -> impl Parser<'src, &'src str, Parameter, extra::Err<Rich<
             }
             Parameter { name, param_type }
         })
+        .labelled("function parameter")
 }
 
 // Parser for function declarations
@@ -563,7 +573,7 @@ fn function_decl<'src>() -> impl Parser<'src, &'src str, FunctionDecl, extra::Er
     opt_comment()
         .then(opt_c23_attributes())
         .then(type_parser())
-        .then(ident())
+        .then(ident().labelled("function name"))
         .then_ignore(just('(').padded())
         .then(
             parameter()
@@ -591,7 +601,7 @@ fn variable_decl<'src>() -> impl Parser<'src, &'src str, VariableDecl, extra::Er
     opt_comment()
         .then(opt_c23_attributes())
         .then(type_parser())
-        .then(ident())
+        .then(ident().labelled("variable name"))
         .then(array_brackets().or_not())
         .then_ignore(just(';').padded())
         .map(
@@ -629,12 +639,17 @@ fn enum_variant<'src>() -> impl Parser<'src, &'src str, EnumVariant, extra::Err<
             value,
             comment,
         })
+        .labelled("enum variant")
 }
 
 // Parser for enum declarations
 fn enum_decl<'src>() -> impl Parser<'src, &'src str, EnumDecl, extra::Err<Rich<'src, char>>> {
     opt_comment()
-        .then(just("enum").padded().ignore_then(ident()))
+        .then(
+            just("enum")
+                .padded()
+                .ignore_then(ident().labelled("enum name")),
+        )
         .then_ignore(just('{').padded())
         .then(
             enum_variant()
@@ -716,19 +731,21 @@ pub fn parse_declarations<'src>(
     input: &'src str,
     source: &str,
 ) -> Result<Declarations, Vec<Rich<'src, char>>> {
-    let struct_parser = struct_decl().map_with(|s, e| {
-        let sp = e.span();
-        let s = StructDecl {
-            span: Span {
-                source: source.to_string(),
-                start: sp.start,
-                end: sp.end,
-            },
-            ..s
-        };
-        (Some(s), None, None, None, None)
-    });
-    let enum_parser = enum_decl().map_with(|ed, e| {
+    let struct_parser = struct_decl()
+        .labelled("struct declaration")
+        .map_with(|s, e| {
+            let sp = e.span();
+            let s = StructDecl {
+                span: Span {
+                    source: source.to_string(),
+                    start: sp.start,
+                    end: sp.end,
+                },
+                ..s
+            };
+            (Some(s), None, None, None, None)
+        });
+    let enum_parser = enum_decl().labelled("enum declaration").map_with(|ed, e| {
         let sp = e.span();
         let ed = EnumDecl {
             span: Span {
@@ -740,31 +757,37 @@ pub fn parse_declarations<'src>(
         };
         (None, None, None, Some(ed), None)
     });
-    let directive_parser = directive_decl().map(|d| (None, None, None, None, Some(d)));
-    let function_parser = function_decl().map_with(|f, e| {
-        let sp = e.span();
-        let f = FunctionDecl {
-            span: Span {
-                source: source.to_string(),
-                start: sp.start,
-                end: sp.end,
-            },
-            ..f
-        };
-        (None, Some(f), None, None, None)
-    });
-    let variable_parser = variable_decl().map_with(|v, e| {
-        let sp = e.span();
-        let v = VariableDecl {
-            span: Span {
-                source: source.to_string(),
-                start: sp.start,
-                end: sp.end,
-            },
-            ..v
-        };
-        (None, None, Some(v), None, None)
-    });
+    let directive_parser = directive_decl()
+        .labelled("preprocessor directive")
+        .map(|d| (None, None, None, None, Some(d)));
+    let function_parser = function_decl()
+        .labelled("function declaration")
+        .map_with(|f, e| {
+            let sp = e.span();
+            let f = FunctionDecl {
+                span: Span {
+                    source: source.to_string(),
+                    start: sp.start,
+                    end: sp.end,
+                },
+                ..f
+            };
+            (None, Some(f), None, None, None)
+        });
+    let variable_parser = variable_decl()
+        .labelled("variable declaration")
+        .map_with(|v, e| {
+            let sp = e.span();
+            let v = VariableDecl {
+                span: Span {
+                    source: source.to_string(),
+                    start: sp.start,
+                    end: sp.end,
+                },
+                ..v
+            };
+            (None, None, Some(v), None, None)
+        });
 
     let parser = text::whitespace()
         .ignore_then(

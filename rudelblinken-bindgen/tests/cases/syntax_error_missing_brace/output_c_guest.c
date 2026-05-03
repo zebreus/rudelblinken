@@ -1,1 +1,1 @@
-ERROR:Error
+ERROR:expected struct field, or '}'
