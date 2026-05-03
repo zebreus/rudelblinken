@@ -5,6 +5,32 @@
 use crate::generator::*;
 use syn::parse_quote;
 
+fn to_syn_type(ty: &Type) -> syn::Type {
+    match ty {
+        Type::Void => parse_quote! { () },
+        Type::Int => parse_quote! { i32 },
+        Type::UnsignedInt => parse_quote! { u32 },
+        Type::Char => parse_quote! { i8 },
+        Type::UnsignedChar => parse_quote! { u8 },
+        Type::LongLong => parse_quote! { i64 },
+        Type::UnsignedLongLong => parse_quote! { u64 },
+        Type::Struct(name) | Type::Enum(name) => {
+            let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+            parse_quote! { #ident }
+        }
+        Type::Pointer(inner) => {
+            let inner_ty = to_syn_type(inner);
+            parse_quote! { *mut #inner_ty }
+        }
+        Type::Array(inner, size) => {
+            let inner_ty = to_syn_type(inner);
+            let size_lit =
+                syn::LitInt::new(&size.to_string(), proc_macro2::Span::call_site());
+            parse_quote! { [#inner_ty; #size_lit] }
+        }
+    }
+}
+
 /// Generate a Rust guest implementation from declarations
 pub fn generate(declarations: &Declarations) -> String {
     let mut items: Vec<syn::Item> = Vec::new();
@@ -53,30 +79,6 @@ pub fn generate(declarations: &Declarations) -> String {
     prettyplease::unparse(&file)
 }
 
-fn parse_type(type_decl: &Type) -> syn::Type {
-    match type_decl {
-        Type::Void => parse_quote! { () },
-        Type::Int => parse_quote! { i32 },
-        Type::UnsignedInt => parse_quote! { u32 },
-        Type::Char => parse_quote! { i8 },
-        Type::UnsignedChar => parse_quote! { u8 },
-        Type::LongLong => parse_quote! { i64 },
-        Type::UnsignedLongLong => parse_quote! { u64 },
-        Type::Struct(name) | Type::Enum(name) => {
-            let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-            parse_quote! { #ident }
-        }
-        Type::Pointer(inner) => {
-            let inner_ty = parse_type(inner);
-            parse_quote! { *mut #inner_ty }
-        }
-        Type::Array(inner, size) => {
-            let inner_ty = parse_type(inner);
-            parse_quote! { [#inner_ty; #size] }
-        }
-    }
-}
-
 fn generate_doc_comments(comments: &[String]) -> Vec<syn::Attribute> {
     comments
         .iter()
@@ -100,7 +102,7 @@ fn generate_struct_item(struct_decl: &Struct) -> syn::Item {
         .iter()
         .map(|field| {
             let field_name = syn::Ident::new(&field.name, proc_macro2::Span::call_site());
-            let field_type = parse_type(&field.field_type);
+            let field_type = to_syn_type(&field.field_type);
             let field_doc_attrs = generate_doc_comments(&field.comment);
 
             parse_quote! {
@@ -173,12 +175,12 @@ fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
             } else {
                 syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site())
             };
-            let param_type = parse_type(&param.param_type);
+            let param_type = to_syn_type(&param.param_type);
             parse_quote! { #param_name: #param_type }
         })
         .collect();
 
-    let return_type = parse_type(&func.return_type);
+    let return_type = to_syn_type(&func.return_type);
     let output: syn::ReturnType = if matches!(func.return_type, Type::Void) {
         parse_quote! {}
     } else {
@@ -233,12 +235,12 @@ fn generate_function_item(func: &Function) -> syn::Item {
             } else {
                 syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site())
             };
-            let param_type = parse_type(&param.param_type);
+            let param_type = to_syn_type(&param.param_type);
             parse_quote! { #param_name: #param_type }
         })
         .collect();
 
-    let return_type = parse_type(&func.return_type);
+    let return_type = to_syn_type(&func.return_type);
     let output: syn::ReturnType = if matches!(func.return_type, Type::Void) {
         parse_quote! {}
     } else {
@@ -255,7 +257,7 @@ fn generate_function_item(func: &Function) -> syn::Item {
 
 fn generate_variable_item(var: &Variable) -> syn::Item {
     let name = syn::Ident::new(&var.name, proc_macro2::Span::call_site());
-    let var_type = parse_type(&var.var_type);
+    let var_type = to_syn_type(&var.var_type);
     let attrs = generate_doc_comments(&var.comment);
 
     parse_quote! {
@@ -507,5 +509,26 @@ mod tests {
 
         let result = generate(&decls);
         assert!(result.contains("pub static ptr: *mut ()"));
+    }
+
+    fn fmt_rust(ty: &Type) -> String {
+        let syn_ty = to_syn_type(ty);
+        let file: syn::File = parse_quote! { type _T = #syn_ty; };
+        let s = prettyplease::unparse(&file);
+        s.strip_prefix("type _T = ")
+            .and_then(|s| s.strip_suffix(";\n"))
+            .unwrap_or(&s)
+            .to_string()
+    }
+
+    #[test]
+    fn to_syn_type_primitives_follow_wasm_c_abi() {
+        assert_eq!(fmt_rust(&Type::Void), "()");
+        assert_eq!(fmt_rust(&Type::Int), "i32");
+        assert_eq!(fmt_rust(&Type::UnsignedInt), "u32");
+        assert_eq!(fmt_rust(&Type::Char), "i8");
+        assert_eq!(fmt_rust(&Type::UnsignedChar), "u8");
+        assert_eq!(fmt_rust(&Type::LongLong), "i64");
+        assert_eq!(fmt_rust(&Type::UnsignedLongLong), "u64");
     }
 }

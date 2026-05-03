@@ -4,6 +4,28 @@
 
 use crate::generator::*;
 
+fn to_c_parts(ty: &Type) -> (String, String) {
+    match ty {
+        Type::Void => ("void".to_string(), "".to_string()),
+        Type::Int => ("int".to_string(), "".to_string()),
+        Type::UnsignedInt => ("unsigned int".to_string(), "".to_string()),
+        Type::Char => ("char".to_string(), "".to_string()),
+        Type::UnsignedChar => ("unsigned char".to_string(), "".to_string()),
+        Type::LongLong => ("long long".to_string(), "".to_string()),
+        Type::UnsignedLongLong => ("unsigned long long".to_string(), "".to_string()),
+        Type::Struct(name) => (format!("struct {}", name), "".to_string()),
+        Type::Enum(name) => (format!("enum {}", name), "".to_string()),
+        Type::Pointer(inner) => {
+            let (prefix, suffix) = to_c_parts(inner);
+            (format!("{}*", prefix), suffix)
+        }
+        Type::Array(inner, size) => {
+            let (prefix, suffix) = to_c_parts(inner);
+            (prefix, format!("{}[{}]", suffix, size))
+        }
+    }
+}
+
 /// Generate a C header file from declarations
 pub fn generate(declarations: &Declarations) -> String {
     let mut output = String::new();
@@ -95,30 +117,8 @@ fn generate_comments(output: &mut String, comments: &[String]) {
     }
 }
 
-fn generate_type_parts(type_decl: &Type) -> (String, String) {
-    match type_decl {
-        Type::Void => ("void".to_string(), "".to_string()),
-        Type::Int => ("int".to_string(), "".to_string()),
-        Type::UnsignedInt => ("unsigned int".to_string(), "".to_string()),
-        Type::Char => ("char".to_string(), "".to_string()),
-        Type::UnsignedChar => ("unsigned char".to_string(), "".to_string()),
-        Type::LongLong => ("long long".to_string(), "".to_string()),
-        Type::UnsignedLongLong => ("unsigned long long".to_string(), "".to_string()),
-        Type::Struct(name) => (format!("struct {}", name), "".to_string()),
-        Type::Enum(name) => (format!("enum {}", name), "".to_string()),
-        Type::Pointer(inner) => {
-            let (prefix, suffix) = generate_type_parts(inner);
-            (format!("{}*", prefix), suffix)
-        }
-        Type::Array(inner, size) => {
-            let (prefix, suffix) = generate_type_parts(inner);
-            (prefix, format!("{}[{}]", suffix, size))
-        }
-    }
-}
-
 fn generate_decl_string(type_decl: &Type, name: &str) -> String {
-    let (prefix, suffix) = generate_type_parts(type_decl);
+    let (prefix, suffix) = to_c_parts(type_decl);
     if name.is_empty() && suffix.is_empty() {
         prefix
     } else if suffix.is_empty() {
@@ -222,7 +222,7 @@ fn generate_function(output: &mut String, func_decl: &Function) {
         if let Some(name) = &param.name {
             output.push_str(&generate_decl_string(&param.param_type, name));
         } else {
-            let (prefix, suffix) = generate_type_parts(&param.param_type);
+            let (prefix, suffix) = to_c_parts(&param.param_type);
             output.push_str(&prefix);
             if !suffix.is_empty() {
                 output.push_str(&suffix);
@@ -545,5 +545,35 @@ mod tests {
 
         let result = generate(&decls);
         assert_eq!(result, "enum Color color;\n");
+    }
+
+    #[test]
+    fn to_c_parts_primitives() {
+        assert_eq!(to_c_parts(&Type::Void), ("void".into(), "".into()));
+        assert_eq!(to_c_parts(&Type::Int), ("int".into(), "".into()));
+        assert_eq!(to_c_parts(&Type::UnsignedInt), ("unsigned int".into(), "".into()));
+        assert_eq!(to_c_parts(&Type::Char), ("char".into(), "".into()));
+        assert_eq!(to_c_parts(&Type::UnsignedChar), ("unsigned char".into(), "".into()));
+        assert_eq!(to_c_parts(&Type::LongLong), ("long long".into(), "".into()));
+        assert_eq!(
+            to_c_parts(&Type::UnsignedLongLong),
+            ("unsigned long long".into(), "".into())
+        );
+    }
+
+    #[test]
+    fn to_c_parts_pointer_to_pointer_doubles_star() {
+        let (prefix, suffix) =
+            to_c_parts(&Type::Pointer(Box::new(Type::Pointer(Box::new(Type::Char)))));
+        assert_eq!(prefix, "char**");
+        assert_eq!(suffix, "");
+    }
+
+    #[test]
+    fn to_c_parts_pointer_inside_array_nests_correctly() {
+        let (prefix, suffix) =
+            to_c_parts(&Type::Array(Box::new(Type::Pointer(Box::new(Type::Int))), 4));
+        assert_eq!(prefix, "int*");
+        assert_eq!(suffix, "[4]");
     }
 }
