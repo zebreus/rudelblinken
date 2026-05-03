@@ -114,7 +114,6 @@ fn generate_type_parts(type_decl: &Type) -> (String, String) {
             let (prefix, suffix) = generate_type_parts(inner);
             (prefix, format!("{}[{}]", suffix, size))
         }
-        Type::Named(name) => (name.clone(), "".to_string()),
     }
 }
 
@@ -321,7 +320,10 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(result, "[[clang::import_name(\"add\")]] int add(int a, int b);\n");
+        assert_eq!(
+            result,
+            "[[clang::import_name(\"add\")]] int add(int a, int b);\n"
+        );
     }
 
     #[test]
@@ -345,7 +347,10 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(result, "// Test function\n[[clang::import_name(\"test\")]] void test();\n");
+        assert_eq!(
+            result,
+            "// Test function\n[[clang::import_name(\"test\")]] void test();\n"
+        );
     }
 
     #[test]
@@ -453,7 +458,10 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(result, "[[deprecated, nodiscard, clang::import_name(\"old_func\")]] int old_func();\n");
+        assert_eq!(
+            result,
+            "[[deprecated, nodiscard, clang::import_name(\"old_func\")]] int old_func();\n"
+        );
     }
 
     #[test]

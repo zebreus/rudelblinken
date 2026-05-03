@@ -57,7 +57,11 @@ fn offset_to_line_col(input: &str, offset: usize) -> (usize, usize) {
     let clamped = offset.min(input.len());
     let prefix = &input[..clamped];
     let line = prefix.chars().filter(|&c| c == '\n').count() + 1;
-    let col = prefix.rfind('\n').map(|nl| clamped - nl - 1).unwrap_or(clamped) + 1;
+    let col = prefix
+        .rfind('\n')
+        .map(|nl| clamped - nl - 1)
+        .unwrap_or(clamped)
+        + 1;
     (line, col)
 }
 
@@ -76,7 +80,15 @@ pub fn generate_bindings(input: &str, format: &OutputFormat) -> Result<String, V
             })
             .collect::<Vec<_>>()
     })?;
-    let gen_declarations: generator::Declarations = parsed.into();
+    let gen_declarations = generator::Declarations::lower(parsed).map_err(|errs| {
+        errs.into_iter()
+            .map(|e| BindgenError {
+                line: 1,
+                column: 1,
+                message: e.message,
+            })
+            .collect::<Vec<_>>()
+    })?;
     let output = match format {
         OutputFormat::CGuest => generator::c_guest::generate(&gen_declarations),
         OutputFormat::RustGuest => generator::rust_guest::generate(&gen_declarations),
@@ -185,7 +197,10 @@ mod tests {
         let errors = result.unwrap_err();
         let display = format!("{}", errors[0]);
         // Should be "line:col: message"
-        assert!(display.contains(':'), "display should contain ':', got: {display}");
+        assert!(
+            display.contains(':'),
+            "display should contain ':', got: {display}"
+        );
     }
 
     // --- Cycle 2: RustGuest is a real adapter ---
@@ -208,5 +223,89 @@ mod tests {
         let output = result.unwrap();
         assert!(output.contains("extern \"C\""), "output:\n{output}");
         assert!(output.contains("pub fn host_log"), "output:\n{output}");
+    }
+
+    #[test]
+    fn rejects_function_declared_as_both_import_and_export() {
+        let input =
+            r#"[[clang::import_name("host_run"), clang::export_name("guest_run")]] int run();"#;
+        let result = generate_bindings(input, &OutputFormat::CGuest);
+        assert!(result.is_err(), "expected semantic error, got: {result:?}");
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|err| err
+                .message
+                .contains("cannot be both a host import and a guest export")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_named_types_until_typedef_semantics_are_defined() {
+        let result = generate_bindings("rudel_word counter;", &OutputFormat::CGuest);
+        assert!(result.is_err(), "expected semantic error, got: {result:?}");
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("unsupported named type `rudel_word`")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_enum_values_outside_i32_range() {
+        let result = generate_bindings(
+            "enum Status { TOO_LARGE = 2147483648, };",
+            &OutputFormat::CGuest,
+        );
+        assert!(result.is_err(), "expected semantic error, got: {result:?}");
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|err| err
+                .message
+                .contains("enum value `TOO_LARGE` is outside the supported i32 range")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_conflicting_ordinary_declarations() {
+        let input = r#"
+            int status;
+            int status();
+        "#;
+        let result = generate_bindings(input, &OutputFormat::CGuest);
+        assert!(result.is_err(), "expected semantic error, got: {result:?}");
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("declaration `status` conflicts")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_void_parameters() {
+        let result = generate_bindings("int bad(void value);", &OutputFormat::CGuest);
+        assert!(result.is_err(), "expected semantic error, got: {result:?}");
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|err| err
+                .message
+                .contains("parameter `value` cannot have type void")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn treats_void_parameter_list_as_no_parameters() {
+        let result = generate_bindings("int main(void);", &OutputFormat::CGuest);
+        assert!(result.is_ok(), "expected ok, got: {result:?}");
+        assert_eq!(
+            result.unwrap(),
+            "[[clang::import_name(\"main\")]] int main();\n"
+        );
     }
 }

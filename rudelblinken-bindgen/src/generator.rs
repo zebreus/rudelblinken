@@ -6,10 +6,18 @@
 /// (C headers, Rust bindings, …) and will diverge from the C AST as backends
 /// grow their own requirements.
 ///
-/// The [`From`] impls below are the seam: they translate from the C AST produced
-/// by the parser into this IR. All attribute-flattening and linkage resolution
-/// happens here — imported in the parser, resolved at the seam, invisible to backends.
+/// The [`Declarations::lower`] function below is the seam: it validates the C AST
+/// produced by the parser and translates it into this IR. All attribute-flattening
+/// and linkage resolution happens here — imported in the parser, resolved at the
+/// seam, invisible to backends.
 use crate::parser;
+use std::collections::HashSet;
+
+/// A semantic validation error found while lowering parser IR into generator IR.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoweringError {
+    pub message: String,
+}
 
 /// WASM linkage direction for a function declaration.
 ///
@@ -38,6 +46,139 @@ pub struct Declarations {
     pub enums: Vec<Enum>,
     /// Preprocessor directives
     pub directives: Vec<Directive>,
+}
+
+impl Declarations {
+    pub fn lower(decls: parser::Declarations) -> Result<Self, Vec<LoweringError>> {
+        let mut errors = Vec::new();
+        let mut ordinary_names = HashSet::new();
+
+        for struct_decl in &decls.structs {
+            for field in &struct_decl.fields {
+                validate_object_type(
+                    &field.field_type,
+                    &format!("field `{}`", field.name),
+                    &mut errors,
+                );
+                validate_type(&field.field_type, &mut errors);
+            }
+        }
+
+        for function in &decls.functions {
+            validate_unique_ordinary_name(&mut ordinary_names, &function.name, &mut errors);
+            if let Some(attrs) = &function.c23_attributes {
+                if attrs.export_name.is_some()
+                    && (attrs.import_module.is_some() || attrs.import_name.is_some())
+                {
+                    errors.push(LoweringError {
+                        message: format!(
+                            "function `{}` cannot be both a host import and a guest export",
+                            function.name
+                        ),
+                    });
+                }
+            }
+            validate_type(&function.return_type, &mut errors);
+            if !is_void_parameter_list(&function.parameters) {
+                for parameter in &function.parameters {
+                    validate_object_type(
+                        &parameter.param_type,
+                        &format!(
+                            "parameter `{}`",
+                            parameter.name.as_deref().unwrap_or("<anonymous>")
+                        ),
+                        &mut errors,
+                    );
+                    validate_type(&parameter.param_type, &mut errors);
+                }
+            }
+        }
+
+        for variable in &decls.variables {
+            validate_unique_ordinary_name(&mut ordinary_names, &variable.name, &mut errors);
+            validate_object_type(
+                &variable.var_type,
+                &format!("variable `{}`", variable.name),
+                &mut errors,
+            );
+            validate_type(&variable.var_type, &mut errors);
+        }
+
+        for enum_decl in &decls.enums {
+            for variant in &enum_decl.variants {
+                validate_unique_ordinary_name(&mut ordinary_names, &variant.name, &mut errors);
+                if let Some(value) = variant.value {
+                    if value < i32::MIN as i64 || value > i32::MAX as i64 {
+                        errors.push(LoweringError {
+                            message: format!(
+                                "enum value `{}` is outside the supported i32 range",
+                                variant.name
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(lower_declarations(decls))
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+fn validate_unique_ordinary_name(
+    ordinary_names: &mut HashSet<String>,
+    name: &str,
+    errors: &mut Vec<LoweringError>,
+) {
+    if !ordinary_names.insert(name.to_string()) {
+        errors.push(LoweringError {
+            message: format!(
+                "declaration `{}` conflicts with an earlier declaration",
+                name
+            ),
+        });
+    }
+}
+
+fn validate_type(type_decl: &parser::Type, errors: &mut Vec<LoweringError>) {
+    match type_decl {
+        parser::Type::Named(name) => errors.push(LoweringError {
+            message: format!("unsupported named type `{}`", name),
+        }),
+        parser::Type::Pointer(inner) | parser::Type::Array(inner, _) => {
+            validate_type(inner, errors)
+        }
+        parser::Type::Void
+        | parser::Type::Int
+        | parser::Type::UnsignedInt
+        | parser::Type::Char
+        | parser::Type::UnsignedChar
+        | parser::Type::LongLong
+        | parser::Type::UnsignedLongLong
+        | parser::Type::Struct(_)
+        | parser::Type::Enum(_) => {}
+    }
+}
+
+fn validate_object_type(type_decl: &parser::Type, subject: &str, errors: &mut Vec<LoweringError>) {
+    if matches!(type_decl, parser::Type::Void) {
+        errors.push(LoweringError {
+            message: format!("{} cannot have type void", subject),
+        });
+    }
+}
+
+fn is_void_parameter_list(parameters: &[parser::Parameter]) -> bool {
+    matches!(
+        parameters,
+        [parser::Parameter {
+            name: None,
+            param_type: parser::Type::Void,
+        }]
+    )
 }
 
 /// Struct declaration
@@ -154,135 +295,121 @@ pub enum Type {
     Pointer(Box<Type>),
     /// Array of another type: `type[size]`
     Array(Box<Type>, usize),
-    /// Named type (typedef or other identifier)
-    Named(String),
 }
 
-// Conversion from parser types to generator types
-
-impl From<parser::Declarations> for Declarations {
-    fn from(decls: parser::Declarations) -> Self {
-        Declarations {
-            structs: decls.structs.into_iter().map(Into::into).collect(),
-            functions: decls.functions.into_iter().map(Into::into).collect(),
-            variables: decls.variables.into_iter().map(Into::into).collect(),
-            enums: decls.enums.into_iter().map(Into::into).collect(),
-            directives: decls.directives.into_iter().map(Into::into).collect(),
-        }
+fn lower_declarations(decls: parser::Declarations) -> Declarations {
+    Declarations {
+        structs: decls.structs.into_iter().map(lower_struct).collect(),
+        functions: decls.functions.into_iter().map(lower_function).collect(),
+        variables: decls.variables.into_iter().map(lower_variable).collect(),
+        enums: decls.enums.into_iter().map(lower_enum).collect(),
+        directives: decls.directives.into_iter().map(lower_directive).collect(),
     }
 }
 
-impl From<parser::StructDecl> for Struct {
-    fn from(struct_decl: parser::StructDecl) -> Self {
-        Struct {
-            name: struct_decl.name,
-            fields: struct_decl.fields.into_iter().map(Into::into).collect(),
-            comment: struct_decl.comment,
-        }
+fn lower_struct(struct_decl: parser::StructDecl) -> Struct {
+    Struct {
+        name: struct_decl.name,
+        fields: struct_decl.fields.into_iter().map(lower_field).collect(),
+        comment: struct_decl.comment,
     }
 }
 
-impl From<parser::FunctionDecl> for Function {
-    fn from(func: parser::FunctionDecl) -> Self {
-        let c23 = func.c23_attributes.unwrap_or_default();
-        let linkage = if let Some(export_name) = c23.export_name {
-            Linkage::GuestExport { name: export_name }
+fn lower_function(func: parser::FunctionDecl) -> Function {
+    let c23 = func.c23_attributes.unwrap_or_default();
+    let linkage = if let Some(export_name) = c23.export_name {
+        Linkage::GuestExport { name: export_name }
+    } else {
+        Linkage::HostImport {
+            module: c23.import_module.unwrap_or_else(|| "env".to_string()),
+            name: c23.import_name.unwrap_or_else(|| func.name.clone()),
+        }
+    };
+    Function {
+        name: func.name,
+        return_type: lower_type(func.return_type),
+        parameters: if is_void_parameter_list(&func.parameters) {
+            Vec::new()
         } else {
-            Linkage::HostImport {
-                module: c23.import_module.unwrap_or_else(|| "env".to_string()),
-                name: c23.import_name.unwrap_or_else(|| func.name.clone()),
-            }
-        };
-        Function {
-            name: func.name,
-            return_type: func.return_type.into(),
-            parameters: func.parameters.into_iter().map(Into::into).collect(),
-            comment: func.comment,
-            linkage,
-            deprecated: c23.deprecated,
-            nodiscard: c23.nodiscard,
-            maybe_unused: c23.maybe_unused,
-            noreturn: c23.noreturn,
-        }
+            func.parameters.into_iter().map(lower_parameter).collect()
+        },
+        comment: func.comment,
+        linkage,
+        deprecated: c23.deprecated,
+        nodiscard: c23.nodiscard,
+        maybe_unused: c23.maybe_unused,
+        noreturn: c23.noreturn,
     }
 }
 
-impl From<parser::VariableDecl> for Variable {
-    fn from(var: parser::VariableDecl) -> Self {
-        Variable {
-            name: var.name,
-            var_type: var.var_type.into(),
-            comment: var.comment,
-        }
+fn lower_variable(var: parser::VariableDecl) -> Variable {
+    Variable {
+        name: var.name,
+        var_type: lower_type(var.var_type),
+        comment: var.comment,
     }
 }
 
-impl From<parser::EnumDecl> for Enum {
-    fn from(enum_decl: parser::EnumDecl) -> Self {
-        Enum {
-            name: enum_decl.name,
-            variants: enum_decl.variants.into_iter().map(Into::into).collect(),
-            comment: enum_decl.comment,
-        }
+fn lower_enum(enum_decl: parser::EnumDecl) -> Enum {
+    Enum {
+        name: enum_decl.name,
+        variants: enum_decl
+            .variants
+            .into_iter()
+            .map(lower_enum_variant)
+            .collect(),
+        comment: enum_decl.comment,
     }
 }
 
-impl From<parser::EnumVariant> for EnumVariant {
-    fn from(variant: parser::EnumVariant) -> Self {
-        EnumVariant {
-            name: variant.name,
-            value: variant.value,
-            comment: variant.comment,
-        }
+fn lower_enum_variant(variant: parser::EnumVariant) -> EnumVariant {
+    EnumVariant {
+        name: variant.name,
+        value: variant.value,
+        comment: variant.comment,
     }
 }
 
-impl From<parser::Directive> for Directive {
-    fn from(directive: parser::Directive) -> Self {
-        match directive {
-            parser::Directive::Pragma(p) => Directive::Pragma(p),
-            parser::Directive::StaticAssert { expr, message } => {
-                Directive::StaticAssert { expr, message }
-            }
-            parser::Directive::Define { name, value } => Directive::Define { name, value },
+fn lower_directive(directive: parser::Directive) -> Directive {
+    match directive {
+        parser::Directive::Pragma(p) => Directive::Pragma(p),
+        parser::Directive::StaticAssert { expr, message } => {
+            Directive::StaticAssert { expr, message }
         }
+        parser::Directive::Define { name, value } => Directive::Define { name, value },
     }
 }
 
-impl From<parser::Field> for Field {
-    fn from(field: parser::Field) -> Self {
-        Field {
-            name: field.name,
-            field_type: field.field_type.into(),
-            comment: field.comment,
-        }
+fn lower_field(field: parser::Field) -> Field {
+    Field {
+        name: field.name,
+        field_type: lower_type(field.field_type),
+        comment: field.comment,
     }
 }
 
-impl From<parser::Parameter> for Parameter {
-    fn from(param: parser::Parameter) -> Self {
-        Parameter {
-            name: param.name,
-            param_type: param.param_type.into(),
-        }
+fn lower_parameter(param: parser::Parameter) -> Parameter {
+    Parameter {
+        name: param.name,
+        param_type: lower_type(param.param_type),
     }
 }
 
-impl From<parser::Type> for Type {
-    fn from(parser_type: parser::Type) -> Self {
-        match parser_type {
-            parser::Type::Void => Type::Void,
-            parser::Type::Int => Type::Int,
-            parser::Type::UnsignedInt => Type::UnsignedInt,
-            parser::Type::Char => Type::Char,
-            parser::Type::UnsignedChar => Type::UnsignedChar,
-            parser::Type::LongLong => Type::LongLong,
-            parser::Type::UnsignedLongLong => Type::UnsignedLongLong,
-            parser::Type::Struct(name) => Type::Struct(name),
-            parser::Type::Enum(name) => Type::Enum(name),
-            parser::Type::Pointer(inner) => Type::Pointer(Box::new((*inner).into())),
-            parser::Type::Array(inner, size) => Type::Array(Box::new((*inner).into()), size),
-            parser::Type::Named(name) => Type::Named(name),
+fn lower_type(parser_type: parser::Type) -> Type {
+    match parser_type {
+        parser::Type::Void => Type::Void,
+        parser::Type::Int => Type::Int,
+        parser::Type::UnsignedInt => Type::UnsignedInt,
+        parser::Type::Char => Type::Char,
+        parser::Type::UnsignedChar => Type::UnsignedChar,
+        parser::Type::LongLong => Type::LongLong,
+        parser::Type::UnsignedLongLong => Type::UnsignedLongLong,
+        parser::Type::Struct(name) => Type::Struct(name),
+        parser::Type::Enum(name) => Type::Enum(name),
+        parser::Type::Pointer(inner) => Type::Pointer(Box::new(lower_type(*inner))),
+        parser::Type::Array(inner, size) => Type::Array(Box::new(lower_type(*inner)), size),
+        parser::Type::Named(_) => {
+            unreachable!("named types are rejected during lowering validation")
         }
     }
 }

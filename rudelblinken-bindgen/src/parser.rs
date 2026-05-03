@@ -463,13 +463,15 @@ fn function_decl<'src>() -> impl Parser<'src, &'src str, FunctionDecl, extra::Er
         )
         .then_ignore(just(')').padded())
         .then_ignore(just(';').padded())
-        .map(|((((comment, c23_attributes), return_type), name), parameters)| FunctionDecl {
-            name,
-            return_type,
-            parameters,
-            comment,
-            c23_attributes,
-        })
+        .map(
+            |((((comment, c23_attributes), return_type), name), parameters)| FunctionDecl {
+                name,
+                return_type,
+                parameters,
+                comment,
+                c23_attributes,
+            },
+        )
 }
 
 // Parser for variable declarations

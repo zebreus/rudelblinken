@@ -62,7 +62,7 @@ fn parse_type(type_decl: &Type) -> syn::Type {
         Type::UnsignedChar => parse_quote! { u8 },
         Type::LongLong => parse_quote! { i64 },
         Type::UnsignedLongLong => parse_quote! { u64 },
-        Type::Struct(name) | Type::Enum(name) | Type::Named(name) => {
+        Type::Struct(name) | Type::Enum(name) => {
             let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
             parse_quote! { #ident }
         }
@@ -154,7 +154,10 @@ fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
     }
 
     // Add link_name attribute when the WASM import name differs from the C name
-    if let Linkage::HostImport { name: import_name, .. } = &func.linkage {
+    if let Linkage::HostImport {
+        name: import_name, ..
+    } = &func.linkage
+    {
         if import_name != &func.name {
             attrs.push(parse_quote! { #[link_name = #import_name] });
         }
@@ -363,9 +366,15 @@ mod tests {
 
         let result = generate(&decls);
         assert!(result.contains("extern \"C\""), "output:\n{result}");
-        assert!(result.contains(r#"wasm_import_module = "math""#), "output:\n{result}");
+        assert!(
+            result.contains(r#"wasm_import_module = "math""#),
+            "output:\n{result}"
+        );
         assert!(result.contains(r#"link_name = "add""#), "output:\n{result}");
-        assert!(result.contains("pub fn imported() -> i32;"), "output:\n{result}");
+        assert!(
+            result.contains("pub fn imported() -> i32;"),
+            "output:\n{result}"
+        );
     }
 
     #[test]
@@ -394,7 +403,10 @@ mod tests {
 
         let result = generate(&decls);
         assert!(result.contains("extern \"C\""), "output:\n{result}");
-        assert!(result.contains(r#"wasm_import_module = "env""#), "output:\n{result}");
+        assert!(
+            result.contains(r#"wasm_import_module = "env""#),
+            "output:\n{result}"
+        );
         // import name equals C name — no link_name needed
         assert!(!result.contains("link_name"), "output:\n{result}");
     }
@@ -422,7 +434,10 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert!(result.contains(r#"#[export_name = "run"]"#), "output:\n{result}");
+        assert!(
+            result.contains(r#"#[export_name = "run"]"#),
+            "output:\n{result}"
+        );
         assert!(result.contains("pub fn run()"), "output:\n{result}");
     }
 

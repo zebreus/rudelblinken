@@ -25,7 +25,11 @@ fn compile_fixture_cases() {
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/compile_cases");
     let cases = collect_compile_cases(&root);
-    assert!(!cases.is_empty(), "no compile fixture cases found in {:?}", root);
+    assert!(
+        !cases.is_empty(),
+        "no compile fixture cases found in {:?}",
+        root
+    );
 
     for case in cases {
         run_compile_case(&case);
@@ -90,11 +94,7 @@ fn run_compile_case(case: &CompileCase) {
 
     let clang_output = Command::new("clang")
         .env("NIX_HARDENING_ENABLE", "")
-        .args([
-            "--target=wasm32-unknown-unknown",
-            "-c",
-            "-o",
-        ])
+        .args(["--target=wasm32-unknown-unknown", "-c", "-o"])
         .arg(&case.object_output)
         .arg(&case.guest_impl)
         .output()

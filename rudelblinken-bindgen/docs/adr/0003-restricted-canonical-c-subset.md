@@ -1,12 +1,14 @@
 # Input headers use a restricted, canonical subset of C
 
-`rudelblinken-bindgen` accepts only a strict subset of C declarations and rejects everything else at parse time. Within that subset, each construct maps to exactly one semantic meaning in the generator IR.
+`rudelblinken-bindgen` accepts only a strict subset of C declarations and rejects everything else before code generation. Pure syntax errors are rejected by the parser; parse-valid declarations whose meaning is unsupported or contradictory are rejected by semantic lowering. Within the accepted subset, each construct maps to exactly one semantic meaning in the generator IR.
 
 ## Why restrict
 
 C provides multiple syntactically valid ways to express semantically similar things. If all of them were accepted and mapped to the same IR node, the input format would become unconstrained and tooling (linters, formatters, future backends) would need to defend against many equivalent representations. By accepting only one canonical form per concept, the input stays predictable and the generator stays simple.
 
 Example: named structs (`struct Name { ... };`) are supported; `typedef`-anonymous structs (`typedef struct { ... } Name;`) are not. Both produce a named struct type in C, but they are kept syntactically distinct because they *might* carry different semantics for future target languages (e.g. one becomes a value type, the other a reference type). Accepting only one form now reserves the distinction for later rather than conflating them.
+
+The parser and lowerer intentionally split the work: the parser recognises a small C-shaped grammar, while lowering decides whether that syntax has supported rudelblinken-bindgen semantics. For example, a bare identifier used as a type is syntactically recognisable as a named C type, but until typedef semantics are defined it is rejected during lowering rather than being passed to backends as ambiguous generator IR. This keeps canonicality a property of the full parse-and-lower pipeline, not only of the parser grammar.
 
 ## C23 preferred over legacy conventions
 

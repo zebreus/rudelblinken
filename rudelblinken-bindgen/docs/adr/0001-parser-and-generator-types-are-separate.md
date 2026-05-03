@@ -4,9 +4,11 @@ The `parser` module and `generator` module each define their own type hierarchie
 
 ## What each IR is for
 
-**Parser IR** (`parser` module): models *C syntax* faithfully. Its job is to represent what was written in the input header — including raw attributes (`__attribute__((...))`, `[[...]]`), legacy forms, and anything else the parser accepts. It is a structural reflection of the source text.
+**Parser IR** (`parser` module): models _C syntax_ faithfully. Its job is to represent what was written in the input header — including raw attributes (`__attribute__((...))`, `[[...]]`), legacy forms, and anything else the parser accepts. It is a structural reflection of the source text.
 
-**Generator IR** (`generator` module): models *semantics* for code generation. Its job is to represent what each declaration *means* — stripped of syntactic noise and attribute syntax. Concrete example: where the parser IR has C23 attribute data, the generator IR has a `Linkage` enum — `HostImport { module, name }` or `GuestExport { name }` — with all defaults already resolved. A backend never inspects raw attribute syntax; it reads resolved semantic fields.
+**Generator IR** (`generator` module): models _semantics_ for code generation. Its job is to represent what each declaration _means_ — stripped of syntactic noise and attribute syntax. Concrete example: where the parser IR has C23 attribute data, the generator IR has a `Linkage` enum — `HostImport { module, name }` or `GuestExport { name }` — with all defaults already resolved. A backend never inspects raw attribute syntax; it reads resolved semantic fields.
+
+The transition from parser IR to generator IR is also the semantic validation boundary. The parser may accept C syntax that is structurally valid inside the restricted grammar but not meaningful for rudelblinken-bindgen yet: unsupported named types/typedef status, conflicting declarations, invalid C ABI object types, enum values outside the supported ABI range, or contradictory WASM linkage attributes. Those are lowering errors, not parser errors. Keeping them at the seam makes `generate_bindings` a useful test surface for parse-valid-but-semantically-invalid headers and prevents backends from defending against ambiguous generator IR.
 
 The generator IR also maps cleanly to the WASM C ABI that the input C header implies. Backends generate idiomatic code for their target language, but the generated code must produce the same ABI layout and import/export linkage as the original C declarations.
 
@@ -14,7 +16,7 @@ The generator IR models the full bidirectional host/guest contract — both dire
 
 ## The seam
 
-The `From<>` impls in `generator.rs` translate from parser IR to generator IR. All attribute-flattening and syntax normalisation happens here — imported in the parser, resolved at the seam, invisible to backends.
+`generator::Declarations::lower` translates from parser IR to generator IR. All semantic validation, attribute-flattening, default resolution, and syntax normalisation happens here — imported in the parser, resolved at the seam, invisible to backends.
 
 ## Why keep them separate
 
