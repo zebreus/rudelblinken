@@ -1,3 +1,3 @@
-int imported() __attribute__((import_name("host_imported")));
+[[clang::import_name("host_imported")]] int imported();
 
-int exported() __attribute__((export_name("guest_exported")));
+[[clang::export_name("guest_exported")]] int exported();

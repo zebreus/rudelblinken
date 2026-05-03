@@ -462,7 +462,7 @@ mod tests {
         assert!(result.is_ok(), "expected ok, got: {result:?}");
         assert_eq!(
             result.unwrap(),
-            "int main() __attribute__((import_name(\"main\")));\n"
+            "[[clang::import_name(\"main\")]] int main();\n"
         );
     }
 

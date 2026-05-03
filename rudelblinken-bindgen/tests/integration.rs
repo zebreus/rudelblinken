@@ -35,7 +35,7 @@ fn run_generates_from_stdin_to_stdout() {
 
     assert_eq!(
         String::from_utf8(stdout).expect("stdout should be utf-8"),
-        "int main() __attribute__((import_name(\"main\")));\n"
+        "[[clang::import_name(\"main\")]] int main();\n"
     );
 }
 
@@ -86,7 +86,7 @@ fn run_writes_to_file_without_stdout_duplication() {
     assert!(stdout.is_empty(), "file output should not duplicate stdout");
     assert_eq!(
         fs::read_to_string(&output_path).expect("read generated output"),
-        "int main() __attribute__((import_name(\"main\")));\n"
+        "[[clang::import_name(\"main\")]] int main();\n"
     );
 
     let _ = fs::remove_file(output_path);
@@ -113,7 +113,7 @@ fn run_cli_writes_to_file_without_stdout_duplication() {
     assert!(stdout.is_empty(), "file output should not duplicate stdout");
     assert_eq!(
         fs::read_to_string(&output_path).expect("read generated output"),
-        "int main() __attribute__((import_name(\"main\")));\n"
+        "[[clang::import_name(\"main\")]] int main();\n"
     );
 
     let _ = fs::remove_file(output_path);

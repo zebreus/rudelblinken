@@ -1,1 +1,1 @@
-int imported() __attribute__((import_name("host_imported")));
+[[clang::import_name("host_imported")]] int imported();

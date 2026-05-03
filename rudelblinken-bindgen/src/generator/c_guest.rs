@@ -57,13 +57,13 @@ pub fn generate(declarations: &Declarations) -> String {
 
 fn generate_directive(output: &mut String, directive: &Directive) {
     match directive {
-        Directive::Pragma(p) => {
+        Directive::Pragma(pragma) => {
             output.push_str("#pragma ");
-            output.push_str(p);
+            output.push_str(pragma);
             output.push('\n');
         }
         Directive::StaticAssert { expr, message } => {
-            output.push_str("_Static_assert(");
+            output.push_str("static_assert(");
             output.push_str(expr);
             output.push_str(", \"");
             output.push_str(message);
@@ -134,61 +134,6 @@ fn generate_decl_string(type_decl: &Type, name: &str) -> String {
     }
 }
 
-fn generate_c23_attr_block(output: &mut String, func: &Function) {
-    let mut parts: Vec<String> = Vec::new();
-
-    // Standard C23 attributes (no namespace needed)
-    if let Some(msg) = &func.deprecated {
-        if let Some(text) = msg {
-            parts.push(format!("deprecated(\"{}\")", text));
-        } else {
-            parts.push("deprecated".to_string());
-        }
-    }
-    if let Some(reason) = &func.nodiscard {
-        if let Some(text) = reason {
-            parts.push(format!("nodiscard(\"{}\")", text));
-        } else {
-            parts.push("nodiscard".to_string());
-        }
-    }
-    if func.maybe_unused.is_some() {
-        parts.push("maybe_unused".to_string());
-    }
-    if func.noreturn.is_some() {
-        parts.push("noreturn".to_string());
-    }
-
-    if !parts.is_empty() {
-        output.push_str("[[");
-        output.push_str(&parts.join(", "));
-        output.push_str("]] ");
-    }
-}
-
-fn generate_gnu_linkage_attribute(output: &mut String, func: &Function) {
-    let mut parts: Vec<String> = Vec::new();
-
-    match &func.linkage {
-        crate::generator::Linkage::HostImport { module, name } => {
-            // Omit import_module when it is the default "env" for readability
-            if module != "env" {
-                parts.push(format!("import_module(\"{}\")", module));
-            }
-            parts.push(format!("import_name(\"{}\")", name));
-        }
-        crate::generator::Linkage::GuestExport { name } => {
-            parts.push(format!("export_name(\"{}\")", name));
-        }
-    }
-
-    if !parts.is_empty() {
-        output.push_str(" __attribute__((");
-        output.push_str(&parts.join(", "));
-        output.push_str("))");
-    }
-}
-
 fn generate_struct(output: &mut String, struct_decl: &Struct) {
     generate_comments(output, &struct_decl.comment);
 
@@ -206,9 +151,64 @@ fn generate_struct(output: &mut String, struct_decl: &Struct) {
     output.push_str("};\n");
 }
 
+fn write_function_attributes(output: &mut String, function: &Function) {
+    if let Some(attributes) = render_standard_attributes(function) {
+        output.push_str(&attributes);
+        output.push(' ');
+    }
+    let linkage = render_linkage_attributes(&function.linkage);
+    output.push_str(&linkage);
+    output.push(' ');
+}
+
+fn render_standard_attributes(function: &Function) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(message) = &function.deprecated {
+        if let Some(text) = message {
+            parts.push(format!("deprecated(\"{}\")", text));
+        } else {
+            parts.push("deprecated".to_string());
+        }
+    }
+    if let Some(reason) = &function.nodiscard {
+        if let Some(text) = reason {
+            parts.push(format!("nodiscard(\"{}\")", text));
+        } else {
+            parts.push("nodiscard".to_string());
+        }
+    }
+    if function.maybe_unused.is_some() {
+        parts.push("maybe_unused".to_string());
+    }
+    if function.noreturn.is_some() {
+        parts.push("noreturn".to_string());
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("[[{}]]", parts.join(", ")))
+    }
+}
+
+fn render_linkage_attributes(linkage: &Linkage) -> String {
+    let mut parts = Vec::new();
+    match linkage {
+        Linkage::HostImport { module, name } => {
+            if module != "env" {
+                parts.push(format!("clang::import_module(\"{}\")", module));
+            }
+            parts.push(format!("clang::import_name(\"{}\")", name));
+        }
+        Linkage::GuestExport { name } => {
+            parts.push(format!("clang::export_name(\"{}\")", name));
+        }
+    }
+    format!("[[{}]]", parts.join(", "))
+}
+
 fn generate_function(output: &mut String, func_decl: &Function) {
     generate_comments(output, &func_decl.comment);
-    generate_c23_attr_block(output, func_decl);
+    write_function_attributes(output, func_decl);
     output.push_str(&generate_decl_string(
         &func_decl.return_type,
         &func_decl.name,
@@ -231,7 +231,6 @@ fn generate_function(output: &mut String, func_decl: &Function) {
     }
 
     output.push(')');
-    generate_gnu_linkage_attribute(output, func_decl);
     output.push_str(";\n");
 }
 
@@ -332,7 +331,7 @@ mod tests {
         let result = generate(&decls);
         assert_eq!(
             result,
-            "int add(int a, int b) __attribute__((import_name(\"add\")));\n"
+            "[[clang::import_name(\"add\")]] int add(int a, int b);\n"
         );
     }
 
@@ -359,7 +358,7 @@ mod tests {
         let result = generate(&decls);
         assert_eq!(
             result,
-            "// Test function\nvoid test() __attribute__((import_name(\"test\")));\n"
+            "// Test function\n[[clang::import_name(\"test\")]] void test();\n"
         );
     }
 
@@ -389,7 +388,7 @@ mod tests {
         let result = generate(&decls);
         assert_eq!(
             result,
-            "int imported() __attribute__((import_module(\"math\"), import_name(\"add\")));\n"
+            "[[clang::import_module(\"math\"), clang::import_name(\"add\")]] int imported();\n"
         );
     }
 
@@ -418,10 +417,7 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(
-            result,
-            "void log() __attribute__((import_name(\"log\")));\n"
-        );
+        assert_eq!(result, "[[clang::import_name(\"log\")]] void log();\n");
     }
 
     #[test]
@@ -447,10 +443,7 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(
-            result,
-            "void run() __attribute__((export_name(\"run\")));\n"
-        );
+        assert_eq!(result, "[[clang::export_name(\"run\")]] void run();\n");
     }
 
     #[test]
@@ -476,7 +469,27 @@ mod tests {
         let result = generate(&decls);
         assert_eq!(
             result,
-            "[[deprecated, nodiscard]] int old_func() __attribute__((import_name(\"old_func\")));\n"
+            "[[deprecated, nodiscard]] [[clang::import_name(\"old_func\")]] int old_func();\n"
+        );
+    }
+
+    #[test]
+    fn test_generate_static_assert_directive() {
+        let decls = Declarations {
+            structs: vec![],
+            functions: vec![],
+            variables: vec![],
+            enums: vec![],
+            directives: vec![Directive::StaticAssert {
+                expr: "sizeof(int) == 4".to_string(),
+                message: "int needs to be i32".to_string(),
+            }],
+        };
+
+        let result = generate(&decls);
+        assert_eq!(
+            result,
+            "static_assert(sizeof(int) == 4, \"int needs to be i32\");\n"
         );
     }
 
