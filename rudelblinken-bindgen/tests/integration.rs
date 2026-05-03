@@ -1,8 +1,10 @@
-use rudelblinken_bindgen::{Args, OutputFormat, run};
+use rudelblinken_bindgen::{Args, InputSource, OutputFormat, OutputTarget, RunError, run, run_cli};
 use std::cmp::max;
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn fixture_cases() {
@@ -16,6 +18,170 @@ fn fixture_cases() {
     for case in cases {
         run_case(&case);
     }
+}
+
+#[test]
+fn run_generates_from_stdin_to_stdout() {
+    let args = Args {
+        input: InputSource::Stdin,
+        output: OutputTarget::Stdout,
+        format: OutputFormat::CGuest,
+    };
+
+    let mut stdin = "int main(void);".as_bytes();
+    let mut stdout = Vec::new();
+
+    run(args, &mut stdin, &mut stdout).expect("run should succeed");
+
+    assert_eq!(
+        String::from_utf8(stdout).expect("stdout should be utf-8"),
+        "int main() __attribute__((import_name(\"main\")));\n"
+    );
+}
+
+#[test]
+fn run_returns_structured_generation_error_with_input_text() {
+    let args = Args {
+        input: InputSource::Stdin,
+        output: OutputTarget::Stdout,
+        format: OutputFormat::CGuest,
+    };
+
+    let input = "struct Broken { int x;";
+    let mut stdin = input.as_bytes();
+    let mut stdout = Vec::new();
+
+    let err = run(args, &mut stdin, &mut stdout).expect_err("run should fail");
+
+    match err {
+        RunError::Generate {
+            errors,
+            input: actual_input,
+        } => {
+            assert_eq!(actual_input, input);
+            assert!(!errors.is_empty(), "expected at least one bindgen error");
+            assert!(
+                errors[0].render(&actual_input).contains("Error"),
+                "rendered error should be human-readable"
+            );
+        }
+        other => panic!("expected generation error, got {other:?}"),
+    }
+}
+
+#[test]
+fn run_writes_to_file_without_stdout_duplication() {
+    let output_path = unique_temp_path("run-output", "h");
+    let args = Args {
+        input: InputSource::Stdin,
+        output: OutputTarget::Path(output_path.clone()),
+        format: OutputFormat::CGuest,
+    };
+
+    let mut stdin = "int main(void);".as_bytes();
+    let mut stdout = Vec::new();
+
+    run(args, &mut stdin, &mut stdout).expect("run should succeed");
+
+    assert!(stdout.is_empty(), "file output should not duplicate stdout");
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read generated output"),
+        "int main() __attribute__((import_name(\"main\")));\n"
+    );
+
+    let _ = fs::remove_file(output_path);
+}
+
+#[test]
+fn run_cli_writes_to_file_without_stdout_duplication() {
+    let output_path = unique_temp_path("run-cli-output", "h");
+    let argv = vec![
+        "rudelblinken-bindgen".to_string(),
+        "--input".to_string(),
+        "-".to_string(),
+        "--output".to_string(),
+        output_path.display().to_string(),
+    ];
+    let env_vars = HashMap::new();
+    let mut stdin = "int main(void);".as_bytes();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit_code = run_cli(argv, &env_vars, &mut stdin, &mut stdout, &mut stderr);
+
+    assert_eq!(exit_code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    assert!(stdout.is_empty(), "file output should not duplicate stdout");
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read generated output"),
+        "int main() __attribute__((import_name(\"main\")));\n"
+    );
+
+    let _ = fs::remove_file(output_path);
+}
+
+#[test]
+fn run_returns_structured_read_input_error() {
+    let input_path = unique_temp_path("missing-input", "h");
+    let args = Args {
+        input: InputSource::Path(input_path.clone()),
+        output: OutputTarget::Stdout,
+        format: OutputFormat::CGuest,
+    };
+    let mut stdin = io::empty();
+    let mut stdout = Vec::new();
+
+    let err = run(args, &mut stdin, &mut stdout).expect_err("run should fail");
+
+    match err {
+        RunError::ReadInput { source, error } => {
+            assert_eq!(source, InputSource::Path(input_path));
+            assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        }
+        other => panic!("expected read input error, got {other:?}"),
+    }
+}
+
+#[test]
+fn run_returns_structured_write_output_error() {
+    let output_dir = unique_temp_path("output-dir", "dir");
+    fs::create_dir(&output_dir).expect("create output directory");
+    let args = Args {
+        input: InputSource::Stdin,
+        output: OutputTarget::Path(output_dir.clone()),
+        format: OutputFormat::CGuest,
+    };
+    let mut stdin = "int main(void);".as_bytes();
+    let mut stdout = Vec::new();
+
+    let err = run(args, &mut stdin, &mut stdout).expect_err("run should fail");
+
+    match err {
+        RunError::WriteOutput { target, error } => {
+            assert_eq!(target, OutputTarget::Path(output_dir.clone()));
+            assert!(
+                matches!(
+                    error.kind(),
+                    io::ErrorKind::IsADirectory | io::ErrorKind::PermissionDenied
+                ),
+                "unexpected error kind: {:?}",
+                error.kind()
+            );
+        }
+        other => panic!("expected write output error, got {other:?}"),
+    }
+
+    let _ = fs::remove_dir(output_dir);
+}
+
+fn unique_temp_path(prefix: &str, extension: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be after unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "rudelblinken-bindgen-{prefix}-{}-{nanos}.{extension}",
+        std::process::id()
+    ))
 }
 
 #[derive(Debug)]
@@ -34,20 +200,25 @@ enum Expected {
 
 fn run_case(case: &Case) {
     let args = Args {
-        input: case.input.clone(),
-        output: None,
+        input: InputSource::Path(case.input.clone()),
+        output: OutputTarget::Stdout,
         format: OutputFormat::CGuest,
     };
 
     let mut stdin = io::empty();
-    let result = run(args, &mut stdin);
+    let mut stdout = Vec::new();
+    let result = run(args, &mut stdin, &mut stdout);
 
     match (&case.expected, result) {
-        (Expected::Success, Ok(_actual)) => {}
+        (Expected::Success, Ok(())) => {}
         (Expected::Success, Err(err)) => {
-            panic!("expected success for {} but got error\n{}", case.name, err);
+            panic!(
+                "expected success for {} but got error\n{:?}",
+                case.name, err
+            );
         }
-        (Expected::Output(expected), Ok(actual)) => {
+        (Expected::Output(expected), Ok(())) => {
+            let actual = String::from_utf8(stdout).expect("stdout should be utf-8");
             if actual != *expected {
                 panic!(
                     "output mismatch for {}\n{}",
@@ -59,24 +230,39 @@ fn run_case(case: &Case) {
         (Expected::Output(expected), Err(err)) => {
             panic!(
                 "unexpected error for {}:\nexpected output:\n{}\nactual error:\n{}",
-                case.name, expected, err
+                case.name,
+                expected,
+                format_run_error(&err)
             );
         }
         (Expected::ErrorSubstring(expected), Err(err)) => {
+            let actual = format_run_error(&err);
             assert!(
-                err.contains(expected),
+                actual.contains(expected),
                 "error mismatch for {}\nexpected substring: {:?}\nactual error: {:?}",
                 case.name,
                 expected,
-                err
+                actual
             );
         }
-        (Expected::ErrorSubstring(expected), Ok(actual)) => {
+        (Expected::ErrorSubstring(expected), Ok(())) => {
             panic!(
                 "expected error for {} but got output\nexpected substring: {:?}\nactual output:\n{}",
-                case.name, expected, actual
+                case.name,
+                expected,
+                String::from_utf8_lossy(&stdout)
             );
         }
+    }
+}
+
+fn format_run_error(err: &rudelblinken_bindgen::RunError) -> String {
+    match err {
+        rudelblinken_bindgen::RunError::Generate { errors, input } => errors
+            .iter()
+            .map(|err| err.render(input))
+            .collect::<String>(),
+        other => format!("{other:?}"),
     }
 }
 

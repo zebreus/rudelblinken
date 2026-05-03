@@ -1,29 +1,5 @@
+use crate::Span;
 use chumsky::{prelude::*, text};
-
-/// A byte-offset span within a named source file.
-///
-/// Implements [`ariadne::Span`] so it can be passed directly to ariadne
-/// for diagnostic rendering.
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct Span {
-    pub source: String,
-    pub start: usize,
-    pub end: usize,
-}
-
-impl ariadne::Span for Span {
-    type SourceId = String;
-    fn source(&self) -> &String {
-        &self.source
-    }
-    fn start(&self) -> usize {
-        self.start
-    }
-    fn end(&self) -> usize {
-        // ariadne requires end >= start; guard against a zero-length sentinel
-        self.end.max(self.start)
-    }
-}
 
 // Container for all parsed declarations
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -701,8 +677,9 @@ fn directive_decl<'src>() -> impl Parser<'src, &'src str, Directive, extra::Err<
 
 /// Parse C declarations from a string, returning errors as owned `(Span, message)` pairs.
 ///
-/// This is the primary entry point for external callers. It wraps [`parse_declarations`]
-/// and converts chumsky's internal error type so callers never need to import chumsky.
+/// This is the parser-facing owned-error wrapper around [`parse_declarations`].
+/// It converts chumsky's internal error type into owned data used by the
+/// higher-level bindgen pipeline.
 pub fn parse_declarations_checked(
     input: &str,
     source: &str,

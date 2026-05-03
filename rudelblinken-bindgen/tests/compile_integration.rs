@@ -81,7 +81,7 @@ fn run_compile_case(case: &CompileCase) {
         .unwrap_or_else(|err| panic!("{}: failed reading bindgen_input.c: {}", case.name, err));
 
     let generated =
-        generate_bindings(&input, &case.name, &OutputFormat::CGuest).unwrap_or_else(|errors| {
+        generate_bindings(&input, &case.name, OutputFormat::CGuest).unwrap_or_else(|errors| {
             panic!(
                 "{}: bindgen generation failed with {} parse errors: {:?}",
                 case.name,

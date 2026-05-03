@@ -1,3 +1,4 @@
+use crate::Span;
 /// Language-neutral data model for code generation.
 ///
 /// This module's types are intentionally separate from the parser types, even
@@ -18,11 +19,11 @@ use std::collections::HashSet;
 pub struct LoweringError {
     pub message: String,
     /// Source span of the offending declaration, if available.
-    pub span: Option<parser::Span>,
+    pub span: Option<Span>,
 }
 
 impl LoweringError {
-    fn at(message: String, span: parser::Span) -> Self {
+    fn at(message: String, span: Span) -> Self {
         LoweringError {
             message,
             span: Some(span),
@@ -188,7 +189,7 @@ fn validate_duplicate_attributes(
     kind: &str,
     name: &str,
     attrs: &parser::C23Attributes,
-    span: &parser::Span,
+    span: &Span,
     errors: &mut Vec<LoweringError>,
 ) {
     for attr in &attrs.duplicate_attributes {
@@ -206,7 +207,7 @@ fn has_linkage_attributes(attrs: &parser::C23Attributes) -> bool {
 fn validate_unique_ordinary_name(
     ordinary_names: &mut HashSet<String>,
     name: &str,
-    span: &parser::Span,
+    span: &Span,
     errors: &mut Vec<LoweringError>,
 ) {
     if !ordinary_names.insert(name.to_string()) {
@@ -220,7 +221,7 @@ fn validate_unique_ordinary_name(
     }
 }
 
-fn validate_type(type_decl: &parser::Type, span: &parser::Span, errors: &mut Vec<LoweringError>) {
+fn validate_type(type_decl: &parser::Type, span: &Span, errors: &mut Vec<LoweringError>) {
     match type_decl {
         parser::Type::Named(name) => errors.push(LoweringError::at(
             format!("unsupported named type `{}`", name),
@@ -244,7 +245,7 @@ fn validate_type(type_decl: &parser::Type, span: &parser::Span, errors: &mut Vec
 fn validate_object_type(
     type_decl: &parser::Type,
     subject: &str,
-    span: &parser::Span,
+    span: &Span,
     errors: &mut Vec<LoweringError>,
 ) {
     if matches!(type_decl, parser::Type::Void) {
