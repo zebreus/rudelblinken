@@ -10,7 +10,7 @@ It parses a limited subset of C headers (like `rudel.h`), primarily aiming to lo
 
 - **Pure Rust Parser**: Built using `chumsky` combinators – eliminating heavy C-compiler toolchain dependencies (e.g. `libclang`).
 - **Targeted Subset**: Supports simple constants `#define`, C23 `static_assert`, `struct`, `enum`, primitive types, pointers, arrays, and standard functions.
-- **Attributes Support**: Parses both GNU `__attribute__((...))` bindings (useful for `import_module` and `import_name`) and C23 attribute specifier strings (`[[...]]`).
+- **Attributes Support**: Parses C23 prefix `[[clang::...]]` linkage attributes plus standard C23 attributes such as `[[deprecated]]`, `[[nodiscard]]`, `[[maybe_unused]]`, and `[[noreturn]]`.
 
 ## Missing Features / Unimplemented
 
@@ -68,16 +68,16 @@ int x();
 
 only a limited set of function attributes are supported. These are:
 
-- `__attribute__((import_module("module_name")))` or `[[import_module("module_name")]]`: Specifies the WebAssembly module from which the function should be imported.
-- `__attribute__((import_name("field_name")))` or `[[import_name("field_name")]]`: Overrides the imported symbol name (the default is the C function identifier).
-- `__attribute__((export_name("field_name")))` or `[[export_name("field_name")]]`: Marks the function as a guest export and sets the exported symbol name.
-- `__attribute__((import_module("module_name")))` or `[[import_module("module_name")]]`: Specifies the WebAssembly module for imports.
+- `[[clang::import_module("module_name")]]`: Specifies the WebAssembly module from which the function should be imported. If `import_name` is omitted, the C function identifier is used.
+- `[[clang::import_name("field_name")]]`: Overrides the imported symbol name. If `import_module` is omitted, the module defaults to `"env"`.
+- `[[clang::export_name("field_name")]]`: Marks the function as a guest export and sets the exported symbol name.
 <!-- TODO: noreturn and friends -->
 
 Notes:
 
 - Attributes are only supported on function declarations.
-- GNU-style (`__attribute__((...))`) and C23-style (`[[...]]`) forms are equivalent.
+- Only prefix-position `[[clang::...]]` linkage attributes are supported.
+- GNU-style `__attribute__((...))`, suffix-position attributes, and bare un-namespaced forms such as `[[import_name("foo")]]` are not supported.
 - Any attribute outside the list above is currently unsupported.
 - If no import/export attribute is present, the function is treated as an import by default.
 

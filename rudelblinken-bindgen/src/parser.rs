@@ -480,6 +480,29 @@ mod tests {
     }
 
     #[test]
+    fn test_reject_gnu_style_linkage_attributes() {
+        let input = r#"
+            __attribute__((import_name("print_fn"))) void print();
+        "#;
+
+        let result = parse_declarations(input, "");
+        assert!(result.is_err(), "GNU-style attributes should be rejected");
+    }
+
+    #[test]
+    fn test_reject_bare_un_namespaced_linkage_attributes() {
+        let input = r#"
+            [[import_name("print_fn")]] void print();
+        "#;
+
+        let result = parse_declarations(input, "");
+        assert!(
+            result.is_err(),
+            "bare un-namespaced linkage attributes should be rejected"
+        );
+    }
+
+    #[test]
     fn test_parse_function_without_attribute() {
         let input = "int add(int a, int b);";
 

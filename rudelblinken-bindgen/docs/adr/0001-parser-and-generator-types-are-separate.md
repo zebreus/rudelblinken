@@ -4,7 +4,7 @@ The `parser` module and `generator` module each define their own type hierarchie
 
 ## What each IR is for
 
-**Parser IR** (`parser` module): models _C syntax_ faithfully. Its job is to represent what was written in the input header — including raw attributes (`__attribute__((...))`, `[[...]]`), legacy forms, and anything else the parser accepts. It is a structural reflection of the source text. The parsing step produces parser IR from source text.
+**Parser IR** (`parser` module): models the accepted C syntax faithfully. Its job is to represent what was written in the input header within the restricted canonical C subset, including C23 attribute data. It is a structural reflection of the source text that the parser accepts. The parsing step produces parser IR from source text.
 
 **Generator IR** (`generator` module): models _semantics_ for code generation. Its job is to represent what each declaration _means_ — stripped of syntactic noise and attribute syntax. Concrete example: where the parser IR has C23 attribute data, the generator IR has a `Linkage` enum — `HostImport { module, name }` or `GuestExport { name }` — with all defaults already resolved. A backend never inspects raw attribute syntax; it reads resolved semantic fields.
 
