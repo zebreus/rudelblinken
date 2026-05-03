@@ -159,24 +159,33 @@ fn generate_c23_attr_block(output: &mut String, func: &Function) {
         parts.push("noreturn".to_string());
     }
 
-    // clang-namespaced WASM linkage attributes
-    match &func.linkage {
-        crate::generator::Linkage::HostImport { module, name } => {
-            // Omit import_module when it is the default "env" for readability
-            if module != "env" {
-                parts.push(format!("clang::import_module(\"{}\")", module));
-            }
-            parts.push(format!("clang::import_name(\"{}\")", name));
-        }
-        crate::generator::Linkage::GuestExport { name } => {
-            parts.push(format!("clang::export_name(\"{}\")", name));
-        }
-    }
-
     if !parts.is_empty() {
         output.push_str("[[");
         output.push_str(&parts.join(", "));
         output.push_str("]] ");
+    }
+}
+
+fn generate_gnu_linkage_attribute(output: &mut String, func: &Function) {
+    let mut parts: Vec<String> = Vec::new();
+
+    match &func.linkage {
+        crate::generator::Linkage::HostImport { module, name } => {
+            // Omit import_module when it is the default "env" for readability
+            if module != "env" {
+                parts.push(format!("import_module(\"{}\")", module));
+            }
+            parts.push(format!("import_name(\"{}\")", name));
+        }
+        crate::generator::Linkage::GuestExport { name } => {
+            parts.push(format!("export_name(\"{}\")", name));
+        }
+    }
+
+    if !parts.is_empty() {
+        output.push_str(" __attribute__((");
+        output.push_str(&parts.join(", "));
+        output.push_str("))");
     }
 }
 
@@ -222,6 +231,7 @@ fn generate_function(output: &mut String, func_decl: &Function) {
     }
 
     output.push(')');
+    generate_gnu_linkage_attribute(output, func_decl);
     output.push_str(";\n");
 }
 
@@ -322,7 +332,7 @@ mod tests {
         let result = generate(&decls);
         assert_eq!(
             result,
-            "[[clang::import_name(\"add\")]] int add(int a, int b);\n"
+            "int add(int a, int b) __attribute__((import_name(\"add\")));\n"
         );
     }
 
@@ -349,7 +359,7 @@ mod tests {
         let result = generate(&decls);
         assert_eq!(
             result,
-            "// Test function\n[[clang::import_name(\"test\")]] void test();\n"
+            "// Test function\nvoid test() __attribute__((import_name(\"test\")));\n"
         );
     }
 
@@ -379,7 +389,7 @@ mod tests {
         let result = generate(&decls);
         assert_eq!(
             result,
-            "[[clang::import_module(\"math\"), clang::import_name(\"add\")]] int imported();\n"
+            "int imported() __attribute__((import_module(\"math\"), import_name(\"add\")));\n"
         );
     }
 
@@ -408,7 +418,10 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(result, "[[clang::import_name(\"log\")]] void log();\n");
+        assert_eq!(
+            result,
+            "void log() __attribute__((import_name(\"log\")));\n"
+        );
     }
 
     #[test]
@@ -434,7 +447,10 @@ mod tests {
         };
 
         let result = generate(&decls);
-        assert_eq!(result, "[[clang::export_name(\"run\")]] void run();\n");
+        assert_eq!(
+            result,
+            "void run() __attribute__((export_name(\"run\")));\n"
+        );
     }
 
     #[test]
@@ -460,7 +476,7 @@ mod tests {
         let result = generate(&decls);
         assert_eq!(
             result,
-            "[[deprecated, nodiscard, clang::import_name(\"old_func\")]] int old_func();\n"
+            "[[deprecated, nodiscard]] int old_func() __attribute__((import_name(\"old_func\")));\n"
         );
     }
 

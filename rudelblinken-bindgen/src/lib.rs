@@ -42,14 +42,17 @@ pub enum OutputFormat {
 /// An error returned by [`generate_bindings`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct BindgenError {
-    pub line: usize,
-    pub column: usize,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
     pub message: String,
 }
 
 impl std::fmt::Display for BindgenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}: {}", self.line, self.column, self.message)
+        match (self.line, self.column) {
+            (Some(line), Some(column)) => write!(f, "{}:{}: {}", line, column, self.message),
+            _ => write!(f, "{}", self.message),
+        }
     }
 }
 
@@ -73,8 +76,8 @@ pub fn generate_bindings(input: &str, format: &OutputFormat) -> Result<String, V
                 let offset = e.span().start;
                 let (line, col) = offset_to_line_col(input, offset);
                 BindgenError {
-                    line,
-                    column: col,
+                    line: Some(line),
+                    column: Some(col),
                     message: format!("{}", e.reason()),
                 }
             })
@@ -83,8 +86,8 @@ pub fn generate_bindings(input: &str, format: &OutputFormat) -> Result<String, V
     let gen_declarations = generator::Declarations::lower(parsed).map_err(|errs| {
         errs.into_iter()
             .map(|e| BindgenError {
-                line: 1,
-                column: 1,
+                line: None,
+                column: None,
                 message: e.message,
             })
             .collect::<Vec<_>>()
@@ -151,11 +154,16 @@ pub fn run(args: Args, stdin: &mut dyn Read) -> Result<String, String> {
 
     debug!("Generating output in {:?} format", args.format);
     let output_content = generate_bindings(&input, &args.format).map_err(|errs| {
-        error!("Parse errors in {:?}:", args.input);
+        error!("Errors in {:?}:", args.input);
         for e in &errs {
             error!("  {}", e);
         }
-        format!("Parse errors in {:?}", args.input)
+        let mut message = format!("Errors in {:?}:", args.input);
+        for err in errs {
+            message.push_str("\n  ");
+            message.push_str(&err.to_string());
+        }
+        message
     })?;
 
     if let Some(output_path) = &args.output {
@@ -186,8 +194,16 @@ mod tests {
         let errors = result.unwrap_err();
         assert!(!errors.is_empty());
         let err = &errors[0];
-        assert!(err.line >= 1, "line should be >= 1, got {}", err.line);
-        assert!(err.column >= 1, "column should be >= 1, got {}", err.column);
+        assert!(
+            err.line.unwrap() >= 1,
+            "line should be >= 1, got {:?}",
+            err.line
+        );
+        assert!(
+            err.column.unwrap() >= 1,
+            "column should be >= 1, got {:?}",
+            err.column
+        );
         assert!(!err.message.is_empty(), "message should not be empty");
     }
 
@@ -305,7 +321,44 @@ mod tests {
         assert!(result.is_ok(), "expected ok, got: {result:?}");
         assert_eq!(
             result.unwrap(),
-            "[[clang::import_name(\"main\")]] int main();\n"
+            "int main() __attribute__((import_name(\"main\")));\n"
         );
+    }
+
+    #[test]
+    fn rejects_duplicate_linkage_attributes() {
+        let input = r#"[[clang::import_name("one"), clang::import_name("two")]] int run();"#;
+        let result = generate_bindings(input, &OutputFormat::CGuest);
+        assert!(result.is_err(), "expected semantic error, got: {result:?}");
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|err| err
+                .message
+                .contains("function `run` repeats attribute `clang::import_name`")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_variable_linkage_attributes() {
+        let input = r#"[[clang::import_name("counter")]] int counter;"#;
+        let result = generate_bindings(input, &OutputFormat::CGuest);
+        assert!(result.is_err(), "expected semantic error, got: {result:?}");
+        let errors = result.unwrap_err();
+        assert!(
+            errors.iter().any(|err| err
+                .message
+                .contains("variable `counter` cannot use Host/Guest Linkage attributes")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn semantic_errors_do_not_fake_source_locations() {
+        let result = generate_bindings("void bad;", &OutputFormat::CGuest);
+        assert!(result.is_err(), "expected semantic error, got: {result:?}");
+        let errors = result.unwrap_err();
+        assert_eq!(errors[0].line, None);
+        assert_eq!(errors[0].column, None);
     }
 }

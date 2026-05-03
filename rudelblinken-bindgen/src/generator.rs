@@ -19,7 +19,7 @@ pub struct LoweringError {
     pub message: String,
 }
 
-/// WASM linkage direction for a function declaration.
+/// WASM Host/Guest Linkage direction for a function declaration.
 ///
 /// Every function is definitively one of these two at lowering time.
 #[derive(Clone, Debug, PartialEq)]
@@ -67,6 +67,7 @@ impl Declarations {
         for function in &decls.functions {
             validate_unique_ordinary_name(&mut ordinary_names, &function.name, &mut errors);
             if let Some(attrs) = &function.c23_attributes {
+                validate_duplicate_attributes("function", &function.name, attrs, &mut errors);
                 if attrs.export_name.is_some()
                     && (attrs.import_module.is_some() || attrs.import_name.is_some())
                 {
@@ -96,6 +97,17 @@ impl Declarations {
 
         for variable in &decls.variables {
             validate_unique_ordinary_name(&mut ordinary_names, &variable.name, &mut errors);
+            if let Some(attrs) = &variable.c23_attributes {
+                validate_duplicate_attributes("variable", &variable.name, attrs, &mut errors);
+                if has_linkage_attributes(attrs) {
+                    errors.push(LoweringError {
+                        message: format!(
+                            "variable `{}` cannot use Host/Guest Linkage attributes",
+                            variable.name
+                        ),
+                    });
+                }
+            }
             validate_object_type(
                 &variable.var_type,
                 &format!("variable `{}`", variable.name),
@@ -126,6 +138,23 @@ impl Declarations {
             Err(errors)
         }
     }
+}
+
+fn validate_duplicate_attributes(
+    kind: &str,
+    name: &str,
+    attrs: &parser::C23Attributes,
+    errors: &mut Vec<LoweringError>,
+) {
+    for attr in &attrs.duplicate_attributes {
+        errors.push(LoweringError {
+            message: format!("{} `{}` repeats attribute `{}`", kind, name, attr),
+        });
+    }
+}
+
+fn has_linkage_attributes(attrs: &parser::C23Attributes) -> bool {
+    attrs.import_module.is_some() || attrs.import_name.is_some() || attrs.export_name.is_some()
 }
 
 fn validate_unique_ordinary_name(

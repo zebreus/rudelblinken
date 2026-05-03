@@ -197,7 +197,7 @@ fn generate_function_item(func: &Function) -> syn::Item {
 
     // Add export_name attribute for guest exports
     if let Linkage::GuestExport { name: export_name } = &func.linkage {
-        attrs.push(parse_quote! { #[export_name = #export_name] });
+        attrs.push(parse_quote! { #[unsafe(export_name = #export_name)] });
     }
 
     // Add deprecation attribute if present
@@ -435,7 +435,7 @@ mod tests {
 
         let result = generate(&decls);
         assert!(
-            result.contains(r#"#[export_name = "run"]"#),
+            result.contains(r#"#[unsafe(export_name = "run")]"#),
             "output:\n{result}"
         );
         assert!(result.contains("pub fn run()"), "output:\n{result}");

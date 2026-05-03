@@ -1,1 +1,1 @@
-[[clang::export_name("guest_exported")]] int exported();
+int exported() __attribute__((export_name("guest_exported")));

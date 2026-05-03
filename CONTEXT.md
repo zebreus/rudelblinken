@@ -59,6 +59,10 @@ _Avoid_: software (too generic), program (conflicts with user Programs)
 A **Program** as seen from the **Host** — the sandboxed WASM execution context. Use this term when discussing the host/guest boundary or the runtime contract. Use **Program** when discussing what a developer builds.
 _Avoid_: module (in domain conversations)
 
+**Host/Guest Linkage**:
+The WASM import/export meaning declared in the C header that defines the **Host**/**Guest** interface. It includes default Host imports, explicitly named Host imports, and Guest exports.
+_Avoid_: binding attributes (too syntactic), backend-specific linkage
+
 **Fuel Metering**:
 The cooperative execution model for **Programs**. A Program is allocated a fuel budget that depletes as it executes; the Program must call `yield_now()` (tentatively `refuel()`) periodically to receive more fuel from the **Host**. A Program that exhausts its fuel without yielding is terminated.
 _Avoid_: watchdog (in the context of Programs), preemption, scheduling

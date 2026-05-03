@@ -84,6 +84,8 @@ pub struct VariableDecl {
     pub var_type: Type,
     /// Documentation comments preceding the variable
     pub comment: Vec<String>,
+    /// C23 attribute specifier sequence `[[...]]` if present
+    pub c23_attributes: Option<C23Attributes>,
 }
 
 /// A field in a struct: `type name;`
@@ -127,6 +129,8 @@ pub struct C23Attributes {
     pub import_name: Option<String>,
     /// `[[clang::export_name("export_name")]]`
     pub export_name: Option<String>,
+    /// Attribute names that were repeated in this specifier sequence.
+    pub duplicate_attributes: Vec<String>,
 }
 
 /// C type representation
@@ -293,13 +297,54 @@ fn c23_attribute_specifier<'src>()
             let mut result = C23Attributes::default();
             for item in items {
                 match item {
-                    C23AttributeItem::Deprecated(msg) => result.deprecated = Some(msg),
-                    C23AttributeItem::Nodiscard(reason) => result.nodiscard = Some(reason),
-                    C23AttributeItem::MaybeUnused => result.maybe_unused = Some(()),
-                    C23AttributeItem::Noreturn => result.noreturn = Some(()),
-                    C23AttributeItem::ImportModule(m) => result.import_module = Some(m),
-                    C23AttributeItem::ImportName(n) => result.import_name = Some(n),
-                    C23AttributeItem::ExportName(n) => result.export_name = Some(n),
+                    C23AttributeItem::Deprecated(msg) => {
+                        if result.deprecated.is_some() {
+                            result.duplicate_attributes.push("deprecated".to_string());
+                        }
+                        result.deprecated = Some(msg);
+                    }
+                    C23AttributeItem::Nodiscard(reason) => {
+                        if result.nodiscard.is_some() {
+                            result.duplicate_attributes.push("nodiscard".to_string());
+                        }
+                        result.nodiscard = Some(reason);
+                    }
+                    C23AttributeItem::MaybeUnused => {
+                        if result.maybe_unused.is_some() {
+                            result.duplicate_attributes.push("maybe_unused".to_string());
+                        }
+                        result.maybe_unused = Some(());
+                    }
+                    C23AttributeItem::Noreturn => {
+                        if result.noreturn.is_some() {
+                            result.duplicate_attributes.push("noreturn".to_string());
+                        }
+                        result.noreturn = Some(());
+                    }
+                    C23AttributeItem::ImportModule(m) => {
+                        if result.import_module.is_some() {
+                            result
+                                .duplicate_attributes
+                                .push("clang::import_module".to_string());
+                        }
+                        result.import_module = Some(m);
+                    }
+                    C23AttributeItem::ImportName(n) => {
+                        if result.import_name.is_some() {
+                            result
+                                .duplicate_attributes
+                                .push("clang::import_name".to_string());
+                        }
+                        result.import_name = Some(n);
+                    }
+                    C23AttributeItem::ExportName(n) => {
+                        if result.export_name.is_some() {
+                            result
+                                .duplicate_attributes
+                                .push("clang::export_name".to_string());
+                        }
+                        result.export_name = Some(n);
+                    }
                 }
             }
             result
@@ -318,25 +363,55 @@ fn opt_c23_attributes<'src>()
             }
             let mut result = C23Attributes::default();
             for attr in attrs {
+                result
+                    .duplicate_attributes
+                    .extend(attr.duplicate_attributes);
                 if attr.deprecated.is_some() {
+                    if result.deprecated.is_some() {
+                        result.duplicate_attributes.push("deprecated".to_string());
+                    }
                     result.deprecated = attr.deprecated;
                 }
                 if attr.nodiscard.is_some() {
+                    if result.nodiscard.is_some() {
+                        result.duplicate_attributes.push("nodiscard".to_string());
+                    }
                     result.nodiscard = attr.nodiscard;
                 }
                 if attr.maybe_unused.is_some() {
+                    if result.maybe_unused.is_some() {
+                        result.duplicate_attributes.push("maybe_unused".to_string());
+                    }
                     result.maybe_unused = Some(());
                 }
                 if attr.noreturn.is_some() {
+                    if result.noreturn.is_some() {
+                        result.duplicate_attributes.push("noreturn".to_string());
+                    }
                     result.noreturn = Some(());
                 }
                 if attr.import_module.is_some() {
+                    if result.import_module.is_some() {
+                        result
+                            .duplicate_attributes
+                            .push("clang::import_module".to_string());
+                    }
                     result.import_module = attr.import_module;
                 }
                 if attr.import_name.is_some() {
+                    if result.import_name.is_some() {
+                        result
+                            .duplicate_attributes
+                            .push("clang::import_name".to_string());
+                    }
                     result.import_name = attr.import_name;
                 }
                 if attr.export_name.is_some() {
+                    if result.export_name.is_some() {
+                        result
+                            .duplicate_attributes
+                            .push("clang::export_name".to_string());
+                    }
                     result.export_name = attr.export_name;
                 }
             }
@@ -478,20 +553,24 @@ fn function_decl<'src>() -> impl Parser<'src, &'src str, FunctionDecl, extra::Er
 fn variable_decl<'src>() -> impl Parser<'src, &'src str, VariableDecl, extra::Err<Rich<'src, char>>>
 {
     opt_comment()
+        .then(opt_c23_attributes())
         .then(type_parser())
         .then(ident())
         .then(array_brackets().or_not())
         .then_ignore(just(';').padded())
-        .map(|(((comment, mut var_type), name), array_size)| {
-            if let Some(size) = array_size {
-                var_type = Type::Array(Box::new(var_type), size);
-            }
-            VariableDecl {
-                name,
-                var_type,
-                comment,
-            }
-        })
+        .map(
+            |((((comment, c23_attributes), mut var_type), name), array_size)| {
+                if let Some(size) = array_size {
+                    var_type = Type::Array(Box::new(var_type), size);
+                }
+                VariableDecl {
+                    name,
+                    var_type,
+                    comment,
+                    c23_attributes,
+                }
+            },
+        )
 }
 
 // Parser for enum variants
