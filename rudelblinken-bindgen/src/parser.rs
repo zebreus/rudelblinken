@@ -1,5 +1,30 @@
 use chumsky::{prelude::*, text};
 
+/// A byte-offset span within a named source file.
+///
+/// Implements [`ariadne::Span`] so it can be passed directly to ariadne
+/// for diagnostic rendering.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Span {
+    pub source: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl ariadne::Span for Span {
+    type SourceId = String;
+    fn source(&self) -> &String {
+        &self.source
+    }
+    fn start(&self) -> usize {
+        self.start
+    }
+    fn end(&self) -> usize {
+        // ariadne requires end >= start; guard against a zero-length sentinel
+        self.end.max(self.start)
+    }
+}
+
 // Container for all parsed declarations
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Declarations {
@@ -23,6 +48,8 @@ pub struct EnumDecl {
     pub name: String,
     pub variants: Vec<EnumVariant>,
     pub comment: Vec<String>,
+    /// Byte-offset span of the whole declaration in the source file
+    pub span: Span,
 }
 
 /// A variant in a C enum
@@ -39,6 +66,7 @@ pub struct TypedefDecl {
     pub name: String,
     pub target_type: Type,
     pub comment: Vec<String>,
+    pub span: Span,
 }
 
 /// Preprocessor directives and static asserts
@@ -58,6 +86,8 @@ pub struct StructDecl {
     pub fields: Vec<Field>,
     /// Documentation comments preceding the struct
     pub comment: Vec<String>,
+    /// Byte-offset span of the whole declaration in the source file
+    pub span: Span,
 }
 
 /// C function declaration: `return_type name(params);`
@@ -73,6 +103,8 @@ pub struct FunctionDecl {
     pub comment: Vec<String>,
     /// C23 attribute specifier sequence `[[...]]` if present
     pub c23_attributes: Option<C23Attributes>,
+    /// Byte-offset span of the whole declaration in the source file
+    pub span: Span,
 }
 
 /// C variable declaration: `type name;`
@@ -86,6 +118,8 @@ pub struct VariableDecl {
     pub comment: Vec<String>,
     /// C23 attribute specifier sequence `[[...]]` if present
     pub c23_attributes: Option<C23Attributes>,
+    /// Byte-offset span of the whole declaration in the source file
+    pub span: Span,
 }
 
 /// A field in a struct: `type name;`
@@ -506,6 +540,7 @@ fn struct_decl<'src>() -> impl Parser<'src, &'src str, StructDecl, extra::Err<Ri
             name,
             fields,
             comment,
+            span: Span::default(),
         })
 }
 
@@ -545,6 +580,7 @@ fn function_decl<'src>() -> impl Parser<'src, &'src str, FunctionDecl, extra::Er
                 parameters,
                 comment,
                 c23_attributes,
+                span: Span::default(),
             },
         )
 }
@@ -568,6 +604,7 @@ fn variable_decl<'src>() -> impl Parser<'src, &'src str, VariableDecl, extra::Er
                     var_type,
                     comment,
                     c23_attributes,
+                    span: Span::default(),
                 }
             },
         )
@@ -611,6 +648,7 @@ fn enum_decl<'src>() -> impl Parser<'src, &'src str, EnumDecl, extra::Err<Rich<'
             name,
             variants,
             comment,
+            span: Span::default(),
         })
 }
 
@@ -646,13 +684,87 @@ fn directive_decl<'src>() -> impl Parser<'src, &'src str, Directive, extra::Err<
     ))
 }
 
-/// Parse C declarations from a string
-pub fn parse_declarations(input: &str) -> Result<Declarations, Vec<Rich<'_, char>>> {
-    let struct_parser = struct_decl().map(|s| (Some(s), None, None, None, None));
-    let enum_parser = enum_decl().map(|e| (None, None, None, Some(e), None));
+/// Parse C declarations from a string, returning errors as owned `(Span, message)` pairs.
+///
+/// This is the primary entry point for external callers. It wraps [`parse_declarations`]
+/// and converts chumsky's internal error type so callers never need to import chumsky.
+pub fn parse_declarations_checked(
+    input: &str,
+    source: &str,
+) -> Result<Declarations, Vec<(Span, String)>> {
+    parse_declarations(input, source).map_err(|errs| {
+        errs.into_iter()
+            .map(|e| {
+                let s = e.span();
+                let span = Span {
+                    source: source.to_string(),
+                    start: s.start,
+                    end: s.end,
+                };
+                (span, format!("{}", e.reason()))
+            })
+            .collect()
+    })
+}
+
+/// Parse C declarations from a string.
+///
+/// `source` is the display name of the input (e.g. a filename or `"<stdin>"`).
+/// It is embedded in the [`Span`] of every parsed declaration so that
+/// error messages can reference the originating file.
+pub fn parse_declarations<'src>(
+    input: &'src str,
+    source: &str,
+) -> Result<Declarations, Vec<Rich<'src, char>>> {
+    let struct_parser = struct_decl().map_with(|s, e| {
+        let sp = e.span();
+        let s = StructDecl {
+            span: Span {
+                source: source.to_string(),
+                start: sp.start,
+                end: sp.end,
+            },
+            ..s
+        };
+        (Some(s), None, None, None, None)
+    });
+    let enum_parser = enum_decl().map_with(|ed, e| {
+        let sp = e.span();
+        let ed = EnumDecl {
+            span: Span {
+                source: source.to_string(),
+                start: sp.start,
+                end: sp.end,
+            },
+            ..ed
+        };
+        (None, None, None, Some(ed), None)
+    });
     let directive_parser = directive_decl().map(|d| (None, None, None, None, Some(d)));
-    let function_parser = function_decl().map(|f| (None, Some(f), None, None, None));
-    let variable_parser = variable_decl().map(|v| (None, None, Some(v), None, None));
+    let function_parser = function_decl().map_with(|f, e| {
+        let sp = e.span();
+        let f = FunctionDecl {
+            span: Span {
+                source: source.to_string(),
+                start: sp.start,
+                end: sp.end,
+            },
+            ..f
+        };
+        (None, Some(f), None, None, None)
+    });
+    let variable_parser = variable_decl().map_with(|v, e| {
+        let sp = e.span();
+        let v = VariableDecl {
+            span: Span {
+                source: source.to_string(),
+                start: sp.start,
+                end: sp.end,
+            },
+            ..v
+        };
+        (None, None, Some(v), None, None)
+    });
 
     let parser = text::whitespace()
         .ignore_then(
@@ -706,7 +818,7 @@ mod tests {
             };
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.structs.len(), 1);
         assert_eq!(result.functions.len(), 0);
         assert_eq!(result.variables.len(), 0);
@@ -723,7 +835,7 @@ mod tests {
     #[test]
     fn test_parse_function() {
         let input = "int add(int a, int b);";
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.structs.len(), 0);
         assert_eq!(result.functions.len(), 1);
         assert_eq!(result.variables.len(), 0);
@@ -741,7 +853,7 @@ mod tests {
     #[test]
     fn test_parse_variable() {
         let input = "unsigned int counter;";
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.structs.len(), 0);
         assert_eq!(result.functions.len(), 0);
         assert_eq!(result.variables.len(), 1);
@@ -754,7 +866,7 @@ mod tests {
     #[test]
     fn test_parse_pointer_type() {
         let input = "void* ptr;";
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.variables.len(), 1);
 
         let v = &result.variables[0];
@@ -765,7 +877,7 @@ mod tests {
     #[test]
     fn test_parse_multiple_pointers() {
         let input = "int** double_ptr;";
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.variables.len(), 1);
 
         let v = &result.variables[0];
@@ -779,7 +891,7 @@ mod tests {
     #[test]
     fn test_parse_struct_type() {
         let input = "struct Node node;";
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.variables.len(), 1);
 
         let v = &result.variables[0];
@@ -790,7 +902,7 @@ mod tests {
     #[test]
     fn test_parse_function_no_params() {
         let input = "void exit();";
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.functions.len(), 1);
 
         let f = &result.functions[0];
@@ -812,7 +924,7 @@ mod tests {
             void* get_pointer();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.structs.len(), 1);
         assert_eq!(result.functions.len(), 2);
         assert_eq!(result.variables.len(), 1);
@@ -826,7 +938,7 @@ mod tests {
     #[test]
     fn test_parse_anonymous_parameters() {
         let input = "int process(int, char*);";
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.functions.len(), 1);
 
         let f = &result.functions[0];
@@ -860,7 +972,7 @@ mod tests {
             unsigned int counter;
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.structs.len(), 1);
         assert_eq!(result.functions.len(), 1);
         assert_eq!(result.variables.len(), 1);
@@ -892,7 +1004,7 @@ mod tests {
             };
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.functions.len(), 1);
         assert_eq!(result.structs.len(), 1);
 
@@ -924,7 +1036,7 @@ mod tests {
             int var;
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
 
         let f = &result.functions[0];
         assert_eq!(f.comment.len(), 3);
@@ -958,7 +1070,7 @@ mod tests {
             int no_comment_var;
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
 
         assert_eq!(result.structs[0].comment.len(), 0);
         assert_eq!(result.structs[0].fields[0].comment.len(), 0);
@@ -982,7 +1094,7 @@ mod tests {
             int var;
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
 
         let s = &result.structs[0];
         assert_eq!(s.comment, vec!["Commented struct".to_string()]);
@@ -1011,7 +1123,7 @@ mod tests {
             };
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let s = &result.structs[0];
 
         assert_eq!(s.comment, vec!["Main structure".to_string()]);
@@ -1035,7 +1147,7 @@ mod tests {
             void documented();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert_eq!(f.comment.len(), 1);
@@ -1051,7 +1163,7 @@ mod tests {
             int func();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert_eq!(f.comment.len(), 2);
@@ -1065,7 +1177,7 @@ mod tests {
             [[clang::import_module("math"), clang::import_name("add")]] int add(int a, int b);
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.functions.len(), 1);
 
         let f = &result.functions[0];
@@ -1083,7 +1195,7 @@ mod tests {
             [[clang::import_module("env")]] void log(char* msg);
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1098,7 +1210,7 @@ mod tests {
             [[clang::import_name("print_fn")]] void print();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1113,7 +1225,7 @@ mod tests {
             [[clang::export_name("guest_run")]] void run();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1127,7 +1239,7 @@ mod tests {
     fn test_parse_function_without_attribute() {
         let input = "int add(int a, int b);";
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
         assert!(f.c23_attributes.is_none());
     }
@@ -1140,7 +1252,7 @@ mod tests {
             [[clang::import_name("func_three")]] int func3();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.functions.len(), 3);
 
         assert!(result.functions[0].c23_attributes.is_some());
@@ -1154,7 +1266,7 @@ mod tests {
             [[deprecated]] int old_func();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         assert_eq!(result.functions.len(), 1);
 
         let f = &result.functions[0];
@@ -1173,7 +1285,7 @@ mod tests {
             [[deprecated("Use new_func instead")]] int old_func();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1189,7 +1301,7 @@ mod tests {
             [[nodiscard]] int get_value();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1204,7 +1316,7 @@ mod tests {
             [[nodiscard("Ignoring return value causes memory leak")]] void* allocate();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1220,7 +1332,7 @@ mod tests {
             [[maybe_unused]] int helper();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1237,7 +1349,7 @@ mod tests {
             [[noreturn]] void exit_program();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1254,7 +1366,7 @@ mod tests {
             [[deprecated, nodiscard]] int func();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1271,7 +1383,7 @@ mod tests {
             [[deprecated]] [[nodiscard]] int func();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());
@@ -1289,7 +1401,7 @@ mod tests {
             [[deprecated("Use v2")]] int func_v1();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert_eq!(f.comment, vec!["This function is deprecated".to_string()]);
@@ -1306,7 +1418,7 @@ mod tests {
             [[nodiscard, clang::import_module("mod"), clang::import_name("get")]] int get();
         "#;
 
-        let result = parse_declarations(input).unwrap();
+        let result = parse_declarations(input, "").unwrap();
         let f = &result.functions[0];
 
         assert!(f.c23_attributes.is_some());

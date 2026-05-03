@@ -80,14 +80,15 @@ fn run_compile_case(case: &CompileCase) {
     let input = fs::read_to_string(&case.bindgen_input)
         .unwrap_or_else(|err| panic!("{}: failed reading bindgen_input.c: {}", case.name, err));
 
-    let generated = generate_bindings(&input, &OutputFormat::CGuest).unwrap_or_else(|errors| {
-        panic!(
-            "{}: bindgen generation failed with {} parse errors: {:?}",
-            case.name,
-            errors.len(),
-            errors
-        )
-    });
+    let generated =
+        generate_bindings(&input, &case.name, &OutputFormat::CGuest).unwrap_or_else(|errors| {
+            panic!(
+                "{}: bindgen generation failed with {} parse errors: {:?}",
+                case.name,
+                errors.len(),
+                errors
+            )
+        });
 
     fs::write(&case.generated_header, generated)
         .unwrap_or_else(|err| panic!("{}: failed writing generated header: {}", case.name, err));

@@ -3,9 +3,11 @@ pub mod parser;
 
 pub use parser::{
     C23Attributes, Declarations, Directive, EnumDecl, EnumVariant, Field, FunctionDecl, Parameter,
-    StructDecl, Type, TypedefDecl, VariableDecl, parse_declarations,
+    Span, StructDecl, Type, TypedefDecl, VariableDecl, parse_declarations,
+    parse_declarations_checked,
 };
 
+use ariadne::{Config, Label, Report, ReportKind, Source};
 use clap::{Parser, ValueEnum};
 use log::{debug, error, info};
 use std::collections::HashMap;
@@ -42,52 +44,68 @@ pub enum OutputFormat {
 /// An error returned by [`generate_bindings`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct BindgenError {
-    pub line: Option<usize>,
-    pub column: Option<usize>,
+    /// The source span of the offending declaration, if available.
+    ///
+    /// Pass this to ariadne for pretty diagnostic rendering.  Programmatic
+    /// callers that only need a human-readable message can use `Display`.
+    pub span: Option<Span>,
     pub message: String,
 }
 
 impl std::fmt::Display for BindgenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match (self.line, self.column) {
-            (Some(line), Some(column)) => write!(f, "{}:{}: {}", line, column, self.message),
-            _ => write!(f, "{}", self.message),
+        match &self.span {
+            Some(span) => write!(f, "{}:{}: {}", span.source, span.start, self.message),
+            None => write!(f, "{}", self.message),
         }
     }
 }
 
-fn offset_to_line_col(input: &str, offset: usize) -> (usize, usize) {
-    let clamped = offset.min(input.len());
-    let prefix = &input[..clamped];
-    let line = prefix.chars().filter(|&c| c == '\n').count() + 1;
-    let col = prefix
-        .rfind('\n')
-        .map(|nl| clamped - nl - 1)
-        .unwrap_or(clamped)
-        + 1;
-    (line, col)
+/// Render a list of [`BindgenError`]s into a human-readable string using ariadne.
+///
+/// `source_text` is the full content of the parsed input, required for the source excerpt.
+pub fn render_errors(errors: &[BindgenError], source_text: &str) -> String {
+    let mut buf: Vec<u8> = Vec::new();
+    for err in errors {
+        match &err.span {
+            Some(span) => {
+                let _ = Report::build(ReportKind::Error, span.source.clone(), span.start)
+                    .with_config(Config::default().with_color(false))
+                    .with_message(&err.message)
+                    .with_label(Label::new(span.clone()).with_message(&err.message))
+                    .finish()
+                    .write((span.source.clone(), Source::from(source_text)), &mut buf);
+            }
+            None => {
+                buf.extend_from_slice(format!("Error: {}\n", err.message).as_bytes());
+            }
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 /// Parse a C header and generate bindings in the requested format.
-pub fn generate_bindings(input: &str, format: &OutputFormat) -> Result<String, Vec<BindgenError>> {
-    let parsed = parser::parse_declarations(input).map_err(|errs| {
+///
+/// `source` is the display name of the input (e.g. a filename or `"<stdin>"`).  It
+/// appears in the [`Span`] of every [`BindgenError`] so that ariadne can render
+/// source-file headers in diagnostics.
+pub fn generate_bindings(
+    input: &str,
+    source: &str,
+    format: &OutputFormat,
+) -> Result<String, Vec<BindgenError>> {
+    let parsed = parser::parse_declarations_checked(input, source).map_err(|errs| {
         errs.into_iter()
-            .map(|e| {
-                let offset = e.span().start;
-                let (line, col) = offset_to_line_col(input, offset);
-                BindgenError {
-                    line: Some(line),
-                    column: Some(col),
-                    message: format!("{}", e.reason()),
-                }
+            .map(|(span, message)| BindgenError {
+                span: Some(span),
+                message,
             })
             .collect::<Vec<_>>()
     })?;
     let gen_declarations = generator::Declarations::lower(parsed).map_err(|errs| {
         errs.into_iter()
             .map(|e| BindgenError {
-                line: None,
-                column: None,
+                span: e.span,
                 message: e.message,
             })
             .collect::<Vec<_>>()
@@ -152,18 +170,19 @@ pub fn run(args: Args, stdin: &mut dyn Read) -> Result<String, String> {
         }
     };
 
+    let source_name = if args.input.as_os_str() == "-" {
+        "<stdin>".to_string()
+    } else {
+        args.input.display().to_string()
+    };
+
     debug!("Generating output in {:?} format", args.format);
-    let output_content = generate_bindings(&input, &args.format).map_err(|errs| {
+    let output_content = generate_bindings(&input, &source_name, &args.format).map_err(|errs| {
         error!("Errors in {:?}:", args.input);
         for e in &errs {
             error!("  {}", e);
         }
-        let mut message = format!("Errors in {:?}:", args.input);
-        for err in errs {
-            message.push_str("\n  ");
-            message.push_str(&err.to_string());
-        }
-        message
+        render_errors(&errs, &input)
     })?;
 
     if let Some(output_path) = &args.output {
@@ -189,30 +208,22 @@ mod tests {
     #[test]
     fn parse_errors_are_owned_and_have_location() {
         // "struct Broken { int x;" is missing the closing brace
-        let result = generate_bindings("struct Broken { int x;", &OutputFormat::CGuest);
+        let result = generate_bindings("struct Broken { int x;", "<test>", &OutputFormat::CGuest);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(!errors.is_empty());
         let err = &errors[0];
-        assert!(
-            err.line.unwrap() >= 1,
-            "line should be >= 1, got {:?}",
-            err.line
-        );
-        assert!(
-            err.column.unwrap() >= 1,
-            "column should be >= 1, got {:?}",
-            err.column
-        );
+        let span = err.span.as_ref().expect("parse errors must have a span");
+        assert!(span.start <= span.end, "span start should be <= end");
         assert!(!err.message.is_empty(), "message should not be empty");
     }
 
     #[test]
     fn parse_error_display_shows_location() {
-        let result = generate_bindings("struct Bad {", &OutputFormat::CGuest);
+        let result = generate_bindings("struct Bad {", "<test>", &OutputFormat::CGuest);
         let errors = result.unwrap_err();
         let display = format!("{}", errors[0]);
-        // Should be "line:col: message"
+        // Should be "source:offset: message"
         assert!(
             display.contains(':'),
             "display should contain ':', got: {display}"
@@ -223,7 +234,11 @@ mod tests {
 
     #[test]
     fn rust_guest_generates_repr_c_struct() {
-        let result = generate_bindings("struct Point { int x; int y; };", &OutputFormat::RustGuest);
+        let result = generate_bindings(
+            "struct Point { int x; int y; };",
+            "<test>",
+            &OutputFormat::RustGuest,
+        );
         assert!(result.is_ok(), "expected ok, got: {:?}", result);
         let output = result.unwrap();
         assert!(output.contains("pub struct Point"), "output:\n{output}");
@@ -234,7 +249,7 @@ mod tests {
     #[test]
     fn rust_guest_generates_extern_block_for_imported_function() {
         let input = r#"[[clang::import_module("env"), clang::import_name("log")]] void host_log(char *message);"#;
-        let result = generate_bindings(input, &OutputFormat::RustGuest);
+        let result = generate_bindings(input, "<test>", &OutputFormat::RustGuest);
         assert!(result.is_ok(), "expected ok, got: {:?}", result);
         let output = result.unwrap();
         assert!(output.contains("extern \"C\""), "output:\n{output}");
@@ -245,7 +260,7 @@ mod tests {
     fn rejects_function_declared_as_both_import_and_export() {
         let input =
             r#"[[clang::import_name("host_run"), clang::export_name("guest_run")]] int run();"#;
-        let result = generate_bindings(input, &OutputFormat::CGuest);
+        let result = generate_bindings(input, "<test>", &OutputFormat::CGuest);
         assert!(result.is_err(), "expected semantic error, got: {result:?}");
         let errors = result.unwrap_err();
         assert!(
@@ -258,7 +273,7 @@ mod tests {
 
     #[test]
     fn rejects_named_types_until_typedef_semantics_are_defined() {
-        let result = generate_bindings("rudel_word counter;", &OutputFormat::CGuest);
+        let result = generate_bindings("rudel_word counter;", "<test>", &OutputFormat::CGuest);
         assert!(result.is_err(), "expected semantic error, got: {result:?}");
         let errors = result.unwrap_err();
         assert!(
@@ -273,6 +288,7 @@ mod tests {
     fn rejects_enum_values_outside_i32_range() {
         let result = generate_bindings(
             "enum Status { TOO_LARGE = 2147483648, };",
+            "<test>",
             &OutputFormat::CGuest,
         );
         assert!(result.is_err(), "expected semantic error, got: {result:?}");
@@ -291,7 +307,7 @@ mod tests {
             int status;
             int status();
         "#;
-        let result = generate_bindings(input, &OutputFormat::CGuest);
+        let result = generate_bindings(input, "<test>", &OutputFormat::CGuest);
         assert!(result.is_err(), "expected semantic error, got: {result:?}");
         let errors = result.unwrap_err();
         assert!(
@@ -304,7 +320,7 @@ mod tests {
 
     #[test]
     fn rejects_void_parameters() {
-        let result = generate_bindings("int bad(void value);", &OutputFormat::CGuest);
+        let result = generate_bindings("int bad(void value);", "<test>", &OutputFormat::CGuest);
         assert!(result.is_err(), "expected semantic error, got: {result:?}");
         let errors = result.unwrap_err();
         assert!(
@@ -317,7 +333,7 @@ mod tests {
 
     #[test]
     fn treats_void_parameter_list_as_no_parameters() {
-        let result = generate_bindings("int main(void);", &OutputFormat::CGuest);
+        let result = generate_bindings("int main(void);", "<test>", &OutputFormat::CGuest);
         assert!(result.is_ok(), "expected ok, got: {result:?}");
         assert_eq!(
             result.unwrap(),
@@ -328,7 +344,7 @@ mod tests {
     #[test]
     fn rejects_duplicate_linkage_attributes() {
         let input = r#"[[clang::import_name("one"), clang::import_name("two")]] int run();"#;
-        let result = generate_bindings(input, &OutputFormat::CGuest);
+        let result = generate_bindings(input, "<test>", &OutputFormat::CGuest);
         assert!(result.is_err(), "expected semantic error, got: {result:?}");
         let errors = result.unwrap_err();
         assert!(
@@ -342,7 +358,7 @@ mod tests {
     #[test]
     fn rejects_variable_linkage_attributes() {
         let input = r#"[[clang::import_name("counter")]] int counter;"#;
-        let result = generate_bindings(input, &OutputFormat::CGuest);
+        let result = generate_bindings(input, "<test>", &OutputFormat::CGuest);
         assert!(result.is_err(), "expected semantic error, got: {result:?}");
         let errors = result.unwrap_err();
         assert!(
@@ -354,11 +370,15 @@ mod tests {
     }
 
     #[test]
-    fn semantic_errors_do_not_fake_source_locations() {
-        let result = generate_bindings("void bad;", &OutputFormat::CGuest);
+    fn semantic_errors_have_source_spans() {
+        let result = generate_bindings("void bad;", "<test>", &OutputFormat::CGuest);
         assert!(result.is_err(), "expected semantic error, got: {result:?}");
         let errors = result.unwrap_err();
-        assert_eq!(errors[0].line, None);
-        assert_eq!(errors[0].column, None);
+        let span = errors[0]
+            .span
+            .as_ref()
+            .expect("semantic errors should have a span");
+        assert_eq!(span.source, "<test>");
+        assert!(span.start <= span.end, "span start should be <= end");
     }
 }

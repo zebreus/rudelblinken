@@ -1,1 +1,1 @@
-ERROR:Errors in
+ERROR:Error
