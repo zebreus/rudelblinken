@@ -195,7 +195,7 @@ pub fn generate_bindings(
             })
             .collect::<Vec<_>>()
     })?;
-    let gen_declarations = generator::Declarations::lower(parsed).map_err(|errs| {
+    let validated = generator::Declarations::validate(parsed).map_err(|errs| {
         errs.into_iter()
             .map(|e| BindgenError {
                 span: e.span,
@@ -203,6 +203,7 @@ pub fn generate_bindings(
             })
             .collect::<Vec<_>>()
     })?;
+    let gen_declarations = generator::Declarations::lower(validated);
     let output = match format {
         OutputFormat::CGuest => generator::c_guest::generate(&gen_declarations),
         OutputFormat::RustGuest => generator::rust_guest::generate(&gen_declarations),

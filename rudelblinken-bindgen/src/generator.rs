@@ -1,4 +1,3 @@
-use crate::Span;
 /// Language-neutral data model for code generation.
 ///
 /// This module's types are intentionally separate from the parser types, even
@@ -7,12 +6,15 @@ use crate::Span;
 /// (C headers, Rust bindings, …) and will diverge from the C AST as backends
 /// grow their own requirements.
 ///
-/// The [`Declarations::lower`] function below is the seam: it validates the C AST
-/// produced by the parser and translates it into this IR. All attribute-flattening
-/// and linkage resolution happens here — imported in the parser, resolved at the
-/// seam, invisible to backends.
+/// Validation is the first internal seam: it proves the C AST produced by the
+/// parser has supported rudelblinken-bindgen semantics. The [`Declarations::lower`]
+/// function then translates validated parser IR into this generator IR. All
+/// attribute-flattening and linkage resolution happens before backends run —
+/// imported in the parser, validated and resolved at the seam, invisible to
+/// backends.
+use self::validation::{is_void_parameter_list, ValidatedDeclarations};
 use crate::parser;
-use std::collections::HashSet;
+use crate::Span;
 
 /// A semantic validation error found while lowering parser IR into generator IR.
 #[derive(Clone, Debug, PartialEq)]
@@ -61,209 +63,15 @@ pub struct Declarations {
 }
 
 impl Declarations {
-    pub fn lower(decls: parser::Declarations) -> Result<Self, Vec<LoweringError>> {
-        let mut errors = Vec::new();
-        let mut ordinary_names = HashSet::new();
-
-        for struct_decl in &decls.structs {
-            for field in &struct_decl.fields {
-                validate_object_type(
-                    &field.field_type,
-                    &format!("field `{}`", field.name),
-                    &struct_decl.span,
-                    &mut errors,
-                );
-                validate_type(&field.field_type, &struct_decl.span, &mut errors);
-            }
-        }
-
-        for function in &decls.functions {
-            validate_unique_ordinary_name(
-                &mut ordinary_names,
-                &function.name,
-                &function.span,
-                &mut errors,
-            );
-            if let Some(attrs) = &function.c23_attributes {
-                validate_duplicate_attributes(
-                    "function",
-                    &function.name,
-                    attrs,
-                    &function.span,
-                    &mut errors,
-                );
-                if attrs.export_name.is_some()
-                    && (attrs.import_module.is_some() || attrs.import_name.is_some())
-                {
-                    errors.push(LoweringError::at(
-                        format!(
-                            "function `{}` cannot be both a host import and a guest export",
-                            function.name
-                        ),
-                        function.span.clone(),
-                    ));
-                }
-            }
-            validate_type(&function.return_type, &function.span, &mut errors);
-            if !is_void_parameter_list(&function.parameters) {
-                for parameter in &function.parameters {
-                    validate_object_type(
-                        &parameter.param_type,
-                        &format!(
-                            "parameter `{}`",
-                            parameter.name.as_deref().unwrap_or("<anonymous>")
-                        ),
-                        &function.span,
-                        &mut errors,
-                    );
-                    validate_type(&parameter.param_type, &function.span, &mut errors);
-                }
-            }
-        }
-
-        for variable in &decls.variables {
-            validate_unique_ordinary_name(
-                &mut ordinary_names,
-                &variable.name,
-                &variable.span,
-                &mut errors,
-            );
-            if let Some(attrs) = &variable.c23_attributes {
-                validate_duplicate_attributes(
-                    "variable",
-                    &variable.name,
-                    attrs,
-                    &variable.span,
-                    &mut errors,
-                );
-                if has_linkage_attributes(attrs) {
-                    errors.push(LoweringError::at(
-                        format!(
-                            "variable `{}` cannot use Host/Guest Linkage attributes",
-                            variable.name
-                        ),
-                        variable.span.clone(),
-                    ));
-                }
-            }
-            validate_object_type(
-                &variable.var_type,
-                &format!("variable `{}`", variable.name),
-                &variable.span,
-                &mut errors,
-            );
-            validate_type(&variable.var_type, &variable.span, &mut errors);
-        }
-
-        for enum_decl in &decls.enums {
-            for variant in &enum_decl.variants {
-                validate_unique_ordinary_name(
-                    &mut ordinary_names,
-                    &variant.name,
-                    &enum_decl.span,
-                    &mut errors,
-                );
-                if let Some(value) = variant.value {
-                    if value < i32::MIN as i64 || value > i32::MAX as i64 {
-                        errors.push(LoweringError::at(
-                            format!(
-                                "enum value `{}` is outside the supported i32 range",
-                                variant.name
-                            ),
-                            enum_decl.span.clone(),
-                        ));
-                    }
-                }
-            }
-        }
-
-        if errors.is_empty() {
-            Ok(lower_declarations(decls))
-        } else {
-            Err(errors)
-        }
+    pub(crate) fn validate(
+        decls: parser::Declarations,
+    ) -> Result<ValidatedDeclarations, Vec<LoweringError>> {
+        ValidatedDeclarations::validate(decls)
     }
-}
 
-fn validate_duplicate_attributes(
-    kind: &str,
-    name: &str,
-    attrs: &parser::C23Attributes,
-    span: &Span,
-    errors: &mut Vec<LoweringError>,
-) {
-    for attr in &attrs.duplicate_attributes {
-        errors.push(LoweringError::at(
-            format!("{} `{}` repeats attribute `{}`", kind, name, attr),
-            span.clone(),
-        ));
+    pub(crate) fn lower(decls: ValidatedDeclarations) -> Self {
+        lower_declarations(decls.into_inner())
     }
-}
-
-fn has_linkage_attributes(attrs: &parser::C23Attributes) -> bool {
-    attrs.import_module.is_some() || attrs.import_name.is_some() || attrs.export_name.is_some()
-}
-
-fn validate_unique_ordinary_name(
-    ordinary_names: &mut HashSet<String>,
-    name: &str,
-    span: &Span,
-    errors: &mut Vec<LoweringError>,
-) {
-    if !ordinary_names.insert(name.to_string()) {
-        errors.push(LoweringError::at(
-            format!(
-                "declaration `{}` conflicts with an earlier declaration",
-                name
-            ),
-            span.clone(),
-        ));
-    }
-}
-
-fn validate_type(type_decl: &parser::Type, span: &Span, errors: &mut Vec<LoweringError>) {
-    match type_decl {
-        parser::Type::Named(name) => errors.push(LoweringError::at(
-            format!("unsupported named type `{}`", name),
-            span.clone(),
-        )),
-        parser::Type::Pointer(inner) | parser::Type::Array(inner, _) => {
-            validate_type(inner, span, errors)
-        }
-        parser::Type::Void
-        | parser::Type::Int
-        | parser::Type::UnsignedInt
-        | parser::Type::Char
-        | parser::Type::UnsignedChar
-        | parser::Type::LongLong
-        | parser::Type::UnsignedLongLong
-        | parser::Type::Struct(_)
-        | parser::Type::Enum(_) => {}
-    }
-}
-
-fn validate_object_type(
-    type_decl: &parser::Type,
-    subject: &str,
-    span: &Span,
-    errors: &mut Vec<LoweringError>,
-) {
-    if matches!(type_decl, parser::Type::Void) {
-        errors.push(LoweringError::at(
-            format!("{} cannot have type void", subject),
-            span.clone(),
-        ));
-    }
-}
-
-fn is_void_parameter_list(parameters: &[parser::Parameter]) -> bool {
-    matches!(
-        parameters,
-        [parser::Parameter {
-            name: None,
-            param_type: parser::Type::Void,
-        }]
-    )
 }
 
 /// Struct declaration
@@ -501,3 +309,4 @@ fn lower_type(parser_type: parser::Type) -> Type {
 
 pub mod c_guest;
 pub mod rust_guest;
+mod validation;
