@@ -29,7 +29,7 @@ impl LoweringError {
 /// rudelblinken-bindgen before the lowering step constructs backend-facing
 /// declarations.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ValidatedDeclarations {
+struct ValidatedDeclarations {
     declarations: parser::Declarations,
 }
 
@@ -46,14 +46,9 @@ impl ValidatedDeclarations {
 }
 
 impl Declarations {
-    pub(crate) fn validate(
-        decls: parser::Declarations,
-    ) -> Result<ValidatedDeclarations, Vec<LoweringError>> {
-        ValidatedDeclarations::validate(decls)
-    }
-
-    pub(crate) fn lower(decls: ValidatedDeclarations) -> Self {
-        lower_declarations(decls.into_inner())
+    pub(crate) fn lower(decls: parser::Declarations) -> Result<Self, Vec<LoweringError>> {
+        let validated = ValidatedDeclarations::validate(decls)?;
+        Ok(lower_declarations(validated.into_inner()))
     }
 }
 
@@ -370,14 +365,14 @@ fn lower_type(parser_type: parser::Type) -> Type {
 mod tests {
     use super::*;
 
-    fn validate(input: &str) -> Result<ValidatedDeclarations, Vec<LoweringError>> {
+    fn lower(input: &str) -> Result<Declarations, Vec<LoweringError>> {
         let declarations = parser::parse_declarations(input, "<test>").expect("input should parse");
-        ValidatedDeclarations::validate(declarations)
+        Declarations::lower(declarations)
     }
 
     #[test]
     fn rejects_named_types_without_codegen() {
-        let errors = validate("rudel_word counter;").expect_err("validation should fail");
+        let errors = lower("rudel_word counter;").expect_err("lowering should fail");
         assert!(
             errors
                 .iter()
@@ -388,12 +383,13 @@ mod tests {
 
     #[test]
     fn accepts_void_parameter_list_as_special_case() {
-        validate("int main(void);").expect("void parameter list should validate");
+        let declarations = lower("int main(void);").expect("void parameter list should lower");
+        assert_eq!(declarations.functions[0].parameters.len(), 0);
     }
 
     #[test]
     fn rejects_named_void_parameters() {
-        let errors = validate("int bad(void value);").expect_err("validation should fail");
+        let errors = lower("int bad(void value);").expect_err("lowering should fail");
         assert!(
             errors.iter().any(|err| err
                 .message

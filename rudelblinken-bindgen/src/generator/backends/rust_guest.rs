@@ -129,17 +129,23 @@ fn generate_extern_block(module: &str, functions: &[&Function]) -> syn::Item {
     }
 }
 
-fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
-    let name = syn::Ident::new(&func.name, proc_macro2::Span::call_site());
-    let mut attrs: Vec<syn::Attribute> = Vec::new();
+struct RustFunctionShape {
+    name: syn::Ident,
+    inputs: Vec<syn::FnArg>,
+    output: syn::ReturnType,
+}
 
-    if let Some(msg) = &func.deprecated {
-        if let Some(text) = msg {
+fn generate_standard_function_attrs(func: &Function) -> Vec<syn::Attribute> {
+    let mut attrs = Vec::new();
+
+    if let Some(message) = &func.deprecated {
+        if let Some(text) = message {
             attrs.push(parse_quote! { #[deprecated(note = #text)] });
         } else {
             attrs.push(parse_quote! { #[deprecated] });
         }
     }
+
     if let Some(reason) = &func.nodiscard {
         if let Some(text) = reason {
             attrs.push(parse_quote! { #[must_use = #text] });
@@ -147,6 +153,48 @@ fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
             attrs.push(parse_quote! { #[must_use] });
         }
     }
+
+    attrs
+}
+
+fn generate_function_shape(func: &Function) -> RustFunctionShape {
+    let name = syn::Ident::new(&func.name, proc_macro2::Span::call_site());
+    let inputs = func
+        .parameters
+        .iter()
+        .enumerate()
+        .map(|(i, param)| {
+            let param_name = if let Some(name) = &param.name {
+                syn::Ident::new(name, proc_macro2::Span::call_site())
+            } else {
+                syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site())
+            };
+            let param_type = to_syn_type(&param.param_type);
+            parse_quote! { #param_name: #param_type }
+        })
+        .collect();
+
+    let output = if matches!(func.return_type, Type::Void) {
+        parse_quote! {}
+    } else {
+        let return_type = to_syn_type(&func.return_type);
+        parse_quote! { -> #return_type }
+    };
+
+    RustFunctionShape {
+        name,
+        inputs,
+        output,
+    }
+}
+
+fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
+    let RustFunctionShape {
+        name,
+        inputs,
+        output,
+    } = generate_function_shape(func);
+    let mut attrs = generate_standard_function_attrs(func);
 
     if let Linkage::HostImport {
         name: import_name, ..
@@ -157,28 +205,6 @@ fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
         }
     }
 
-    let inputs: Vec<syn::FnArg> = func
-        .parameters
-        .iter()
-        .enumerate()
-        .map(|(i, param)| {
-            let param_name = if let Some(name) = &param.name {
-                syn::Ident::new(name, proc_macro2::Span::call_site())
-            } else {
-                syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site())
-            };
-            let param_type = to_syn_type(&param.param_type);
-            parse_quote! { #param_name: #param_type }
-        })
-        .collect();
-
-    let return_type = to_syn_type(&func.return_type);
-    let output: syn::ReturnType = if matches!(func.return_type, Type::Void) {
-        parse_quote! {}
-    } else {
-        parse_quote! { -> #return_type }
-    };
-
     parse_quote! {
         #(#attrs)*
         pub fn #name(#(#inputs),*) #output;
@@ -186,54 +212,22 @@ fn generate_extern_function_item(func: &Function) -> syn::ForeignItem {
 }
 
 fn generate_function_item(func: &Function) -> syn::Item {
-    let name = syn::Ident::new(&func.name, proc_macro2::Span::call_site());
+    let RustFunctionShape {
+        name,
+        inputs,
+        output,
+    } = generate_function_shape(func);
     let mut attrs = generate_doc_comments(&func.comment);
 
     if let Linkage::GuestExport { name: export_name } = &func.linkage {
         attrs.push(parse_quote! { #[unsafe(export_name = #export_name)] });
     }
 
-    if let Some(deprecated) = &func.deprecated {
-        if let Some(msg) = deprecated {
-            attrs.push(parse_quote! { #[deprecated(note = #msg)] });
-        } else {
-            attrs.push(parse_quote! { #[deprecated] });
-        }
-    }
-
-    if let Some(nodiscard) = &func.nodiscard {
-        if let Some(reason) = nodiscard {
-            attrs.push(parse_quote! { #[must_use = #reason] });
-        } else {
-            attrs.push(parse_quote! { #[must_use] });
-        }
-    }
+    attrs.extend(generate_standard_function_attrs(func));
 
     if func.maybe_unused.is_some() {
         attrs.push(parse_quote! { #[allow(dead_code)] });
     }
-
-    let inputs: Vec<syn::FnArg> = func
-        .parameters
-        .iter()
-        .enumerate()
-        .map(|(i, param)| {
-            let param_name = if let Some(name) = &param.name {
-                syn::Ident::new(name, proc_macro2::Span::call_site())
-            } else {
-                syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site())
-            };
-            let param_type = to_syn_type(&param.param_type);
-            parse_quote! { #param_name: #param_type }
-        })
-        .collect();
-
-    let return_type = to_syn_type(&func.return_type);
-    let output: syn::ReturnType = if matches!(func.return_type, Type::Void) {
-        parse_quote! {}
-    } else {
-        parse_quote! { -> #return_type }
-    };
 
     parse_quote! {
         #(#attrs)*
@@ -452,6 +446,62 @@ mod tests {
         let result = generate(&decls);
         assert!(result.contains("#[deprecated(note = \"Use new_func instead\")]"));
         assert!(result.contains("#[must_use]"));
+    }
+
+    #[test]
+    fn test_import_and_export_share_function_shape() {
+        let shared_parameters = vec![
+            Parameter {
+                name: None,
+                param_type: Type::Int,
+            },
+            Parameter {
+                name: Some("buffer".to_string()),
+                param_type: Type::Pointer(Box::new(Type::UnsignedChar)),
+            },
+        ];
+        let decls = Declarations {
+            structs: vec![],
+            functions: vec![
+                Function {
+                    name: "host_sum".to_string(),
+                    return_type: Type::UnsignedInt,
+                    parameters: shared_parameters.clone(),
+                    comment: vec![],
+                    linkage: host_import("host_sum"),
+                    deprecated: None,
+                    nodiscard: None,
+                    maybe_unused: None,
+                    noreturn: None,
+                },
+                Function {
+                    name: "guest_sum".to_string(),
+                    return_type: Type::UnsignedInt,
+                    parameters: shared_parameters,
+                    comment: vec![],
+                    linkage: Linkage::GuestExport {
+                        name: "guest_sum".to_string(),
+                    },
+                    deprecated: None,
+                    nodiscard: None,
+                    maybe_unused: None,
+                    noreturn: None,
+                },
+            ],
+            variables: vec![],
+            enums: vec![],
+            directives: vec![],
+        };
+
+        let result = generate(&decls);
+        assert!(
+            result.contains("pub fn host_sum(arg0: i32, buffer: *mut u8) -> u32;"),
+            "output:\n{result}"
+        );
+        assert!(
+            result.contains("pub fn guest_sum(arg0: i32, buffer: *mut u8) -> u32 {"),
+            "output:\n{result}"
+        );
     }
 
     #[test]

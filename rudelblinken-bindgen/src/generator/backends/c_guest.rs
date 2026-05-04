@@ -151,16 +151,6 @@ fn generate_struct(output: &mut String, struct_decl: &Struct) {
     output.push_str("};\n");
 }
 
-fn write_function_attributes(output: &mut String, function: &Function) {
-    if let Some(attributes) = render_standard_attributes(function) {
-        output.push_str(&attributes);
-        output.push(' ');
-    }
-    let linkage = render_linkage_attributes(&function.linkage);
-    output.push_str(&linkage);
-    output.push(' ');
-}
-
 fn render_standard_attributes(function: &Function) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(message) = &function.deprecated {
@@ -206,31 +196,41 @@ fn render_linkage_attributes(linkage: &Linkage) -> String {
     format!("[[{}]]", parts.join(", "))
 }
 
+fn render_parameter_declaration(param: &Parameter) -> String {
+    if let Some(name) = &param.name {
+        generate_decl_string(&param.param_type, name)
+    } else {
+        let (prefix, suffix) = to_c_parts(&param.param_type);
+        format!("{}{}", prefix, suffix)
+    }
+}
+
+fn render_function_declaration(func_decl: &Function) -> String {
+    let mut parts = Vec::new();
+    if let Some(attributes) = render_standard_attributes(func_decl) {
+        parts.push(attributes);
+    }
+    parts.push(render_linkage_attributes(&func_decl.linkage));
+
+    let parameters = func_decl
+        .parameters
+        .iter()
+        .map(render_parameter_declaration)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let signature = format!(
+        "{}({})",
+        generate_decl_string(&func_decl.return_type, &func_decl.name),
+        parameters
+    );
+    parts.push(signature);
+
+    parts.join(" ")
+}
+
 fn generate_function(output: &mut String, func_decl: &Function) {
     generate_comments(output, &func_decl.comment);
-    write_function_attributes(output, func_decl);
-    output.push_str(&generate_decl_string(
-        &func_decl.return_type,
-        &func_decl.name,
-    ));
-    output.push('(');
-
-    for (i, param) in func_decl.parameters.iter().enumerate() {
-        if i > 0 {
-            output.push_str(", ");
-        }
-        if let Some(name) = &param.name {
-            output.push_str(&generate_decl_string(&param.param_type, name));
-        } else {
-            let (prefix, suffix) = to_c_parts(&param.param_type);
-            output.push_str(&prefix);
-            if !suffix.is_empty() {
-                output.push_str(&suffix);
-            }
-        }
-    }
-
-    output.push(')');
+    output.push_str(&render_function_declaration(func_decl));
     output.push_str(";\n");
 }
 
@@ -469,6 +469,42 @@ mod tests {
         assert_eq!(
             result,
             "[[deprecated, nodiscard]] [[clang::import_name(\"old_func\")]] int old_func();\n"
+        );
+    }
+
+    #[test]
+    fn test_generate_function_with_anonymous_parameter() {
+        let decls = Declarations {
+            structs: vec![],
+            functions: vec![Function {
+                name: "process".to_string(),
+                return_type: Type::Int,
+                parameters: vec![
+                    Parameter {
+                        name: None,
+                        param_type: Type::Int,
+                    },
+                    Parameter {
+                        name: Some("buffer".to_string()),
+                        param_type: Type::Pointer(Box::new(Type::UnsignedChar)),
+                    },
+                ],
+                comment: vec![],
+                linkage: host_import("process"),
+                deprecated: None,
+                nodiscard: None,
+                maybe_unused: None,
+                noreturn: None,
+            }],
+            variables: vec![],
+            enums: vec![],
+            directives: vec![],
+        };
+
+        let result = generate(&decls);
+        assert_eq!(
+            result,
+            "[[clang::import_name(\"process\")]] int process(int, unsigned char* buffer);\n"
         );
     }
 
