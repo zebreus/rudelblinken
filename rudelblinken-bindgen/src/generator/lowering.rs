@@ -2,7 +2,7 @@ use super::{
     Declarations, Directive, Enum, EnumVariant, Field, Function, Linkage, Parameter, Struct, Type,
     Variable,
 };
-use crate::{Span, parser};
+use crate::{parser, Span};
 use std::collections::HashSet;
 
 /// A semantic validation error found while lowering parser IR into generator IR.
@@ -22,33 +22,11 @@ impl LoweringError {
     }
 }
 
-/// Parser declarations that have passed semantic validation.
-///
-/// This wrapper is produced by the validation step after parsing. Validation
-/// proves the restricted canonical C subset is meaningful for
-/// rudelblinken-bindgen before the lowering step constructs backend-facing
-/// declarations.
-#[derive(Clone, Debug, PartialEq)]
-struct ValidatedDeclarations {
-    declarations: parser::Declarations,
-}
-
-impl ValidatedDeclarations {
-    fn validate(declarations: parser::Declarations) -> Result<Self, Vec<LoweringError>> {
-        let mut validator = Validator::default();
-        validator.validate(&declarations)?;
-        Ok(Self { declarations })
-    }
-
-    fn into_inner(self) -> parser::Declarations {
-        self.declarations
-    }
-}
-
 impl Declarations {
     pub(crate) fn lower(decls: parser::Declarations) -> Result<Self, Vec<LoweringError>> {
-        let validated = ValidatedDeclarations::validate(decls)?;
-        Ok(lower_declarations(validated.into_inner()))
+        let mut validator = Validator::default();
+        validator.validate(&decls)?;
+        Ok(lower_declarations(decls))
     }
 }
 
