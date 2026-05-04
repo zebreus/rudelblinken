@@ -52,12 +52,14 @@ already a large improvement over no location.
 
 ### Spans propagate through `LoweringError`
 
-`LoweringError` gains `span: Option<Span>`. Every error pushed in
-`Declarations::lower` is created via `LoweringError::at(message, span.clone())`
-where `span` is the enclosing declaration's span. `Option` is retained because
-a future lowering error might not correspond to any single declaration (e.g. a
-cross-declaration consistency check), but at present all errors have a
-`Some(span)`.
+`LoweringError` gains `span: Option<Span>`. Every error produced by the
+lowering module is created via `LoweringError::at(message, span.clone())`
+where `span` is the enclosing declaration's span. In the current
+implementation these errors are emitted during the semantic-validation phase at
+the front of lowering, before the validated declarations are translated into
+generator IR. `Option` is retained because a future lowering error might not
+correspond to any single declaration (e.g. a cross-declaration consistency
+check), but at present all errors have a `Some(span)`.
 
 ### `BindgenError` uses `Option<Span>` not `(line, column)`
 
