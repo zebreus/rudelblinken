@@ -32,6 +32,7 @@ mod bluetooth;
 mod emulator;
 mod file_upload_client;
 mod flash;
+mod massflash;
 use bluer::Device;
 use bluetooth::{scan_for, Outcome};
 use clap::{Parser, Subcommand};
@@ -97,6 +98,8 @@ enum Commands {
     Emulate(EmulateCommand),
     /// Flash a built-in copy of the rudelblinken firmware via USB
     Flash(flash::FlashCommand),
+    /// Test and flash many Boards in a pipelined flow
+    Massflash(massflash::MassflashCommand),
 }
 
 pub static GLOBAL_LOGGER: LazyLock<MultiProgress> = LazyLock::new(|| {
@@ -269,6 +272,9 @@ async fn main() -> bluer::Result<()> {
         Commands::Flash(flash_command) => {
             let flasher = Flasher::new(flash_command).await.unwrap();
             flasher.flash().await;
+        }
+        Commands::Massflash(massflash_command) => {
+            massflash::run(massflash_command).unwrap();
         }
     };
 
